@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -253,4 +254,29 @@ func TestNodeRegionCacheFullRebuildDropsPruned(t *testing.T) {
 	}
 	ageNodeRegionEntries(db, true)
 	waitForRegionNodes(t, db, "SJC", legacyRegionPubkeys(t, db, "SJC"))
+}
+
+// Refreshes must hand every connection back. The production pool is 4
+// (OpenDB); a leaked *sql.Row per refresh exhausted it after four stale
+// hits and hung every DB-backed endpoint. The prepared MAX(id) statement is
+// set up here because production always has it and the leak was on that path.
+func TestNodeRegionCacheReleasesConnections(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+	stmt, err := db.conn.Prepare("SELECT COALESCE(MAX(id), 0) FROM observations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stmt.Close()
+	db.stmtMaxObsID = stmt
+
+	for i := 0; i < 10; i++ {
+		seedRegionAdvert(t, db, fmt.Sprintf("cafe0000000001%02d", i), fmt.Sprintf("h-leak-%d", i), 1)
+		ageNodeRegionEntries(db, i%3 == 0)
+		waitForRegionNodes(t, db, "SJC", legacyRegionPubkeys(t, db, "SJC"))
+	}
+	if inUse := db.conn.Stats().InUse; inUse != 0 {
+		t.Errorf("expected all connections returned after refreshes, %d still in use", inUse)
+	}
 }

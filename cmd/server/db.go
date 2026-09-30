@@ -84,6 +84,10 @@ type DB struct {
 	nodeRegionCacheMu sync.Mutex
 	nodeRegionCache   map[string]*nodeRegionEntry
 	nodeRegionSF      singleflight.Group
+	// Serialises full membership rebuilds across region sets: each holds one
+	// of the 4 pooled connections for seconds on a large database, and
+	// entries built together at startup fall due together.
+	nodeRegionFullMu sync.Mutex
 	// Test-only hook fired at the start of each real membership scan (full or
 	// delta), inside nodeRegionSF's flight. Nil in production.
 	nodeRegionQueryHook func()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -118,9 +119,13 @@ func (db *DB) refreshNodeRegion(key string, codes []string) (*nodeRegionEntry, e
 	// AUTOINCREMENT, so every id <= wm is already committed and visible to the
 	// scan below; anything newer is left for the next delta.
 	var wm int64
-	maxObs := db.conn.QueryRow("SELECT COALESCE(MAX(id), 0) FROM observations")
+	// Only one of these may be issued: an unscanned *sql.Row keeps its
+	// connection checked out, and the pool is 4 (OpenDB).
+	var maxObs *sql.Row
 	if db.stmtMaxObsID != nil {
 		maxObs = db.stmtMaxObsID.QueryRow()
+	} else {
+		maxObs = db.conn.QueryRow("SELECT COALESCE(MAX(id), 0) FROM observations")
 	}
 	if err := maxObs.Scan(&wm); err != nil {
 		if prev != nil {
@@ -147,6 +152,10 @@ func (db *DB) refreshNodeRegion(key string, codes []string) (*nodeRegionEntry, e
 		built = prev.built
 	}
 
+	if full {
+		db.nodeRegionFullMu.Lock()
+		defer db.nodeRegionFullMu.Unlock()
+	}
 	start := time.Now()
 	added, err := db.scanNodeRegionKeys(codes, lo, wm, !full, keys)
 	if err != nil {
