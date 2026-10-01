@@ -78,6 +78,20 @@ type DB struct {
 	// GetEncryptedChannels. Nil in production.
 	encChannelsQueryHook func()
 
+	// GetNodes region membership (public keys heard per region set), with an
+	// observations.id watermark for incremental refresh. See
+	// nodes_region_cache.go.
+	nodeRegionCacheMu sync.Mutex
+	nodeRegionCache   map[string]*nodeRegionEntry
+	nodeRegionSF      singleflight.Group
+	// Serialises full membership rebuilds across region sets: each holds one
+	// of the 4 pooled connections for seconds on a large database, and
+	// entries built together at startup fall due together.
+	nodeRegionFullMu sync.Mutex
+	// Test-only hook fired at the start of each real membership scan (full or
+	// delta), inside nodeRegionSF's flight. Nil in production.
+	nodeRegionQueryHook func()
+
 	// Channel messages cache, keyed by hash+limit+offset+region. Unlike
 	// GetChannels, this previously had no cache at all — every page
 	// view/poll re-ran the full paginated query.
@@ -1130,33 +1144,17 @@ func (db *DB) GetNodes(limit, offset int, role, search, before, lastHeard, sortB
 		}
 	}
 
-	if region != "" {
-		codes := normalizeRegionCodes(region)
-		if len(codes) > 0 {
-			placeholders := make([]string, len(codes))
-			regionArgs := make([]interface{}, len(codes))
-			for i, c := range codes {
-				placeholders[i] = "?"
-				regionArgs[i] = c
-			}
-			joinCond := "obs.rowid = o.observer_idx"
-			if !db.isV3 {
-				joinCond = "obs.id = o.observer_id"
-			}
-			// #1143: from_pubkey is a dedicated, indexed column populated at
-			// ingest (and backfilled) for ADVERT rows specifically so pubkey
-			// lookups don't need to JSON_EXTRACT + parse decoded_json per row.
-			subq := fmt.Sprintf(`public_key IN (
-				SELECT DISTINCT t.from_pubkey
-				FROM transmissions t
-				JOIN observations o ON o.transmission_id = t.id
-				JOIN observers obs ON %s
-				WHERE t.payload_type = 4
-				AND UPPER(TRIM(obs.iata)) IN (%s)
-			)`, joinCond, strings.Join(placeholders, ","))
-			where = append(where, subq)
-			args = append(args, regionArgs...)
+	if codes := normalizeRegionCodes(region); len(codes) > 0 {
+		// Nodes whose ADVERTs were heard by an observer in the region. The
+		// membership set is cached and refreshed incrementally rather than
+		// re-derived by a transmissions ⋈ observations scan on every page
+		// (twice: COUNT and SELECT). See nodes_region_cache.go.
+		keysJSON, err := db.nodeRegionKeysJSON(codes)
+		if err != nil {
+			return nil, 0, nil, err
 		}
+		where = append(where, "public_key IN (SELECT value FROM json_each(?))")
+		args = append(args, keysJSON)
 	}
 
 	w := ""
