@@ -55,6 +55,13 @@ type DB struct {
 	// startup probe can lose the race. See declaredRegionsTablePresent.
 	declaredRegionsTableLate atomic.Bool
 
+	// node_advert_observers readiness for the /api/nodes region filter
+	// (#2101): latched once the ingestor's backfill is done, re-checked at
+	// most every nodeAdvertObserversRecheck until then. See
+	// node_advert_observers.go.
+	nodeAdvertObserversLatched   atomic.Bool
+	nodeAdvertObserversCheckedAt atomic.Int64 // unix nanos of the last check
+
 	// Channel list caches, keyed by region param — avoids repeated GROUP BY
 	// scans (#762). Keyed per-region (not a single slot) so mixed-region
 	// traffic doesn't evict and re-run the query on every request.
@@ -1139,21 +1146,28 @@ func (db *DB) GetNodes(limit, offset int, role, search, before, lastHeard, sortB
 				placeholders[i] = "?"
 				regionArgs[i] = c
 			}
-			joinCond := "obs.rowid = o.observer_idx"
-			if !db.isV3 {
-				joinCond = "obs.id = o.observer_id"
+			var subq string
+			if db.nodeAdvertObserversReady() {
+				// #2101: membership from the ingestor-maintained pairs table,
+				// a lookup instead of a scan of the whole advert history.
+				subq = nodeAdvertObserversRegionFilter(placeholders)
+			} else {
+				joinCond := "obs.rowid = o.observer_idx"
+				if !db.isV3 {
+					joinCond = "obs.id = o.observer_id"
+				}
+				// #1143: from_pubkey is a dedicated, indexed column populated at
+				// ingest (and backfilled) for ADVERT rows specifically so pubkey
+				// lookups don't need to JSON_EXTRACT + parse decoded_json per row.
+				subq = fmt.Sprintf(`public_key IN (
+					SELECT DISTINCT t.from_pubkey
+					FROM transmissions t
+					JOIN observations o ON o.transmission_id = t.id
+					JOIN observers obs ON %s
+					WHERE t.payload_type = 4
+					AND UPPER(TRIM(obs.iata)) IN (%s)
+				)`, joinCond, strings.Join(placeholders, ","))
 			}
-			// #1143: from_pubkey is a dedicated, indexed column populated at
-			// ingest (and backfilled) for ADVERT rows specifically so pubkey
-			// lookups don't need to JSON_EXTRACT + parse decoded_json per row.
-			subq := fmt.Sprintf(`public_key IN (
-				SELECT DISTINCT t.from_pubkey
-				FROM transmissions t
-				JOIN observations o ON o.transmission_id = t.id
-				JOIN observers obs ON %s
-				WHERE t.payload_type = 4
-				AND UPPER(TRIM(obs.iata)) IN (%s)
-			)`, joinCond, strings.Join(placeholders, ","))
 			where = append(where, subq)
 			args = append(args, regionArgs...)
 		}

@@ -102,6 +102,9 @@ type Store struct {
 	// pubkey -> rxTime of the last last_seen write (#1598). Guarded by
 	// writerMu, which InsertTransmission holds for its whole body.
 	relayTouched map[string]time.Time
+
+	// advertObs is the node_advert_observers builder's state (#2101).
+	advertObs advertObserversState
 }
 
 // relayTouchDebounce is the minimum interval between two last_seen writes

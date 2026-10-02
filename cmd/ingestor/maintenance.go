@@ -101,6 +101,15 @@ func (s *Store) PruneOldPackets(days int) (int64, error) {
 	if total > 0 {
 		log.Printf("[prune] deleted %d transmissions older than %d days", total, days)
 	}
+	// Keep node_advert_observers in step: a pair whose newest advert was just
+	// pruned no longer matches the region filter (#2101).
+	n, err := s.pruneAdvertObservers(cutoff)
+	if err != nil {
+		return total, err
+	}
+	if n > 0 {
+		log.Printf("[prune] deleted %d node_advert_observers pairs older than %d days", n, days)
+	}
 	return total, nil
 }
 

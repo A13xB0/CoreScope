@@ -52,6 +52,10 @@ func Apply(rw *sql.DB, logf Logger) error {
 	if err := ensureInactiveNodesTable(rw); err != nil {
 		return fmt.Errorf("ensure inactive_nodes: %w", err)
 	}
+	// PREFLIGHT: async=true reason="new, empty table + index: O(1); backfill is async in the ingestor"
+	if err := ensureNodeAdvertObserversTable(rw); err != nil {
+		return fmt.Errorf("ensure node_advert_observers: %w", err)
+	}
 	if err := ensureResolvedPathColumn(rw, logf); err != nil {
 		return fmt.Errorf("ensure resolved_path: %w", err)
 	}
@@ -139,6 +143,10 @@ func AssertReady(ro *sql.DB) error {
 	}
 
 	mustTable("neighbor_edges")
+	// #2101: which observers have heard each node's adverts. Ingestor
+	// builds it (cmd/ingestor/node_advert_observers.go); server reads it
+	// for the /api/nodes region filter once its backfill is done.
+	mustTable("node_advert_observers")
 	mustCol("observations", "resolved_path")
 	mustCol("observers", "inactive")
 	mustCol("observers", "last_packet_at")
@@ -318,6 +326,38 @@ func ensureNeighborEdgesTable(rw *sql.DB) error {
 		last_seen TEXT,
 		PRIMARY KEY (node_a, node_b)
 	)`)
+	return err
+}
+
+// NodeAdvertObserversBackfill names the ingestor's one-time build of
+// node_advert_observers in _async_migrations. The server reads that row and
+// uses the table only once its status is `done`, so both sides share this
+// name.
+const NodeAdvertObserversBackfill = "node_advert_observers_backfill_v1"
+
+// ensureNodeAdvertObserversTable creates the derived (node, observer) table
+// behind the /api/nodes region filter (#2101): one row per observer that
+// has heard at least one of a node's ADVERTs. It replaces a
+// transmissions ⋈ observations ⋈ observers scan over the whole history
+// with a lookup in a table the size of nodes × observers.
+//
+// The ingestor is the only writer (cmd/ingestor/node_advert_observers.go).
+// last_seen is the newest transmissions.first_seen among those adverts, so
+// PruneOldPackets can drop a pair at the same cutoff that removes its last
+// advert. last_obs_id is the newest observations.id folded in; its MAX is
+// the builder's resume point.
+func ensureNodeAdvertObserversTable(rw *sql.DB) error {
+	if _, err := rw.Exec(`CREATE TABLE IF NOT EXISTS node_advert_observers (
+		public_key   TEXT    NOT NULL,
+		observer_idx INTEGER NOT NULL,
+		last_seen    TEXT    NOT NULL,
+		last_obs_id  INTEGER NOT NULL,
+		PRIMARY KEY (public_key, observer_idx)
+	) WITHOUT ROWID`); err != nil {
+		return err
+	}
+	_, err := rw.Exec(`CREATE INDEX IF NOT EXISTS idx_node_advert_observers_observer
+		ON node_advert_observers(observer_idx)`)
 	return err
 }
 

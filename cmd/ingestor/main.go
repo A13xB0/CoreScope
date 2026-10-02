@@ -604,6 +604,12 @@ func main() {
 	defer stopNeighborBuilder()
 	log.Printf("[neighbor-build] enabled (interval=%s)", NeighborEdgesBuilderInterval)
 
+	// node_advert_observers builder (#2101): which observers heard each
+	// node's adverts, read by the server's /api/nodes region filter.
+	stopAdvertObservers := store.StartNodeAdvertObserversBuilder(NodeAdvertObserversInterval)
+	defer stopAdvertObservers()
+	log.Printf("[node-advert-observers] enabled (interval=%s)", NodeAdvertObserversInterval)
+
 	// #1212: per-source stall watchdog. Detects "silently dead" sources
 	// where the client reports connected but no messages have flowed. Logs
 	// a WARN line every minute for any source silent for >5m. Scan every

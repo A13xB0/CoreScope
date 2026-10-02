@@ -253,3 +253,44 @@ func TestPartialIdxTxLastSeenZero_FullIndexDropped(t *testing.T) {
 		t.Fatalf("legacy idx_tx_last_seen must be dropped after partial index is in place (#1740); still present as %q", legacyName)
 	}
 }
+
+// TestNodeAdvertObserversTable_AppliedAndAsserted pins #2101's derived table:
+// Apply creates it (with its observer index, which the region filter's join
+// uses), and AssertReady refuses a DB without it, so a server can never start
+// against a schema whose region filter would silently fall back for ever.
+func TestNodeAdvertObserversTable_AppliedAndAsserted(t *testing.T) {
+	db := minimalDB(t)
+	defer db.Close()
+
+	if err := Apply(db, nil); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	for _, c := range []string{"public_key", "observer_idx", "last_seen", "last_obs_id"} {
+		has, err := TableHasColumn(db, "node_advert_observers", c)
+		if err != nil {
+			t.Fatalf("probe node_advert_observers.%s: %v", c, err)
+		}
+		if !has {
+			t.Errorf("after Apply: node_advert_observers.%s missing", c)
+		}
+	}
+	var idx int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index'
+		AND name = 'idx_node_advert_observers_observer'`).Scan(&idx); err != nil {
+		t.Fatal(err)
+	}
+	if idx != 1 {
+		t.Error("after Apply: idx_node_advert_observers_observer missing")
+	}
+	if err := AssertReady(db); err != nil {
+		t.Fatalf("AssertReady after Apply: %v", err)
+	}
+
+	if _, err := db.Exec(`DROP TABLE node_advert_observers`); err != nil {
+		t.Fatal(err)
+	}
+	err := AssertReady(db)
+	if err == nil || !strings.Contains(err.Error(), "table:node_advert_observers") {
+		t.Fatalf("AssertReady should name the missing node_advert_observers table, got: %v", err)
+	}
+}
