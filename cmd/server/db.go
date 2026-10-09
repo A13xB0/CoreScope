@@ -81,10 +81,18 @@ type DB struct {
 	// GetEncryptedChannels. Nil in production.
 	encChannelsQueryHook func()
 
-	// Test-only hook fired immediately before GetDBSizeStatsTyped runs its
-	// COUNT(*) queries. Nil in production. See db_size_stats_cache_test.go.
+	// Row counts for the /api/perf "sqlite" block. COUNT(*) on observations is
+	// a full scan (about 0.9 s at 1.8M rows on a small host) and the perf page
+	// polls every 5 s, so the counts are cached for sqliteRowCountsTTL and
+	// concurrent misses share one query (same pattern as channelsSF).
+	rowCountsMu sync.Mutex
+	rowCounts   SqliteRowCounts
+	rowCountsAt time.Time
+	rowCountsSF singleflight.Group
+	// Test-only hook fired immediately before the COUNT(*) queries run, i.e.
+	// once per coalesced cache miss. Nil in production. See
+	// db_size_stats_cache_test.go.
 	rowCountsQueryHook func()
-	rowCountsAt        time.Time
 
 	// Channel messages cache, keyed by hash+limit+offset+region. Unlike
 	// GetChannels, this previously had no cache at all — every page
@@ -631,6 +639,49 @@ func (db *DB) GetDBSizeStatsTyped() SqliteStats {
 		result.WalPages = &WalPages{}
 	}
 
+	rows := db.cachedRowCounts()
+	result.Rows = &rows
+
+	return result
+}
+
+// sqliteRowCountsTTL is how long the /api/perf row counts are reused. They are
+// display-only and move by a few hundred rows a minute.
+const sqliteRowCountsTTL = 60 * time.Second
+
+// cachedRowCounts returns the table row counts, running the COUNT(*) queries
+// at most once per sqliteRowCountsTTL.
+func (db *DB) cachedRowCounts() SqliteRowCounts {
+	db.rowCountsMu.Lock()
+	if !db.rowCountsAt.IsZero() && time.Since(db.rowCountsAt) < sqliteRowCountsTTL {
+		c := db.rowCounts
+		db.rowCountsMu.Unlock()
+		return c
+	}
+	db.rowCountsMu.Unlock()
+
+	v, _, _ := db.rowCountsSF.Do("rows", func() (interface{}, error) {
+		// Re-check under the group: the previous flight may have just filled it.
+		db.rowCountsMu.Lock()
+		if !db.rowCountsAt.IsZero() && time.Since(db.rowCountsAt) < sqliteRowCountsTTL {
+			c := db.rowCounts
+			db.rowCountsMu.Unlock()
+			return c, nil
+		}
+		db.rowCountsMu.Unlock()
+
+		c := db.countRows()
+		db.rowCountsMu.Lock()
+		db.rowCounts = c
+		db.rowCountsAt = time.Now()
+		db.rowCountsMu.Unlock()
+		return c, nil
+	})
+	return v.(SqliteRowCounts)
+}
+
+// countRows runs the COUNT(*) queries behind cachedRowCounts.
+func (db *DB) countRows() SqliteRowCounts {
 	if db.rowCountsQueryHook != nil {
 		db.rowCountsQueryHook()
 	}
@@ -649,9 +700,7 @@ func (db *DB) GetDBSizeStatsTyped() SqliteStats {
 			rows.Observers = count
 		}
 	}
-	result.Rows = rows
-
-	return result
+	return *rows
 }
 
 // GetRoleCounts returns count per role (7-day active, matching Node.js /api/stats).
