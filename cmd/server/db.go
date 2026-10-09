@@ -81,6 +81,11 @@ type DB struct {
 	// GetEncryptedChannels. Nil in production.
 	encChannelsQueryHook func()
 
+	// Test-only hook fired immediately before GetDBSizeStatsTyped runs its
+	// COUNT(*) queries. Nil in production. See db_size_stats_cache_test.go.
+	rowCountsQueryHook func()
+	rowCountsAt        time.Time
+
 	// Channel messages cache, keyed by hash+limit+offset+region. Unlike
 	// GetChannels, this previously had no cache at all — every page
 	// view/poll re-ran the full paginated query.
@@ -626,6 +631,9 @@ func (db *DB) GetDBSizeStatsTyped() SqliteStats {
 		result.WalPages = &WalPages{}
 	}
 
+	if db.rowCountsQueryHook != nil {
+		db.rowCountsQueryHook()
+	}
 	rows := &SqliteRowCounts{}
 	for _, table := range []string{"transmissions", "observations", "nodes", "observers"} {
 		var count int

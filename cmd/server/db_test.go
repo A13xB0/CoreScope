@@ -1841,7 +1841,9 @@ func TestNodeTelemetryFields(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	os.Exit(m.Run())
+	code := m.Run()
+	removeBenchFixtures()
+	os.Exit(code)
 }
 
 func TestGetObserverMetrics(t *testing.T) {
