@@ -167,10 +167,12 @@ const isFolded = (page, id) => page.evaluate((i) => document.getElementById(i).c
           return { text: tip.textContent.trim(), above: t.bottom <= row.top + 1, below: t.top >= row.bottom - 1, inView: t.top >= 0 && t.bottom <= innerHeight };
         }, sel);
       };
-      // Bottom-right by default: the tip opens above the row.
-      const low = await tipFor('#liveLegend li[data-enum="ADVERT"]');
-      assert(low && /identity/i.test(low.text), 'tip: ' + JSON.stringify(low));
-      assert(low.above && low.inView, 'near the bottom the tip should open above the row: ' + JSON.stringify(low));
+      const advert = await tipFor('#liveLegend li[data-enum="ADVERT"]');
+      assert(advert && /identity/i.test(advert.text) && advert.inView, 'ADVERT tip: ' + JSON.stringify(advert));
+      // Bottom-right by default: the legend's last row is near the bottom of
+      // the screen, so its tip opens above it.
+      const low = await tipFor('#liveLegend ul.legend-list:last-of-type li:last-child');
+      assert(low && low.above && low.inView, 'near the bottom the tip should open above the row: ' + JSON.stringify(low));
       await page.mouse.move(5, 300);
       await page.waitForTimeout(150);
       assert(await page.evaluate(() => document.getElementById('legendTip').hidden), 'tip stayed after leaving the row');

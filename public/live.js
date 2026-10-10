@@ -188,10 +188,10 @@
       var e = enums[k];
       if (!e) return '';
       var color = TYPE_COLORS[k] || '#888';
-      // Short label on screen; the description shows when descriptions are
-      // on (.legend-long) and as hover text. The row still reads
-      // "SHORT — LONG" to screen readers and textContent.
-      return '<li data-enum="' + k + '" title="' + e.short + ' \u2014 ' + e.long + '"><span class="live-dot" style="background:' + color + '" aria-hidden="true"></span> ' +
+      // Short label on screen; the description shows in a tip on hover,
+      // focus or tap (data-desc). The row still reads "SHORT — LONG" to
+      // screen readers and textContent (.legend-long, visually hidden).
+      return '<li data-enum="' + k + '" data-desc="' + e.long + '" tabindex="0"><span class="live-dot" style="background:' + color + '" aria-hidden="true"></span> ' +
         '<span class="legend-label">' + e.short + '</span><span class="legend-long"> \u2014 ' + e.long + '</span></li>';
     }).join('');
   }
@@ -236,17 +236,57 @@
       if (p.toggle) p.toggle.addEventListener('click', function () { setOpen(p.el.classList.contains('hidden'), false); });
       if (fold) fold.addEventListener('click', function () { setFolded(!p.el.classList.contains('is-folded')); });
     });
-    const descBtn = document.getElementById('legendDescBtn');
-    if (legendEl && descBtn) {
-      const setDesc = function (on) {
-        legendEl.classList.toggle('legend-short', !on);
-        descBtn.setAttribute('aria-pressed', String(on));
-        descBtn.textContent = on ? 'Hide descriptions' : 'Show descriptions';
-        writeFlag('live-legend-descriptions', on);
-      };
-      setDesc(readFlag('live-legend-descriptions'));
-      descBtn.addEventListener('click', function () { setDesc(legendEl.classList.contains('legend-short')); });
+    if (legendEl) initLegendTips(legendEl);
+  }
+
+  // initLegendTips shows a legend row's description (data-desc) in one tip
+  // on hover, keyboard focus or tap: below the row when there is room above
+  // the VCR bar, otherwise above it, so it never runs off the screen
+  // whichever corner the legend sits in.
+  function initLegendTips(legendEl) {
+    const page = legendEl.closest('.live-page') || document.body;
+    let tip = document.getElementById('legendTip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'legendTip';
+      tip.className = 'legend-tip';
+      tip.setAttribute('role', 'tooltip');
+      tip.hidden = true;
+      page.appendChild(tip);
     }
+    let current = null;
+    const rowOf = function (t) { return t && t.closest ? t.closest('li[data-desc]') : null; };
+    const hide = function () {
+      tip.hidden = true;
+      if (current) current.removeAttribute('aria-describedby');
+      current = null;
+    };
+    const show = function (li) {
+      if (!li || !legendEl.contains(li)) return;
+      if (current && current !== li) current.removeAttribute('aria-describedby');
+      current = li;
+      tip.textContent = li.getAttribute('data-desc');
+      tip.hidden = false;
+      const r = li.getBoundingClientRect(), lg = legendEl.getBoundingClientRect();
+      tip.style.maxWidth = Math.max(160, lg.width - 16) + 'px';
+      // The tip may not cover the VCR bar (or the bottom nav under it).
+      const vcr = document.getElementById('vcrBar');
+      const floor = vcr && vcr.offsetParent !== null ? vcr.getBoundingClientRect().top : window.innerHeight;
+      const h = tip.offsetHeight, w = tip.offsetWidth;
+      const top = (floor - r.bottom >= h + 8) ? r.bottom + 4 : Math.max(4, r.top - h - 4);
+      tip.style.top = top + 'px';
+      tip.style.left = Math.min(Math.max(4, lg.left + 8), window.innerWidth - w - 4) + 'px';
+      li.setAttribute('aria-describedby', 'legendTip');
+    };
+    legendEl.addEventListener('mouseover', function (e) { const li = rowOf(e.target); if (li && li !== current) show(li); });
+    legendEl.addEventListener('mouseout', function (e) { if (current && !current.contains(e.relatedTarget)) hide(); });
+    legendEl.addEventListener('focusin', function (e) { const li = rowOf(e.target); if (li) show(li); });
+    legendEl.addEventListener('focusout', hide);
+    legendEl.addEventListener('click', function (e) {
+      const li = rowOf(e.target);
+      if (!li) return;
+      if (current === li && !tip.hidden) hide(); else show(li);
+    });
   }
 
   // Expose for tests + downstream consumers. The unit test reads this
@@ -1416,10 +1456,9 @@
           <ul class="legend-list" id="roleLegendList"></ul>
           <h3 class="legend-title" style="margin-top:8px">MARKER STYLES</h3>
           <ul class="legend-list">
-            <li title="Bright white ring — repeater"><span class="live-ring live-ring--repeater" aria-hidden="true"></span> <span class="legend-label">Bright white ring</span><span class="legend-long"> — repeater</span></li>
-            <li title="Faded ring — companion / sensor / room"><span class="live-ring live-ring--other" aria-hidden="true"></span> <span class="legend-label">Faded ring</span><span class="legend-long"> — companion / sensor / room</span></li>
+            <li data-desc="Repeater" tabindex="0"><span class="live-ring live-ring--repeater" aria-hidden="true"></span> <span class="legend-label">Bright white ring</span><span class="legend-long"> — repeater</span></li>
+            <li data-desc="Companion, sensor or room" tabindex="0"><span class="live-ring live-ring--other" aria-hidden="true"></span> <span class="legend-label">Faded ring</span><span class="legend-long"> — companion / sensor / room</span></li>
           </ul>
-          <button type="button" class="legend-desc-btn" id="legendDescBtn" aria-pressed="false">Show descriptions</button>
           </div>
         </div>
 

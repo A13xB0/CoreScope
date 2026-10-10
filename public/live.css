@@ -339,8 +339,7 @@
  */
 .live-legend { pointer-events: none; }
 .live-legend .panel-header,
-.live-legend .panel-corner-btn,
-.live-legend .legend-desc-btn { pointer-events: auto; }
+.live-legend .panel-corner-btn { pointer-events: auto; }
 
 /* ---- Feed and legend chrome: fold, close, reopen ----
  * The title button folds a panel to its header strip; the panel's ×
@@ -367,16 +366,25 @@
 .live-legend.is-folded { padding: 2px 8px; }
 .live-feed.is-folded { padding: 2px 6px; }
 
-/* Short labels: the description sits in the hover text until asked for. */
-.legend-short .legend-long { display: none; }
-.legend-short .legend-list:not(#roleLegendList) { display: grid; grid-template-columns: 1fr 1fr; column-gap: 10px; }
-.legend-desc-btn {
-  align-self: flex-start; margin-top: 6px;
-  font: inherit; font-size: 11px; color: var(--accent);
-  background: none; border: 0; padding: 2px 0; cursor: pointer;
-  text-decoration: underline; text-underline-offset: 3px;
+/* Short labels, two to a line. Each row's description (.legend-long) stays
+   in the row for screen readers and shows in .legend-tip on hover, focus or
+   tap, so the legend never grows. */
+.live-legend .legend-list:not(#roleLegendList) { display: grid; grid-template-columns: 1fr 1fr; column-gap: 10px; }
+.live-legend .legend-long {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
-.legend-desc-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.live-legend .legend-list li[data-desc] { pointer-events: auto; cursor: help; border-radius: 3px; }
+.live-legend .legend-list li[data-desc]:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.live-legend .legend-list li[data-desc]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.legend-tip {
+  position: fixed; z-index: 1100; pointer-events: none;
+  background: var(--surface-1); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  padding: 5px 8px; font-size: 11px; line-height: 1.35;
+}
+.legend-tip[hidden] { display: none; }
 
 .live-panel-toggles { display: flex; gap: 4px; align-items: center; margin-left: 6px; flex-shrink: 0; }
 .live-panel-toggle {
