@@ -53,6 +53,10 @@
 - [GET /api/config/region-quick-picks](#get-apiconfigregion-quick-picks)
 - [GET /api/config/areas](#get-apiconfigareas)
 - [GET /api/config/areas/polygons](#get-apiconfigareaspolygons)
+- [GET /api/data/config](#get-apidataconfig)
+- [GET /api/data/summary](#get-apidatasummary)
+- [GET /api/data/cube](#get-apidatacube)
+- [GET /api/data/packets](#get-apidatapackets)
 - [GET /api/config/client](#get-apiconfigclient)
 - [GET /api/config/cache](#get-apiconfigcache)
 - [GET /api/config/map](#get-apiconfigmap)
@@ -2373,6 +2377,120 @@ Full area definitions including polygon/bounding-box coordinates. Intended for m
 ```
 
 Returns `[]` when no areas are configured.
+
+---
+
+## GET /api/data/config
+
+The Data tab's set-up. The tab is off unless `data.enabled` is set in `config.json`, and it needs areas (`areasFile` or `areas`).
+
+### Response `200`
+
+```jsonc
+{
+  "enabled":     boolean,          // false: nothing else is sent and the other /api/data routes answer 404
+  "layer":       string,           // the areas layer packets are placed in
+  "layers":      [string],
+  "home":        string,           // data.homeArea, or omitted
+  "areas":       [{ "code": string, "label": string }],   // in the file's order
+  "windows":     [{ "key": "24h" | "7d" | "30d", "label": string }],   // those data.days reaches
+  "groups":      [{ "key": string, "label": string, "types": [number], "floodOnly": boolean }],
+  "typeNames":   { "<payload type>": string },
+  "dimensions":  [string],         // filter dimensions /api/data/packets accepts
+  "days":        number,
+  "rows":        number,           // rows held: one per packet per receiving area
+  "coveredFrom": string,           // ISO time the index holds every packet from
+  "filling":     boolean           // true while the startup fill runs
+}
+```
+
+---
+
+## GET /api/data/summary
+
+One period's headline figures. Cached 60 s.
+
+| Param | Description |
+|---|---|
+| `window` | `24h`, `7d` or `30d`, as far as `data.days` reaches (400 otherwise) |
+
+### Response `200`
+
+```jsonc
+{
+  "window": string, "label": string, "from": string, "to": string,
+  "coveredFrom": string, "complete": boolean,   // complete: the index covers the whole period
+  "bucketSeconds": number,
+  "packets": number,          // distinct packets
+  "crossBorder": number,      // packets heard in an area other than the one they started in
+  "bases": { "advert" | "node" | "first-relay" | "zero-hop" | "unknown": number },  // how starts were decided
+  "areas": [{ "code": string, "observed": boolean, "originated": number }],
+  "matrix": [{ "origin": string, "heard": string, "packets": number, "relayed": number, "across": number }],
+  "matrixByGroup": { "<group key>": [ /* cells as matrix */ ] },
+  "flows": [{
+    "origin": string, "heard": string, "packets": number, "relayed": number, "across": number,
+    "viaHome": number,                                   // a home repeater passed it on
+    "from":  [{ "key": string, "name": string, "area": string, "packets": number }],   // relays heard from
+    "gates": [ /* as from: home relays at the boundary */ ]
+  }]
+}
+```
+
+A packet's start (`origin`) is, first rule that answers: its advert's own GPS; for an advert without one, the sender's node record; the first repeater to pass it on, when its hop is 2 bytes or more (a shorter prefix shared by several repeaters places it only when they all stand in one area); the area of an observer that heard it with no repeater; otherwise `unknown`. `relayed` counts packets an area's own repeater carried in; `across` those heard straight from the start area.
+
+---
+
+## GET /api/data/cube
+
+Packets per time bucket along every dimension the tab can filter or split by. Cached 60 s.
+
+| Param | Description |
+|---|---|
+| `window` | as `/api/data/summary` |
+
+### Response `200`
+
+```jsonc
+{
+  "window": string, "from": string, "to": string, "coveredFrom": string, "complete": boolean,
+  "bucketSeconds": number,      // 600 for 24h, 3600 for 7d, 21600 for 30d
+  "buckets":  [number],         // bucket start times, unix seconds
+  "origins":  [string], "heard": [string],      // area codes, "unknown" last
+  "types":    [number], "routes": [number],
+  "scopes":   [{ "key": string, "class": "direct" | "unscoped" | "unrecognised" | "scoped" }],
+  "how":      ["relayed", "across", "unclear"],
+  "through":  [string],         // "" for none, else area codes joined with "+"
+  "channels": [string],         // channel name, "hash:XX" when no key is held, "" for non-channel traffic
+  "rows":     [[bucket, origin, heard, type, scope, how, route, through, channel, packets]]   // indexes into the lists
+}
+```
+
+---
+
+## GET /api/data/packets
+
+The packets behind any figure, under the same filters. Newest first, at most 2,000 rows, with the full total. Two run at a time.
+
+| Param | Description |
+|---|---|
+| `window` | as `/api/data/summary` |
+| `from`, `to` | optional unix seconds, `[from, to)` |
+| `f` | optional JSON list of filters: `{"d": dimension, "v": [values], "n": 1 to exclude, "x": 1 for an exact "through" match}`. Dimensions: `border` (local, crossed, unknown), `origin`, `heard`, `through` (area codes, or `straight`), `kind` (a group key, or `direct-advert`), `type`, `channel`, `scope`, `sclass`, `how`, `routing` (flood, direct). 400 on bad JSON or an unknown dimension. |
+
+### Response `200`
+
+```jsonc
+{
+  "total": number, "limit": 2000,
+  "rows": [{
+    "hash": string, "at": number, "type": number, "typeName": string, "kind": string, "routing": string,
+    "scope": string, "scopeClass": string, "channel": string, "border": string,
+    "origin": string, "basis": string, "heard": string, "through": string, "how": string, "observers": number,
+    "heardFrom": string, "heardFromIn": string,   // the relay observers there heard it from, and its area
+    "boundary": string, "boundaryIn": string      // the home relay at the boundary (with data.homeArea)
+  }]
+}
+```
 
 ---
 

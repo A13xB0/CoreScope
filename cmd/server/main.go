@@ -375,6 +375,15 @@ func main() {
 	srv := NewServer(database, cfg, hub)
 	srv.configDir = configDir
 	srv.store = store
+	// The Data tab's index (off unless data.enabled). A tab switched on with
+	// nothing to place packets in stops startup rather than serving nothing.
+	if ds, err := newDataService(database, cfg); err != nil {
+		log.Fatalf("[data] %v", err)
+	} else if ds != nil {
+		srv.data = ds
+		go ds.run(context.Background())
+		log.Printf("[data] Data tab on: layer %q, %d days", ds.layer, ds.days)
+	}
 	// Optional user management (off by default). Fails startup on a bad
 	// config rather than running with registration that cannot work.
 	if err := srv.initUserManagement(resolvedDB); err != nil {
