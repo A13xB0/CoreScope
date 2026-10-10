@@ -307,6 +307,48 @@ const stored = (w) => JSON.parse(w.localStorage.getItem('corescope-data-dashboar
     assert.ok(b.asked.indexOf('/api/data/cube?window=24h') >= 0, b.asked.join(' '));
   });
 
+  await test('without areas the editor offers no place dimensions and refuses dashboards that need them', async () => {
+    const placeless = plain(CONFIG);
+    placeless.places = false; placeless.home = ''; placeless.areas = [];
+    placeless.dimensions = ['kind', 'type', 'channel', 'scope', 'sclass', 'routing'];
+    const s = await setup(placeless, '#/data?dash=mine-1', { stored: [{ schema: 1, id: 'mine-1', title: 'Mine', panels: [{ id: 'k', title: 'K', type: 'bar', query: { x: 'time', split: 'kind' }, layout: lay(0, 0, 6, 4) }] }] });
+    s.pages.data.init(s.app); await settle(); await settle(); await settle();
+    const d = s.d;
+    byId(d, 'dtEdit').click(); await settle();
+    panel(d, 'k').click(); await settle();
+    const split = [...byId(d, 'dtPSplit').options].map((o) => o.value);
+    for (const dim of ['origin', 'heard', 'through', 'border', 'how']) assert.ok(split.indexOf(dim) < 0, 'split offers ' + dim);
+    assert.ok(split.indexOf('scope') >= 0, 'split still offers scope');
+    // A new matrix starts on dimensions that exist.
+    byId(d, 'dtEdit').click(); await settle();
+    byId(d, 'dtEdit').click(); await settle();
+    one(d, '.dt-addtile').click(); await settle();
+    [...d.querySelectorAll('.dt-types button')].find((b) => /Matrix/.test(b.textContent)).click(); await settle();
+    const m = stored(s.w)[0].panels.find((p) => p.type === 'matrix');
+    assert.ok(m && ['origin', 'heard'].indexOf(m.query.rows) < 0 && ['origin', 'heard'].indexOf(m.query.cols) < 0, 'matrix on ' + JSON.stringify(m && m.query));
+    // Dashboard settings offer no area variables.
+    s.d.dispatchEvent(new s.w.KeyboardEvent('keydown', { key: 'Escape' })); await settle();
+    const kinds = [...byId(d, 'dtVarKind').options].map((o) => o.value);
+    assert.ok(kinds.indexOf('area') < 0, 'variable kinds: ' + kinds.join(','));
+    // Importing one that needs places says why.
+    byId(d, 'dtImport').click();
+    one(d, '.dt-code').value = JSON.stringify({ schema: 1, id: 'p', title: 'P', panels: [{ id: 'a', title: 'A', type: 'top', query: { dim: 'heard' }, layout: lay(0, 0, 4, 4) }] });
+    [...d.querySelectorAll('.dt-acts button')].find((b) => b.textContent === 'Import').click();
+    assert.ok(/needs areas/.test(one(d, '.dt-err').textContent), one(d, '.dt-err').textContent);
+  });
+
+  await test('built-in dashboards without areas draw without place panels', async () => {
+    const placeless = plain(CONFIG);
+    placeless.places = false; placeless.home = ''; placeless.areas = [];
+    placeless.dimensions = ['kind', 'type', 'channel', 'scope', 'sclass', 'routing'];
+    const s = await setup(placeless, '#/data');
+    s.pages.data.init(s.app); await settle(); await settle(); await settle();
+    // The server sends the library; a shared or stored one may still name places.
+    // Here the default (OVERVIEW) has a matrix on origin x heard: it says it needs areas rather than drawing nonsense.
+    assert.ok(/needs areas/.test(panel(s.d, 'who').textContent), panel(s.d, 'who').textContent);
+    assert.strictEqual(one(panel(s.d, 'all'), '.dt-stat-v').textContent, '10');
+  });
+
   await test('index.html loads the page and its styles, and the nav lists it', async () => {
     const html = fs.readFileSync(REPO_ROOT + '/public/index.html', 'utf8');
     assert.ok(/<script src="data\.js\?v=__BUST__"/.test(html), 'data.js script');

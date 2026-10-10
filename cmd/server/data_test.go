@@ -102,13 +102,11 @@ func TestDataConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestDataServiceIsOffUnlessEnabledWithAreas(t *testing.T) {
+// Enabled with no areas is a Data tab without places: data_places_test.go.
+func TestDataServiceIsOffUnlessEnabled(t *testing.T) {
 	f := newDataFixture(t, false)
 	if f.svc != nil {
 		t.Error("data.enabled false should give no service")
-	}
-	if _, err := newDataService(f.db, &Config{Data: &DataConfig{Enabled: true}}); err == nil {
-		t.Error("enabled with no areas should refuse with an error")
 	}
 }
 
