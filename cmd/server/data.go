@@ -44,6 +44,11 @@ type DataConfig struct {
 	// HomeArea, when set, names the area whose boundary relays and
 	// "via home" counts the flows report.
 	HomeArea string `json:"homeArea,omitempty"`
+	// DashboardsFile names a JSON file of ready-made dashboards, relative to
+	// the config directory, offered to every visitor beside the built-in ones.
+	DashboardsFile string `json:"dashboardsFile,omitempty"`
+	// DefaultDashboard is the id of the dashboard the tab opens on.
+	DefaultDashboard string `json:"defaultDashboard,omitempty"`
 }
 
 // DataEnabled reports whether the Data tab is switched on.
@@ -96,6 +101,8 @@ type dataService struct {
 	cache   map[string]dataCached
 	sf      singleflight.Group
 	slots   chan struct{}
+
+	dashboards *DataDashboards
 }
 
 // newDataService returns nil when the tab is off, and an error when it is on
