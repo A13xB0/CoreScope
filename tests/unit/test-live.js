@@ -1155,6 +1155,67 @@ console.log('\n=== live.js: clickable paths ===');
   });
 }
 
+// ===== Colour packets by (packet type, scope, scope kind, path hash size, hash) =====
+console.log('\n=== live.js: colour packets by ===');
+{
+  const ctx = makeLiveSandbox();
+  loadInCtx(ctx, 'public/hop-filter.js');
+  const C0 = ctx.window._liveColourBy;
+  const C = new Proxy({}, { get: (_t, k) => { assert.ok(C0, 'window._liveColourBy missing'); return C0[k]; } });
+  test('the colour-by helpers are exposed for tests', () => {
+    assert.ok(C0 && typeof C0.packetGroup === 'function' && typeof C0.readMode === 'function' && typeof C0.groupColour === 'function', 'window._liveColourBy missing');
+  });
+  // Raw packets: header byte, [4 transport-code bytes on routes 0 and 3], path byte (top two bits = hash size - 1).
+  const raw = (route, sizeBits) => '01' + (route === 0 || route === 3 ? 'aabbccdd' : '') + (sizeBits << 6).toString(16).padStart(2, '0') + 'ff';
+  const pkt = (route, scope, sizeBits) => ({ route_type: route, scope_name: scope === undefined ? null : scope, raw_hex: raw(route, sizeBits || 0), decoded: { header: { payloadTypeName: 'GRP_TXT' } } });
+
+  test('modes: packet type, scope, scope kind, path hash size, hash', () => {
+    assert.deepStrictEqual(Array.from(C.MODES.map((m) => m.key)), ['type', 'scope', 'sclass', 'hashsize', 'hash']);
+  });
+  test('scope kind follows the Data tab: transport+name scoped, transport alone unrecognised, flood unscoped, direct', () => {
+    assert.strictEqual(C.packetGroup(pkt(0, '#sco'), 'sclass').key, 'scoped');
+    assert.strictEqual(C.packetGroup(pkt(0, null), 'sclass').key, 'unrecognised');
+    assert.strictEqual(C.packetGroup(pkt(1, null), 'sclass').key, 'unscoped');
+    assert.strictEqual(C.packetGroup(pkt(2, null), 'sclass').key, 'direct');
+    assert.strictEqual(C.packetGroup(pkt(3, '#sco'), 'sclass').key, 'direct');
+  });
+  test('scope: the scope name, case and # folded; codes nobody can name and unscoped traffic in their own groups', () => {
+    assert.strictEqual(C.packetGroup(pkt(0, '#SCO'), 'scope').key, '#sco');
+    assert.strictEqual(C.packetGroup(pkt(0, 'sco'), 'scope').key, '#sco');
+    assert.strictEqual(C.packetGroup(pkt(0, null), 'scope').key, '__unrecognised');
+    assert.strictEqual(C.packetGroup(pkt(1, null), 'scope').key, '__none');
+    assert.strictEqual(C.packetGroup(pkt(2, null), 'scope').key, '__none');
+  });
+  test('path hash size: 1, 2 or 3 bytes from the path byte, unknown without a raw packet', () => {
+    assert.strictEqual(C.packetGroup(pkt(1, null, 0), 'hashsize').key, '1');
+    assert.strictEqual(C.packetGroup(pkt(0, '#sco', 1), 'hashsize').key, '2');
+    assert.strictEqual(C.packetGroup(pkt(1, null, 2), 'hashsize').key, '3');
+    assert.strictEqual(C.packetGroup({ route_type: 1 }, 'hashsize').key, 'unknown');
+  });
+  test('packet type mode groups by payload type', () => {
+    assert.strictEqual(C.packetGroup(pkt(1, null), 'type').key, 'GRP_TXT');
+  });
+  test('the saved mode wins; Packet type by default; only an old "Color by hash" turned on becomes Hash', () => {
+    const store = (o) => ({ getItem: (k) => (k in o ? o[k] : null) });
+    assert.strictEqual(C.readMode(store({ 'live-colour-by': 'scope' })), 'scope');
+    assert.strictEqual(C.readMode(store({})), 'type');
+    assert.strictEqual(C.readMode(store({ 'meshcore-color-packets-by-hash': 'false' })), 'type');
+    assert.strictEqual(C.readMode(store({ 'meshcore-color-packets-by-hash': 'true' })), 'hash');
+    assert.strictEqual(C.readMode(store({ 'live-colour-by': 'nonsense' })), 'type');
+  });
+  test('a scope keeps its colour as others arrive; the first six get their own, later ones share "Other scopes"', () => {
+    C.resetColours();
+    const first = C.groupColour('scope', '#a');
+    const seen = new Set([first]);
+    for (const k of ['#b', '#c', '#d', '#e', '#f']) seen.add(C.groupColour('scope', k));
+    assert.strictEqual(seen.size, 6, 'six named scopes, six colours');
+    assert.strictEqual(C.groupColour('scope', '#a'), first, 'colour must follow the scope, not its rank');
+    assert.strictEqual(C.groupColour('scope', '#g'), C.groupColour('scope', '#h'), 'seventh and later share one colour');
+    assert.ok(!seen.has(C.groupColour('scope', '#g')), 'overflow colour differs from the named six');
+    assert.notStrictEqual(C.groupColour('scope', '__none'), C.groupColour('scope', '__unrecognised'));
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);

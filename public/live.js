@@ -61,7 +61,11 @@
   let multibyteOnly = localStorage.getItem('live-multibyte-only') === 'true';
   let matrixMode = localStorage.getItem('live-matrix-mode') === 'true';
   let matrixRain = localStorage.getItem('live-matrix-rain') === 'true';
-  let colorByHash = localStorage.getItem('meshcore-color-packets-by-hash') !== 'false';
+  // Colour packets by: 'type' | 'scope' | 'sclass' | 'hashsize' | 'hash'.
+  // colorByHash stays as the "hash mode" flag the drawing code reads.
+  // Read from storage once the modes are defined (see initColourBy's block).
+  let colourBy = 'hash';
+  let colorByHash = true;
   /** Current theme string for hash-color functions. */
   function _liveTheme() { return document.documentElement.dataset.theme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); }
   let nodeFilterKeys = (localStorage.getItem('live-node-filter') || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -188,10 +192,317 @@
       var e = enums[k];
       if (!e) return '';
       var color = TYPE_COLORS[k] || '#888';
-      var label = e.short + ' \u2014 ' + e.long;
-      return '<li data-enum="' + k + '"><span class="live-dot" style="background:' + color + '" aria-hidden="true"></span> ' + label + '</li>';
+      // Short label on screen; the description shows in a tip on hover,
+      // focus or tap (data-desc). The row still reads "SHORT — LONG" to
+      // screen readers and textContent (.legend-long, visually hidden).
+      return '<li data-enum="' + k + '" data-desc="' + e.long + '" tabindex="0"><span class="live-dot" style="background:' + color + '" aria-hidden="true"></span> ' +
+        '<span class="legend-label">' + e.short + '</span><span class="legend-long"> \u2014 ' + e.long + '</span></li>';
     }).join('');
   }
+  // ---- Colour packets by ------------------------------------------------
+  // Flying packets, their trails, node pulses and the feed stripe take the
+  // colour of the packet's group in the chosen mode. The feed icon and type
+  // label keep the packet-type colour. Scope kind follows the Data tab's
+  // classes. Colour follows the value, never its rank.
+  var COLOUR_MODES = [
+    { key: 'type', label: 'Packet type', title: 'Packet types' },
+    { key: 'scope', label: 'Scope', title: 'Scopes, last 15 min' },
+    { key: 'sclass', label: 'Scope kind', title: 'Scope kind, last 15 min' },
+    { key: 'hashsize', label: 'Path hash size', title: 'Path hash size, last 15 min' },
+    { key: 'hash', label: 'Hash', title: 'Packet hash' }
+  ];
+  // [key, label, description, palette slot (0 = the neutral "rest" colour)]
+  var SCOPE_KINDS = [
+    ['scoped', 'Region scope', 'flooded under a scope CoreScope can name', 1],
+    ['unscoped', 'Unscoped flood', 'flooded with no scope, so every repeater forwards it', 2],
+    ['unrecognised', 'Unrecognised code', 'flooded under a scope code nobody here holds a key for', 5],
+    ['direct', 'Direct', 'routed along a known path, not flooded', 3]
+  ];
+  var HASH_SIZES = [
+    ['1', '1-byte', 'hop prefixes many repeaters share, so paths can jump', 2],
+    ['2', '2-byte', 'hop prefixes that usually name one repeater', 3],
+    ['3', '3-byte', 'hop prefixes that name one repeater', 1],
+    ['unknown', 'Unknown', 'no raw packet to read the size from', 0]
+  ];
+  var MAX_NAMED_SCOPES = 6, GROUP_WINDOW_MS = 15 * 60 * 1000, GROUP_HITS_MAX = 5000;
+  function readColourMode(store) {
+    var saved = null, old = null;
+    try { saved = store.getItem('live-colour-by'); old = store.getItem('meshcore-color-packets-by-hash'); } catch (_) { /* storage off */ }
+    if (COLOUR_MODES.some(function (m) { return m.key === saved; })) return saved;
+    // Only someone who turned the old "Color by hash" on keeps Hash.
+    return old === 'true' ? 'hash' : 'type';
+  }
+  function scopeKindOf(pkt) {
+    var r = pkt.route_type;
+    if (r === 2 || r === 3) return 'direct';
+    if (r === 0) return pkt.scope_name ? 'scoped' : 'unrecognised';
+    return 'unscoped';
+  }
+  function normScopeName(n) { return '#' + String(n).trim().replace(/^#/, '').toLowerCase(); }
+  function packetGroup(pkt, mode) {
+    var kind;
+    if (mode === 'type') {
+      var t = (pkt.decoded && pkt.decoded.header && pkt.decoded.header.payloadTypeName) || 'UNKNOWN';
+      return { key: t, label: t };
+    }
+    if (mode === 'scope') {
+      kind = scopeKindOf(pkt);
+      if (kind === 'scoped') { var k = normScopeName(pkt.scope_name); return { key: k, label: k }; }
+      if (kind === 'unrecognised') return { key: '__unrecognised', label: 'Unrecognised code', desc: 'flooded under a scope code nobody here holds a key for' };
+      return { key: '__none', label: 'Not scoped', desc: 'unscoped floods and direct-routed packets' };
+    }
+    if (mode === 'sclass') {
+      kind = scopeKindOf(pkt);
+      var sk = SCOPE_KINDS.filter(function (x) { return x[0] === kind; })[0];
+      return { key: kind, label: sk[1], desc: sk[2] };
+    }
+    if (mode === 'hashsize') {
+      var size = (window.MC_packetHashSize && pkt.raw_hex) ? window.MC_packetHashSize(pkt.raw_hex, pkt.route_type) : 0;
+      var hs = HASH_SIZES.filter(function (x) { return x[0] === String(size); })[0] || HASH_SIZES[3];
+      return { key: hs[0], label: hs[1], desc: hs[2] };
+    }
+    return { key: pkt.hash || '', label: pkt.hash || '' };
+  }
+  // Palette: CSS variables on .live-page (live.css), read once per theme.
+  // The fallbacks are the light theme's values, for when no stylesheet is
+  // there to read (tests); live.css is the source of truth.
+  var PALETTE_FALLBACK = { slots: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7'], rest: '#a3b1c6', none: '#64748b' };
+  var _palette = null, _paletteTheme = null;
+  function livePalette() {
+    var theme = '';
+    try { theme = _liveTheme(); } catch (_) { /* no document theme (tests) */ }
+    if (_palette && _paletteTheme === theme) return _palette;
+    var cs = null;
+    try { cs = getComputedStyle(document.querySelector('.live-page') || document.documentElement); } catch (_) { /* no styles (tests) */ }
+    var read = function (name, fb) { var v = cs && cs.getPropertyValue ? cs.getPropertyValue(name).trim() : ''; return v || fb; };
+    _palette = {
+      slots: PALETTE_FALLBACK.slots.map(function (fb, i) { return read('--live-group-' + (i + 1), fb); }),
+      rest: read('--live-group-rest', PALETTE_FALLBACK.rest),
+      none: read('--live-group-none', PALETTE_FALLBACK.none)
+    };
+    _paletteTheme = theme;
+    return _palette;
+  }
+  var scopeSlots = new Map();
+  function resetColours() { scopeSlots = new Map(); _palette = null; }
+  function slotColour(slot) { var p = livePalette(); return slot > 0 ? p.slots[slot - 1] : p.rest; }
+  function groupColour(mode, key) {
+    if (mode === 'type') return TYPE_COLORS[key] || '#6b7280';
+    if (mode === 'sclass') { var sk = SCOPE_KINDS.filter(function (x) { return x[0] === key; })[0]; return slotColour(sk ? sk[3] : 0); }
+    if (mode === 'hashsize') { var hs = HASH_SIZES.filter(function (x) { return x[0] === key; })[0]; return slotColour(hs ? hs[3] : 0); }
+    if (mode === 'scope') {
+      if (key === '__none') return livePalette().none;
+      if (key === '__unrecognised') return livePalette().rest;
+      if (!scopeSlots.has(key)) scopeSlots.set(key, scopeSlots.size < MAX_NAMED_SCOPES ? scopeSlots.size + 1 : 7);
+      return slotColour(scopeSlots.get(key));
+    }
+    return (window.HashColor && key) ? window.HashColor.hashToHsl(key, _liveTheme()) : '#6b7280';
+  }
+  // pathColour: the colour a packet flies in. Type and hash modes keep the
+  // type colour here (hash colouring is applied where the line is drawn).
+  function pathColour(pkt, typeColour) {
+    if (colourBy === 'type' || colourBy === 'hash') return typeColour;
+    return groupColour(colourBy, packetGroup(pkt, colourBy).key);
+  }
+  function feedStripeColour(pkt) {
+    if (colourBy === 'hash') return (pkt.hash && window.HashColor) ? window.HashColor.hashToHsl(pkt.hash, _liveTheme()) : null;
+    if (colourBy === 'type') return null;
+    return groupColour(colourBy, packetGroup(pkt, colourBy).key);
+  }
+
+  // Recent packets, for the legend's counts: the fields each mode needs.
+  var groupHits = [], legendTimer = null;
+  function notePacketGroup(pkt) {
+    groupHits.push({ t: Date.now(), route_type: pkt.route_type, scope_name: pkt.scope_name, raw_hex: pkt.raw_hex, decoded: { header: { payloadTypeName: (pkt.decoded && pkt.decoded.header && pkt.decoded.header.payloadTypeName) || 'UNKNOWN' } } });
+    if (groupHits.length > GROUP_HITS_MAX) groupHits.splice(0, groupHits.length - GROUP_HITS_MAX);
+    if (!legendTimer && colourBy !== 'type' && colourBy !== 'hash') legendTimer = setTimeout(function () { legendTimer = null; renderGroupLegend(); }, 1000);
+  }
+  function legendEsc(v) { return String(v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function legendRow(key, label, desc, colour, count) {
+    // Same shape as the packet-type rows: the description shows on hover,
+    // focus or tap (initLegendTips), and is read by screen readers.
+    return '<li data-group="' + legendEsc(key) + '"' + (desc ? ' data-desc="' + legendEsc(desc.charAt(0).toUpperCase() + desc.slice(1)) + '" tabindex="0"' : '') + '><span class="live-dot" style="background:' + legendEsc(colour) + '" aria-hidden="true"></span> ' +
+      '<span class="legend-label">' + legendEsc(label) + '</span>' + (desc ? '<span class="legend-long"> \u2014 ' + legendEsc(desc) + '</span>' : '') +
+      (count !== undefined ? ' <span class="legend-count">' + count + '</span>' : '') + '</li>';
+  }
+  function renderGroupLegend() {
+    var title = document.getElementById('legendGroupTitle'), list = document.getElementById('legendGroupList');
+    if (!title || !list) return;
+    var mode = COLOUR_MODES.filter(function (m) { return m.key === colourBy; })[0] || COLOUR_MODES[0];
+    title.textContent = mode.title.toUpperCase();
+    list.classList.toggle('legend-list--groups', colourBy !== 'type');
+    if (colourBy === 'type') { list.innerHTML = buildLegendHtml(window.PayloadLabels || null); return; }
+    // Hash: every packet has its own colour, so there is no key to show.
+    title.hidden = list.hidden = colourBy === 'hash';
+    if (colourBy === 'hash') { list.innerHTML = ''; return; }
+    var cutoff = Date.now() - GROUP_WINDOW_MS;
+    while (groupHits.length && groupHits[0].t < cutoff) groupHits.shift();
+    var counts = {}, meta = {};
+    groupHits.forEach(function (h) {
+      var g = packetGroup(h, colourBy);
+      counts[g.key] = (counts[g.key] || 0) + 1;
+      meta[g.key] = g;
+    });
+    var rows;
+    if (colourBy === 'sclass') rows = SCOPE_KINDS.map(function (k) { return legendRow(k[0], k[1], k[2], groupColour('sclass', k[0]), counts[k[0]] || 0); });
+    else if (colourBy === 'hashsize') rows = HASH_SIZES.filter(function (h) { return h[0] !== 'unknown' || counts.unknown; }).map(function (h) { return legendRow(h[0], h[1], h[2], groupColour('hashsize', h[0]), counts[h[0]] || 0); });
+    else {
+      // Busiest first; a scope's colour is the one it got when first seen.
+      var named = Object.keys(counts).filter(function (k) { return k.charAt(0) === '#'; }).sort(function (a, b) { return counts[b] - counts[a]; });
+      named.forEach(function (k) { groupColour('scope', k); });
+      var groups = [], overflow = [];
+      named.forEach(function (k) {
+        if (scopeSlots.get(k) <= MAX_NAMED_SCOPES) groups.push({ key: k, label: k, desc: '', colour: groupColour('scope', k), n: counts[k] });
+        else overflow.push(k);
+      });
+      if (overflow.length) {
+        groups.push({ key: '__other', label: 'Other scopes', desc: overflow.slice(0, 6).join(', ') + (overflow.length > 6 ? '\u2026' : ''),
+          colour: slotColour(7), n: overflow.reduce(function (sum, k) { return sum + counts[k]; }, 0) });
+      }
+      ['__unrecognised', '__none'].forEach(function (k) {
+        if (counts[k]) groups.push({ key: k, label: meta[k].label, desc: meta[k].desc, colour: groupColour('scope', k), n: counts[k] });
+      });
+      groups.sort(function (x, y) { return y.n - x.n; });
+      rows = groups.map(function (g) { return legendRow(g.key, g.label, g.desc, g.colour, g.n); });
+      if (!rows.length) rows = ['<li class="legend-note">No packets seen yet.</li>'];
+    }
+    list.innerHTML = rows.join('');
+  }
+  function setColourMode(mode, opts) {
+    if (!COLOUR_MODES.some(function (m) { return m.key === mode; })) return;
+    colourBy = mode;
+    colorByHash = mode === 'hash';
+    if (opts && opts.chosen) {
+      // Saved only when someone picks it. The packets page reads the old key
+      // for its own hash colouring, so a real change keeps it in step.
+      try {
+        localStorage.setItem('live-colour-by', mode);
+        localStorage.setItem('meshcore-color-packets-by-hash', String(mode === 'hash'));
+      } catch (_) { /* storage off: this visit only */ }
+      window.dispatchEvent(new Event('storage'));
+    }
+    var sel = document.getElementById('liveColourBy');
+    if (sel && sel.value !== mode) sel.value = mode;
+    if (!opts || !opts.quiet) {
+      var params = new URLSearchParams(location.hash.split('?')[1] || '');
+      params.set('colourBy', mode);
+      try { history.replaceState(null, '', location.hash.split('?')[0] + '?' + params.toString()); } catch (_) { /* not fatal */ }
+    }
+    renderGroupLegend();
+  }
+  function initColourBy() {
+    // Re-read on every visit: the page module outlives one visit.
+    colourBy = readColourMode(localStorage);
+    var sel = document.getElementById('liveColourBy');
+    var linked = new URLSearchParams(location.hash.split('?')[1] || '').get('colourBy');
+    if (linked && COLOUR_MODES.some(function (m) { return m.key === linked; })) colourBy = linked;
+    if (sel) {
+      sel.value = colourBy;
+      sel.addEventListener('change', function () { setColourMode(sel.value, { chosen: true }); });
+    }
+    setColourMode(colourBy, { quiet: !linked });
+  }
+  colourBy = readColourMode(typeof localStorage !== 'undefined' ? localStorage : { getItem: function () { return null; } });
+  colorByHash = colourBy === 'hash';
+  if (typeof window !== 'undefined') {
+    window._liveColourBy = { MODES: COLOUR_MODES, packetGroup: packetGroup, readMode: readColourMode, groupColour: groupColour, resetColours: resetColours,
+      note: notePacketGroup, renderLegendNow: renderGroupLegend };
+  }
+
+  // Feed and legend chrome: close (the panel's ×), reopen (the toggles in
+  // the MESH LIVE header, which no panel can cover), fold (the title
+  // button) and, for the legend, short labels with descriptions on demand.
+  // Every state is remembered per browser.
+  function readFlag(key) { try { return localStorage.getItem(key) === 'true'; } catch (_) { return false; } }
+  function writeFlag(key, on) { try { localStorage.setItem(key, String(on)); } catch (_) { /* storage off: this visit only */ } }
+  function initPanelChrome(feedEl, legendEl) {
+    const panels = [
+      { el: feedEl, toggle: document.getElementById('liveToggleFeed'), close: document.getElementById('feedHideBtn'), hiddenKey: 'live-feed-hidden', foldKey: 'live-feed-folded', name: 'feed' },
+      { el: legendEl, toggle: document.getElementById('liveToggleLegend'), close: document.getElementById('legendCloseBtn'), hiddenKey: 'live-legend-hidden', foldKey: 'live-legend-folded', name: 'legend' }
+    ];
+    panels.forEach(function (p) {
+      if (!p.el) return;
+      const fold = p.el.querySelector('.panel-fold');
+      const setOpen = function (open, flash) {
+        p.el.classList.toggle('hidden', !open);
+        if (p.toggle) {
+          p.toggle.setAttribute('aria-pressed', String(open));
+          if (flash) {
+            // Restart the flash: drop the class, force a reflow, add it back.
+            p.toggle.classList.remove('is-flashing');
+            p.toggle.getBoundingClientRect();
+            p.toggle.classList.add('is-flashing');
+          }
+        }
+        writeFlag(p.hiddenKey, !open);
+      };
+      const setFolded = function (folded) {
+        p.el.classList.toggle('is-folded', folded);
+        if (fold) {
+          fold.setAttribute('aria-expanded', String(!folded));
+          fold.title = (folded ? 'Unfold the ' : 'Fold the ') + p.name;
+        }
+        writeFlag(p.foldKey, folded);
+      };
+      setOpen(!readFlag(p.hiddenKey), false);
+      setFolded(readFlag(p.foldKey));
+      if (p.close) p.close.addEventListener('click', function () { setOpen(false, true); });
+      if (p.toggle) p.toggle.addEventListener('click', function () { setOpen(p.el.classList.contains('hidden'), false); });
+      if (fold) fold.addEventListener('click', function () { setFolded(!p.el.classList.contains('is-folded')); });
+    });
+    if (legendEl) initLegendTips(legendEl);
+  }
+
+  // initLegendTips shows a legend row's description (data-desc) in one tip
+  // on hover, keyboard focus or tap: below the row when there is room above
+  // the VCR bar, otherwise above it, so it never runs off the screen
+  // whichever corner the legend sits in.
+  function initLegendTips(legendEl) {
+    const page = legendEl.closest('.live-page') || document.body;
+    let tip = document.getElementById('legendTip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'legendTip';
+      tip.className = 'legend-tip';
+      tip.setAttribute('role', 'tooltip');
+      tip.hidden = true;
+      page.appendChild(tip);
+    }
+    let current = null;
+    const rowOf = function (t) { return t && t.closest ? t.closest('li[data-desc]') : null; };
+    const hide = function () {
+      tip.hidden = true;
+      if (current) current.removeAttribute('aria-describedby');
+      current = null;
+    };
+    const show = function (li) {
+      if (!li || !legendEl.contains(li)) return;
+      if (current && current !== li) current.removeAttribute('aria-describedby');
+      current = li;
+      tip.textContent = li.getAttribute('data-desc');
+      tip.hidden = false;
+      const r = li.getBoundingClientRect(), lg = legendEl.getBoundingClientRect();
+      tip.style.maxWidth = Math.max(160, lg.width - 16) + 'px';
+      // The tip may not cover the VCR bar (or the bottom nav under it).
+      const vcr = document.getElementById('vcrBar');
+      const floor = vcr && vcr.offsetParent !== null ? vcr.getBoundingClientRect().top : window.innerHeight;
+      const h = tip.offsetHeight, w = tip.offsetWidth;
+      const top = (floor - r.bottom >= h + 8) ? r.bottom + 4 : Math.max(4, r.top - h - 4);
+      tip.style.top = top + 'px';
+      tip.style.left = Math.min(Math.max(4, lg.left + 8), window.innerWidth - w - 4) + 'px';
+      li.setAttribute('aria-describedby', 'legendTip');
+    };
+    legendEl.addEventListener('mouseover', function (e) { const li = rowOf(e.target); if (li && li !== current) show(li); });
+    legendEl.addEventListener('mouseout', function (e) { if (current && !current.contains(e.relatedTarget)) hide(); });
+    legendEl.addEventListener('focusin', function (e) { const li = rowOf(e.target); if (li) show(li); });
+    legendEl.addEventListener('focusout', hide);
+    legendEl.addEventListener('click', function (e) {
+      const li = rowOf(e.target);
+      if (!li) return;
+      if (current === li && !tip.hidden) hide(); else show(li);
+    });
+  }
+
   // Expose for tests + downstream consumers. The unit test reads this
   // via vm; in-page consumers can pull it off window for debugging.
   if (typeof window !== 'undefined') { window.buildLegendHtml = buildLegendHtml; }
@@ -1162,13 +1473,6 @@
           realisticPropagation = v;
           localStorage.setItem('live-realistic-propagation', realisticPropagation);
         } },
-      { id: 'liveColorHashToggle',
-        restore: () => colorByHash,
-        onChange: (v) => {
-          colorByHash = v;
-          localStorage.setItem('meshcore-color-packets-by-hash', colorByHash);
-          window.dispatchEvent(new Event('storage'));
-        } },
       { id: 'liveFavoritesToggle',
         restore: () => showOnlyFavorites,
         onChange: (v) => {
@@ -1267,6 +1571,13 @@
             <div class="live-stat-pill anim-pill"><span id="liveAnimCount">0</span> active</div>
             <div class="live-stat-pill rate-pill"><span id="livePktRate">0</span>/min</div>
           </div>
+          <!-- Reopen controls for the feed and legend. They live in the
+               header so no panel can be drawn over them (the old
+               bottom-right buttons sat under the legend). -->
+          <div class="live-panel-toggles" id="livePanelToggles" role="group" aria-label="Panels">
+            <button type="button" class="live-panel-toggle" id="liveToggleFeed" data-panel="liveFeed" aria-pressed="true" title="Show or hide the packet feed">Feed</button>
+            <button type="button" class="live-panel-toggle" id="liveToggleLegend" data-panel="liveLegend" aria-pressed="true" title="Show or hide the legend">Legend</button>
+          </div>
           <button class="live-header-toggle" data-live-header-toggle id="liveHeaderToggle"
                   aria-expanded="false" aria-controls="liveHeaderBody"
                   aria-label="Show live stats"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-chart-bar"/></svg></button>
@@ -1283,8 +1594,8 @@
             <span id="ghostDesc" class="sr-only">Show inferred hop markers for unknown hops</span>
             <label><input type="checkbox" id="liveRealisticToggle" aria-describedby="realisticDesc"> Realistic</label>
             <span id="realisticDesc" class="sr-only">Buffer packets by hash and animate all paths simultaneously</span>
-            <label><input type="checkbox" id="liveColorHashToggle" aria-describedby="colorHashDesc"> Color by hash</label>
-            <span id="colorHashDesc" class="sr-only">Color flying-packet dots and contrails by packet hash for propagation tracing</span>
+            <label class="live-colour-by" for="liveColourBy">Colour by <select id="liveColourBy" aria-describedby="colourByDesc">${(function () { var cur = readColourMode(localStorage); return COLOUR_MODES.map(function (m) { return '<option value="' + m.key + '"' + (m.key === cur ? ' selected' : '') + '>' + m.label + '</option>'; }).join(''); })()}</select></label>
+            <span id="colourByDesc" class="sr-only">Colour flying packets, their trails and the feed stripe by packet type, region scope, scope kind, path hash size, or packet hash for propagation tracing</span>
             <label><input type="checkbox" id="liveMatrixToggle" aria-describedby="matrixDesc"> Matrix</label>
             <span id="matrixDesc" class="sr-only">Animate packet hex bytes flowing along paths like the Matrix</span>
             <label><input type="checkbox" id="liveMatrixRainToggle" aria-describedby="rainDesc"> Rain</label>
@@ -1319,14 +1630,15 @@
         </div><!-- /#liveHeader -->
         <div class="live-overlay live-feed" id="liveFeed">
           <div class="panel-header">
+            <button type="button" class="panel-fold" aria-expanded="true" aria-controls="liveFeedContent" title="Fold the feed"><span class="panel-fold-chev" aria-hidden="true">▾</span>Feed</button>
+            <span class="panel-header-spacer"></span>
             <button class="panel-corner-btn" data-panel="liveFeed" title="Move panel to next corner" aria-label="Move panel to next corner">◫</button>
-            <button class="feed-hide-btn" id="feedHideBtn" title="Hide feed" aria-label="Hide feed"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg></button>
+            <button class="feed-hide-btn" id="feedHideBtn" title="Close feed" aria-label="Close feed"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg></button>
           </div>
-          <div class="panel-content" aria-live="polite" aria-relevant="additions" role="log">
+          <div class="panel-content" id="liveFeedContent" aria-live="polite" aria-relevant="additions" role="log">
             <div class="live-feed-empty" aria-hidden="true">Waiting for packets…</div>
           </div>
         </div>
-        <button class="feed-show-btn hidden" id="feedShowBtn" title="Show feed" aria-label="Show feed"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-clipboard-text"/></svg></button>
         <div id="nodeDetailBackdrop" class="node-detail-backdrop"></div>
         <div class="live-overlay live-node-detail hidden" id="liveNodeDetail">
           <div class="panel-header">
@@ -1335,22 +1647,24 @@
           </div>
           <div class="panel-content" id="nodeDetailContent"></div>
         </div>
-        <button class="legend-toggle-btn" id="legendToggleBtn" aria-label="Show legend" title="Show legend"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-palette"/></svg></button>
         <div class="live-overlay live-legend" id="liveLegend" role="region" aria-label="Map legend">
           <div class="panel-header">
+            <button type="button" class="panel-fold" aria-expanded="true" aria-controls="liveLegendContent" title="Fold the legend"><span class="panel-fold-chev" aria-hidden="true">▾</span>Legend</button>
+            <span class="panel-header-spacer"></span>
             <button class="panel-corner-btn" data-panel="liveLegend" title="Move panel to next corner" aria-label="Move panel to next corner">◫</button>
+            <button class="feed-hide-btn" id="legendCloseBtn" title="Close legend" aria-label="Close legend"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg></button>
           </div>
-          <div class="panel-content">
-          <h3 class="legend-title">PACKET TYPES</h3>
-          <ul class="legend-list">
+          <div class="panel-content" id="liveLegendContent">
+          <h3 class="legend-title" id="legendGroupTitle">PACKET TYPES</h3>
+          <ul class="legend-list" id="legendGroupList">
             ${buildLegendHtml(window.PayloadLabels || null)}
           </ul>
           <h3 class="legend-title" style="margin-top:8px">NODE ROLES</h3>
           <ul class="legend-list" id="roleLegendList"></ul>
           <h3 class="legend-title" style="margin-top:8px">MARKER STYLES</h3>
           <ul class="legend-list">
-            <li><span class="live-ring live-ring--repeater" aria-hidden="true"></span> Bright white ring — repeater</li>
-            <li><span class="live-ring live-ring--other" aria-hidden="true"></span> Faded ring — companion / sensor / room</li>
+            <li data-desc="Repeater" tabindex="0"><span class="live-ring live-ring--repeater" aria-hidden="true"></span> <span class="legend-label">Bright white ring</span><span class="legend-long"> — repeater</span></li>
+            <li data-desc="Companion, sensor or room" tabindex="0"><span class="live-ring live-ring--other" aria-hidden="true"></span> <span class="legend-label">Faded ring</span><span class="legend-long"> — companion / sensor / room</span></li>
           </ul>
           </div>
         </div>
@@ -2025,24 +2339,9 @@
         if (item) { e.preventDefault(); item.click(); }
       }
     });
-    const feedHideBtn = document.getElementById('feedHideBtn');
-    const feedShowBtn = document.getElementById('feedShowBtn');
-    if (localStorage.getItem('live-feed-hidden') === 'true') {
-      feedEl.classList.add('hidden');
-      feedShowBtn.classList.remove('hidden');
-    }
-    feedHideBtn.addEventListener('click', () => {
-      feedEl.classList.add('hidden'); feedShowBtn.classList.remove('hidden');
-      localStorage.setItem('live-feed-hidden', 'true');
-    });
-    feedShowBtn.addEventListener('click', () => {
-      feedEl.classList.remove('hidden'); feedShowBtn.classList.add('hidden');
-      localStorage.setItem('live-feed-hidden', 'false');
-    });
-
-    // Legend toggle for mobile (#60)
     const legendEl = document.getElementById('liveLegend');
-    const legendToggleBtn = document.getElementById('legendToggleBtn');
+    initPanelChrome(feedEl, legendEl);
+    initColourBy();
 
     // ── Live header / controls toggles (#1178, #1179) ──────────────────────
     // At narrow viewports (≤768px) the header collapses to a single
@@ -2209,23 +2508,6 @@
       }
     })();
     // ───────────────────────────────────────────────────────────────────────
-
-    if (legendToggleBtn && legendEl) {
-      // Restore legend collapsed state from localStorage (#279)
-      try {
-        if (localStorage.getItem('live-legend-hidden') === 'true') {
-          legendEl.classList.add('hidden');
-          legendToggleBtn.setAttribute('aria-label', 'Show legend');
-          legendToggleBtn.innerHTML = '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-palette"/></svg>';
-        }
-      } catch (_) { /* private browsing / storage disabled */ }
-      legendToggleBtn.addEventListener('click', () => {
-        const nowHidden = legendEl.classList.toggle('hidden');
-        legendToggleBtn.setAttribute('aria-label', nowHidden ? 'Show legend' : 'Hide legend');
-        legendToggleBtn.innerHTML = nowHidden ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-palette"/></svg>' : '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg>';
-        try { localStorage.setItem('live-legend-hidden', String(nowHidden)); } catch (_) { /* ignore */ }
-      });
-    }
 
     // Populate role legend from shared roles.js
     // Initialize panel corner positions (#608 M0)
@@ -3378,6 +3660,8 @@
     const typeName = header.payloadTypeName || 'UNKNOWN';
     const icon = PAYLOAD_ICONS[typeName] || '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-package"/></svg>';
     const color = TYPE_COLORS[typeName] || '#6b7280';
+    const flyColour = pathColour(first, color); // the chosen "Colour by" group
+    notePacketGroup(first);
     const obsCount = packets.length;
 
     // --- Counters ---
@@ -3499,7 +3783,7 @@
       if (hopPositions.length >= 2) {
         allPaths.push({ hopPositions: hopPositions, raw: qpkt.raw || first.raw });
       } else if (hopPositions.length === 1) {
-        pulseNode(hopPositions[0].key, hopPositions[0].pos, typeName);
+        pulseNode(hopPositions[0].key, hopPositions[0].pos, typeName, flyColour);
       }
     }
 
@@ -3510,7 +3794,7 @@
       if (fallbackPositions.length >= 2) {
         allPaths.push({ hopPositions: fallbackPositions, raw: first.raw });
       } else if (fallbackPositions.length === 1) {
-        pulseNode(fallbackPositions[0].key, fallbackPositions[0].pos, typeName);
+        pulseNode(fallbackPositions[0].key, fallbackPositions[0].pos, typeName, flyColour);
       }
     }
 
@@ -3535,15 +3819,15 @@
         var completedPositions = allPaths[ai].hopPositions.slice(0, hopsCompleted + 1);
         var remainingPositions = allPaths[ai].hopPositions.slice(hopsCompleted);
         if (completedPositions.length >= 2) {
-          animatePath(completedPositions, typeName, color, allPaths[ai].raw, onHop, pktMeta);
+          animatePath(completedPositions, typeName, flyColour, allPaths[ai].raw, onHop, pktMeta);
         } else if (completedPositions.length === 1) {
-          pulseNode(completedPositions[0].key, completedPositions[0].pos, typeName);
+          pulseNode(completedPositions[0].key, completedPositions[0].pos, typeName, flyColour);
         }
         if (remainingPositions.length >= 2) {
-          drawDashedPath(remainingPositions, color);
+          drawDashedPath(remainingPositions, flyColour);
         }
       } else {
-        animatePath(allPaths[ai].hopPositions, typeName, color, allPaths[ai].raw, onHop, pktMeta);
+        animatePath(allPaths[ai].hopPositions, typeName, flyColour, allPaths[ai].raw, onHop, pktMeta);
       }
     }
   }
@@ -3700,7 +3984,7 @@
           }
         }
       } else {
-        pulseNode(hp.key, hp.pos, typeName);
+        pulseNode(hp.key, hp.pos, typeName, color);
       }
 
       if (hopIndex < hopPositions.length - 1) {
@@ -3710,14 +3994,14 @@
         const lineOpacity = (isGhost || nextGhost) ? 0.3 : undefined;
         drawAnimatedLine(hp.pos, nextPos, lineColor, () => { hopIndex++; nextHop(); }, lineOpacity, rawHex, pktMeta?.hash);
       } else {
-        if (!isGhost) pulseNode(hp.key, hp.pos, typeName);
+        if (!isGhost) pulseNode(hp.key, hp.pos, typeName, color);
         hopIndex++; nextHop();
       }
     }
     nextHop();
   }
 
-  function pulseNode(key, pos, typeName) {
+  function pulseNode(key, pos, typeName, colour) {
     if (!animLayer || !nodesLayer) return;
     if (!nodeMarkers[key]) {
       const ghost = L.circleMarker(pos, {
@@ -3734,7 +4018,7 @@
 
     const marker = nodeMarkers[key];
     if (!marker) return;
-    const color = TYPE_COLORS[typeName] || '#6b7280';
+    const color = colour || TYPE_COLORS[typeName] || '#6b7280';
 
     const baseColor = marker._baseColor || '#6b7280';
     const baseSize = marker._baseSize || 14;
@@ -4422,9 +4706,8 @@
     item.setAttribute('role', 'button');
     item.style.cursor = 'pointer';
     // Hash-color stripe for feed items (mirrors packets table border-left)
-    if (colorByHash && pkt.hash && window.HashColor) {
-      item.style.borderLeft = '4px solid ' + HashColor.hashToHsl(pkt.hash, _liveTheme());
-    }
+    const stripe = feedStripeColour(pkt);
+    if (stripe) item.style.borderLeft = '4px solid ' + stripe;
     // Channel color highlighting for GRP_TXT packets (#271)
     var _cs = _getChannelStyle(pkt);
     if (_cs) item.style.cssText += _cs;
@@ -4510,9 +4793,8 @@
     if (hash) item.setAttribute('data-hash', hash);
     item.style.cursor = 'pointer';
     // Hash-color stripe for feed items (mirrors packets table border-left)
-    if (colorByHash && hash && window.HashColor) {
-      item.style.borderLeft = '4px solid ' + HashColor.hashToHsl(hash, _liveTheme());
-    }
+    const stripe = feedStripeColour(pkt);
+    if (stripe) item.style.borderLeft = '4px solid ' + stripe;
     // Channel color highlighting for GRP_TXT packets (#271)
     var _chanStyle = _getChannelStyle(pkt);
     if (_chanStyle) item.style.cssText += _chanStyle;
