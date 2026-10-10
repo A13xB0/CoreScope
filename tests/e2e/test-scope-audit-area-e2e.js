@@ -89,6 +89,22 @@ async function open(browser, hash, areas, stored) {
   }
 
   {
+    const { ctx, page } = await open(browser, '#/scope-audit', AREAS);
+    await page.route('**/api/scope-audit*', (r) => {
+      const area = new URL(r.request().url()).searchParams.get('area');
+      r.fulfill({ json: { window: '24h', since: '', area: area || undefined, repeaters: [] } });
+    });
+    await step('an area with nothing in this view says so, and points back to All', async () => {
+      await page.click('#saAreaFilter .region-dropdown-trigger');
+      await page.click('#saAreaFilter [data-area="FRA"]');
+      await page.waitForTimeout(800);
+      const msg = await page.textContent('#saBody');
+      assert(/No repeater standing in France/.test(msg) && /All/.test(msg), 'empty state reads: ' + msg.trim().slice(0, 120));
+    });
+    await ctx.close();
+  }
+
+  {
     const { ctx, page, seen } = await open(browser, '#/scope-audit?window=7d&area=BEL', AREAS);
     await step('#/scope-audit?area=BEL opens filtered to Belgium', async () => {
       assert(seen.audit.some((u) => /area=BEL/.test(u) && /window=7d/.test(u)), 'requests: ' + seen.audit.join(' '));

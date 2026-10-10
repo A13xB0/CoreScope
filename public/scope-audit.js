@@ -10,6 +10,7 @@
 'use strict';
 (function () {
   var loadGen = 0; // bumped per load; guards against in-flight races (mirrors node-reach.js)
+  var areaChangeFn = null; // the area picker listener, removed in destroy()
   var DEFAULT_WINDOW = '24h';
   var WINDOWS = [
     { key: '1h', label: '1h' },
@@ -62,11 +63,15 @@
     if (rgn) q += '&scope=' + encodeURIComponent(rgn);
     return q;
   }
-  function buildHash(w, m, rgn) {
-    return '#/scope-audit?window=' + encodeURIComponent(w) + modeQuery(m, rgn);
+  // ?area= keeps the repeaters that stand in a configured area (the shared
+  // area picker's choice); empty means every area.
+  function areaQuery(a) { return a ? '&area=' + encodeURIComponent(a) : ''; }
+  function currentArea() { return (typeof AreaFilter !== 'undefined' && AreaFilter.getAreaParam) ? AreaFilter.getAreaParam() : ''; }
+  function buildHash(w, m, rgn, a) {
+    return '#/scope-audit?window=' + encodeURIComponent(w) + modeQuery(m, rgn) + areaQuery(a);
   }
-  function apiPath(w, m, rgn) {
-    return '/scope-audit?window=' + encodeURIComponent(w) + modeQuery(m, rgn);
+  function apiPath(w, m, rgn, a) {
+    return '/scope-audit?window=' + encodeURIComponent(w) + modeQuery(m, rgn) + areaQuery(a);
   }
 
   function windowBtn(key, cur, label) {
@@ -97,7 +102,9 @@
       '</div>' +
       '<div class="analytics-time-range" id="saWindow">' +
       WINDOWS.map(function (w) { return windowBtn(w.key, win, w.label); }).join('') +
-      '</div></div></div>' +
+      '</div>' +
+      '<div class="sa-area" id="saAreaFilter"></div>' +
+      '</div></div>' +
       '<div class="sa-region-bar" id="saRegionBar"' + (mode === 'transport' ? '' : ' hidden') + '>' +
       '<label for="saRegion">Region</label> ' +
       '<input type="text" id="saRegion" class="nodes-search sa-region" list="saRegionList" placeholder="e.g. be" value="' + escapeHtml(region) + '" aria-describedby="saRegionHelp">' +
@@ -144,6 +151,15 @@
   // emptyStateHtml is what a stock install sees, so it carries the whole
   // explanation rather than deferring to the intro: on a fresh deployment this
   // IS the page. Named and returned rather than inlined so it can be asserted.
+  // areaEmptyHtml is the empty state when an area is chosen: nothing in
+  // this view stands there, which says nothing about the other areas.
+  function areaEmptyHtml(code) {
+    var areas = (typeof AreaFilter !== 'undefined' && AreaFilter.getAreas) ? AreaFilter.getAreas() : [];
+    var hit = areas.filter(function (a) { return a.key === code; })[0];
+    return '<div class="ns-empty sa-empty">No repeater standing in <strong>' + escapeHtml(hit ? hit.label : code) +
+      '</strong> is in this view. Choose <strong>All</strong> in the area picker to see every area.</div>';
+  }
+
   function emptyStateHtml() {
     return '<div class="ns-empty sa-empty"><strong>No repeater has answered with its configured region list yet</strong>, so there is nothing to audit here.<br><br>That answer has to be collected from the repeater itself; nothing else in CoreScope knows which regions a node is <em>configured</em> for, only which ones its traffic was seen under. Two things can collect it, and neither ships with CoreScope, so an empty table is the normal state until you run one:<ul><li>an <a href="https://observer.gessaman.com/" target="_blank" rel="noopener">ESP32 observer on the neighbour-report firmware</a> (<code>set mqtt.neighbors on</code>), which reports its neighbours&rsquo; scopes every 24h</li><li>the <a href="https://github.com/efiten/coredrive-rx" target="_blank" rel="noopener">CoreDrive RX</a> companion app, which asks a repeater directly while you are in range of it</li></ul>The newest answer per repeater wins, whichever collected it.</div>';
   }
@@ -426,7 +442,7 @@
     if (list) list.innerHTML = transportRegions(d.repeaters).map(function (r) { return '<option value="' + escapeHtml(r) + '">'; }).join('');
     if (!d.repeaters.length) {
       searchIndex = {};
-      el.innerHTML = '<div class="ns-empty sa-empty">No repeater was seen forwarding in the last ' + escapeHtml(d.window) + '.</div>';
+      el.innerHTML = d.area ? areaEmptyHtml(d.area) : '<div class="ns-empty sa-empty">No repeater was seen forwarding in the last ' + escapeHtml(d.window) + '.</div>';
       return;
     }
     var rows = d.repeaters.slice();
@@ -520,7 +536,7 @@
     sortCtl = null;
     if (!d.repeaters.length) {
       searchIndex = {};
-      el.innerHTML = emptyStateHtml();
+      el.innerHTML = d.area ? areaEmptyHtml(d.area) : emptyStateHtml();
       return;
     }
     searchIndex = buildSearchIndex(d.repeaters);
@@ -577,7 +593,7 @@
     if (body) body.innerHTML = '<div class="text-muted" style="padding:8px"><span class="spinner"></span> Loading scope audit…</div>';
     var d;
     try {
-      d = await api(apiPath(w, mode, region), { ttl: 30000 });
+      d = await api(apiPath(w, mode, region, currentArea()), { ttl: 30000 });
     } catch (e) {
       if (myGen !== loadGen) return;
       if (body) body.innerHTML = '<div class="ns-empty">Failed to load scope audit: ' + escapeHtml(e.message) + '</div>';
@@ -589,7 +605,7 @@
   }
 
   function syncHash() {
-    try { history.replaceState(null, '', buildHash(win, mode, region)); } catch (e) {}
+    try { history.replaceState(null, '', buildHash(win, mode, region, currentArea())); } catch (e) {}
   }
 
   function init(container) {
@@ -597,6 +613,7 @@
     mode = 'declared';
     region = '';
     searchQuery = '';
+    var hashArea = '';
     try {
       var p = (typeof getHashParams === 'function') ? getHashParams() : null;
       var qw = p ? p.get('window') : null;
@@ -605,6 +622,7 @@
         mode = 'transport';
         region = normRegion(p.get('scope'));
       }
+      hashArea = (p && p.get('area')) || '';
     } catch (e) {}
     container.innerHTML = pageHtml();
     var bar = document.getElementById('saWindow');
@@ -631,11 +649,27 @@
       searchQuery = e.target.value;
       applyFilter();
     }, 250));
-    load(win);
+    initArea(hashArea);
+  }
+
+  // initArea mounts the shared area picker (hidden when no areas exist),
+  // applies an area from the address, then loads once and reloads on change.
+  function initArea(hashArea) {
+    var el = document.getElementById('saAreaFilter');
+    if (typeof AreaFilter === 'undefined' || !el) { load(win); return; }
+    var myGen = loadGen;
+    Promise.resolve(AreaFilter.init(el)).catch(function () {}).then(function () {
+      if (myGen !== loadGen) return;
+      if (hashArea && AreaFilter.setSelected) AreaFilter.setSelected(hashArea);
+      areaChangeFn = AreaFilter.onChange(function () { load(win); });
+      load(win);
+    });
   }
 
   function destroy() {
     loadGen++;
+    if (areaChangeFn && typeof AreaFilter !== 'undefined') { AreaFilter.offChange(areaChangeFn); }
+    areaChangeFn = null;
     if (sortCtl && typeof sortCtl.destroy === 'function') {
       try { sortCtl.destroy(); } catch (e) { /* ignore */ }
     }

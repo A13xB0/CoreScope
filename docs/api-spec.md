@@ -1896,6 +1896,7 @@ not being the same as "declared nothing"), which apply here identically.
 | `window` | string | `24h`      | Time window: `1h`, `24h`, `7d` |
 | `mode`   | string | `declared` | `declared` (this section) or `transport` (see [Transport view](#transport-view-modetransport)) |
 | `scope`  | string | —          | `mode=transport` only: region scope to split the fleet by (`be`, `be-van`), with or without `#`, any case |
+| `area`   | string | —          | Both views: keep only repeaters whose node position is inside this configured area (`areas` / `areasFile` key). Echoed as `area`. An unknown area, or one with no placed repeaters, matches nothing. Applied to the cached result, so it costs no extra scan |
 
 ### Response `200`
 
@@ -1903,6 +1904,7 @@ not being the same as "declared nothing"), which apply here identically.
 {
   "window": string,                    // echoed window ("1h", "24h", or "7d")
   "since":  string (ISO),              // start of the observed-forwarding window
+  "area":   string,                    // the ?area= filter, when given
   "repeaters": [
     {
       "publicKey":        string,
