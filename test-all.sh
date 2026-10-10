@@ -149,6 +149,7 @@ node tests/unit/test-issue-2097-hop-ambiguity-badge.js
 node tests/unit/test-live-anims.js
 node tests/unit/test-live-dt-cap-1524.js
 node tests/unit/test-live-legend-helper.js
+node tests/unit/test-live-panel-fold.js
 node tests/unit/test-live-multibyte-filter.js
 node tests/unit/test-live-region-filter.js
 node tests/unit/test-live.js
