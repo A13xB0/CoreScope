@@ -905,6 +905,7 @@ type ScopeAuditResponse struct {
 	Window    string          `json:"window"`
 	Since     string          `json:"since"`            // ISO — start of the observed-forwarding window
 	Region    string          `json:"region,omitempty"` // observer IATA filter, normalised, when given
+	Area      string          `json:"area,omitempty"`   // ?area= filter, when given
 	Repeaters []ScopeAuditRow `json:"repeaters"`
 }
 
@@ -948,6 +949,7 @@ type ScopeTransportResponse struct {
 	Since     string              `json:"since"`
 	Region    string              `json:"region,omitempty"` // observer IATA filter, normalised, when given
 	Scope     string              `json:"scope,omitempty"`  // normalised ?scope= filter, when given
+	Area      string              `json:"area,omitempty"`   // ?area= filter, when given
 	Carrying  *int                `json:"carrying,omitempty"`
 	NotCarry  *int                `json:"notCarrying,omitempty"`
 	Repeaters []ScopeTransportRow `json:"repeaters"`
@@ -1117,8 +1119,9 @@ func (s *Server) handleScopeAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := window + "|" + region
+	area := strings.TrimSpace(r.URL.Query().Get("area"))
 	if cached, ok := s.scopeAuditCached(window, key); ok {
-		writeJSON(w, cached)
+		writeJSON(w, s.withAuditArea(cached, area))
 		return
 	}
 
@@ -1146,7 +1149,7 @@ func (s *Server) handleScopeAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, v.(*ScopeAuditResponse))
+	writeJSON(w, s.withAuditArea(v.(*ScopeAuditResponse), area))
 }
 
 // scopeAuditTTLFor is how long one window's computed audit stays fresh.
@@ -1403,6 +1406,10 @@ func (s *Server) serveScopeTransport(w http.ResponseWriter, r *http.Request, win
 		}
 		resp = v.(*ScopeTransportResponse)
 	}
+	// ?area= first, so the carry counts below are over the area's repeaters.
+	if area := strings.TrimSpace(r.URL.Query().Get("area")); area != "" {
+		resp = s.withTransportArea(resp, area)
+	}
 	// ?scope= names a region SCOPE (be, be-van). ?region= is kept for the
 	// observer IATA filter, as on every other endpoint.
 	if scope := strings.ToLower(normScope(strings.TrimSpace(r.URL.Query().Get("scope")))); scope != "" {
@@ -1435,6 +1442,64 @@ func (s *Server) scopeTransportStore(key string, resp *ScopeTransportResponse) {
 // withTransportScope returns a copy of resp in which every row says whether
 // it was seen carrying scope, with the two counts. scope is already
 // normalised (no '#', lower case).
+// auditAreaNodes resolves ?area= to the lowercase public keys of the nodes
+// standing in that configured area, by node position. An unknown area, or
+// one with no placed nodes, gives an empty set, so it matches nothing: an
+// area filter must never widen to every repeater.
+func (s *Server) auditAreaNodes(area string) map[string]bool {
+	var nodes map[string]bool
+	if s.store != nil {
+		nodes = s.store.resolveAreaNodes(area)
+	} else if s.cfg != nil {
+		if entry, ok := s.cfg.Areas[area]; ok {
+			if pks, err := s.db.GetNodePubkeysInArea(entry); err == nil {
+				nodes = make(map[string]bool, len(pks))
+				for _, pk := range pks {
+					nodes[pk] = true
+				}
+			}
+		}
+	}
+	out := make(map[string]bool, len(nodes))
+	for pk := range nodes {
+		out[strings.ToLower(pk)] = true
+	}
+	return out
+}
+
+// withAuditArea returns a copy of the declared view keeping the repeaters
+// that stand in area, with the area echoed. No area: resp unchanged. The
+// cached response is never modified.
+func (s *Server) withAuditArea(resp *ScopeAuditResponse, area string) *ScopeAuditResponse {
+	if area == "" {
+		return resp
+	}
+	in := s.auditAreaNodes(area)
+	out := *resp
+	out.Area = area
+	out.Repeaters = make([]ScopeAuditRow, 0, len(resp.Repeaters))
+	for _, row := range resp.Repeaters {
+		if in[strings.ToLower(row.PublicKey)] {
+			out.Repeaters = append(out.Repeaters, row)
+		}
+	}
+	return &out
+}
+
+// withTransportArea is withAuditArea for the transport view.
+func (s *Server) withTransportArea(resp *ScopeTransportResponse, area string) *ScopeTransportResponse {
+	in := s.auditAreaNodes(area)
+	out := *resp
+	out.Area = area
+	out.Repeaters = make([]ScopeTransportRow, 0, len(resp.Repeaters))
+	for _, row := range resp.Repeaters {
+		if in[strings.ToLower(row.PublicKey)] {
+			out.Repeaters = append(out.Repeaters, row)
+		}
+	}
+	return &out
+}
+
 func withTransportScope(resp *ScopeTransportResponse, scope string) *ScopeTransportResponse {
 	out := *resp
 	out.Scope = scope

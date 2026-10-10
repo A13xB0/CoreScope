@@ -173,6 +173,7 @@ func routeDescriptions() map[string]routeMeta {
 				{Name: "mode", Description: "declared (default) or transport", Type: "string"},
 				{Name: "scope", Description: "mode=transport only: region scope to split the fleet by", Type: "string"},
 				{Name: "region", Description: "Observer IATA codes, comma-separated: count only forwarding heard by observers there. All means no filter", Type: "string"},
+				{Name: "area", Description: "Keep only repeaters standing in this configured area (by node position); an unknown area matches nothing", Type: "string"},
 			}},
 
 		// Analytics
