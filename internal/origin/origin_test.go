@@ -99,7 +99,7 @@ func TestAShortPrefixPlacesOnlyWhenEveryHolderAgrees(t *testing.T) {
 		{PublicKey: "A5000002", Relay: true, Lat: fp(54.60), Lon: fp(-5.93)}, // Ireland
 		{PublicKey: "A6000001", Relay: true, Lat: fp(55.95), Lon: fp(-3.19)}, // Scotland
 		{PublicKey: "A6000002", Relay: true, Lat: fp(57.10), Lon: fp(-2.10)}, // Scotland
-		{PublicKey: "A6000003", Relay: true},                                  // no position
+		{PublicKey: "A6000003", Relay: true},                                 // no position
 	}, nil)
 	if got := l.Prefix("A500"); got != Unknown {
 		t.Errorf("a prefix shared across a border = %q, want unknown", got)
