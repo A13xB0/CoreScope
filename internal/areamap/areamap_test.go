@@ -120,6 +120,9 @@ func TestLayersAreasAndIATA(t *testing.T) {
 	if _, ok := m.LocateIATA(DefaultLayer, "MLA"); ok {
 		t.Error("an IATA code belongs to its own layer only")
 	}
+	if !m.Has("CTY") || m.Has("NOPE") {
+		t.Error("Has must know every code and only those")
+	}
 	if !m.Contains("MLD", 3, -4) || m.Contains("MLD", 5, 5) || m.Contains("NOPE", 1, 1) {
 		t.Error("Contains disagrees with Locate")
 	}
