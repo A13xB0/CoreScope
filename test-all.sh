@@ -127,7 +127,6 @@ node tests/unit/test-issue-1753-copy-url-slash.js
 node tests/unit/test-issue-1770-mobile-row-clamp.js
 node tests/unit/test-issue-1789-observer-firmware-cols.js
 node tests/unit/test-issue-1825-observer-node-cross-links.js
-node tests/unit/test-issue-1833-legend-toggle-vcr-offset.js
 node tests/unit/test-issue-1836-crossnav-case-normalization.js
 node tests/unit/test-issue-1843-node-qr-quiet-zone.js
 node tests/unit/test-issue-1846-observers-width.js

@@ -144,8 +144,10 @@ const isFolded = (page, id) => page.evaluate((i) => document.getElementById(i).c
       await page.mouse.move(x - 120, y - 60, { steps: 8 }); await page.mouse.up();
       await page.waitForTimeout(250);
       const end = await page.locator('#liveLegend').boundingBox();
-      assert(Math.abs(end.x - start.x) > 40 || Math.abs(end.y - start.y) > 20, 'legend did not move');
       assert(!await isFolded(page, 'liveLegend'), 'a drag folded the legend');
+      // Dragging is on only with a fine pointer at >=768px (live.js dragMql).
+      const dragOn = await page.evaluate(() => matchMedia('(pointer: fine) and (min-width: 768px)').matches);
+      if (dragOn) assert(Math.abs(end.x - start.x) > 40 || Math.abs(end.y - start.y) > 20, 'legend did not move');
     });
 
     await step(`${tag} the legend shows short labels by default; descriptions are one click and remembered`, async () => {

@@ -188,10 +188,62 @@
       var e = enums[k];
       if (!e) return '';
       var color = TYPE_COLORS[k] || '#888';
-      var label = e.short + ' \u2014 ' + e.long;
-      return '<li data-enum="' + k + '"><span class="live-dot" style="background:' + color + '" aria-hidden="true"></span> ' + label + '</li>';
+      // Short label on screen; the description shows when descriptions are
+      // on (.legend-long) and as hover text. The row still reads
+      // "SHORT — LONG" to screen readers and textContent.
+      return '<li data-enum="' + k + '" title="' + e.short + ' \u2014 ' + e.long + '"><span class="live-dot" style="background:' + color + '" aria-hidden="true"></span> ' +
+        '<span class="legend-label">' + e.short + '</span><span class="legend-long"> \u2014 ' + e.long + '</span></li>';
     }).join('');
   }
+  // Feed and legend chrome: close (the panel's ×), reopen (the toggles in
+  // the MESH LIVE header, which no panel can cover), fold (the title
+  // button) and, for the legend, short labels with descriptions on demand.
+  // Every state is remembered per browser.
+  function readFlag(key) { try { return localStorage.getItem(key) === 'true'; } catch (_) { return false; } }
+  function writeFlag(key, on) { try { localStorage.setItem(key, String(on)); } catch (_) { /* storage off: this visit only */ } }
+  function initPanelChrome(feedEl, legendEl) {
+    var panels = [
+      { el: feedEl, toggle: document.getElementById('liveToggleFeed'), close: document.getElementById('feedHideBtn'), hiddenKey: 'live-feed-hidden', foldKey: 'live-feed-folded', name: 'feed' },
+      { el: legendEl, toggle: document.getElementById('liveToggleLegend'), close: document.getElementById('legendCloseBtn'), hiddenKey: 'live-legend-hidden', foldKey: 'live-legend-folded', name: 'legend' }
+    ];
+    panels.forEach(function (p) {
+      if (!p.el) return;
+      var fold = p.el.querySelector('.panel-fold');
+      var setOpen = function (open, flash) {
+        p.el.classList.toggle('hidden', !open);
+        if (p.toggle) {
+          p.toggle.setAttribute('aria-pressed', String(open));
+          if (flash) { p.toggle.classList.remove('is-flashing'); void p.toggle.offsetWidth; p.toggle.classList.add('is-flashing'); }
+        }
+        writeFlag(p.hiddenKey, !open);
+      };
+      var setFolded = function (folded) {
+        p.el.classList.toggle('is-folded', folded);
+        if (fold) {
+          fold.setAttribute('aria-expanded', String(!folded));
+          fold.title = (folded ? 'Unfold the ' : 'Fold the ') + p.name;
+        }
+        writeFlag(p.foldKey, folded);
+      };
+      setOpen(!readFlag(p.hiddenKey), false);
+      setFolded(readFlag(p.foldKey));
+      if (p.close) p.close.addEventListener('click', function () { setOpen(false, true); });
+      if (p.toggle) p.toggle.addEventListener('click', function () { setOpen(p.el.classList.contains('hidden'), false); });
+      if (fold) fold.addEventListener('click', function () { setFolded(!p.el.classList.contains('is-folded')); });
+    });
+    var descBtn = document.getElementById('legendDescBtn');
+    if (legendEl && descBtn) {
+      var setDesc = function (on) {
+        legendEl.classList.toggle('legend-short', !on);
+        descBtn.setAttribute('aria-pressed', String(on));
+        descBtn.textContent = on ? 'Hide descriptions' : 'Show descriptions';
+        writeFlag('live-legend-descriptions', on);
+      };
+      setDesc(readFlag('live-legend-descriptions'));
+      descBtn.addEventListener('click', function () { setDesc(legendEl.classList.contains('legend-short')); });
+    }
+  }
+
   // Expose for tests + downstream consumers. The unit test reads this
   // via vm; in-page consumers can pull it off window for debugging.
   if (typeof window !== 'undefined') { window.buildLegendHtml = buildLegendHtml; }
@@ -1267,6 +1319,13 @@
             <div class="live-stat-pill anim-pill"><span id="liveAnimCount">0</span> active</div>
             <div class="live-stat-pill rate-pill"><span id="livePktRate">0</span>/min</div>
           </div>
+          <!-- Reopen controls for the feed and legend. They live in the
+               header so no panel can be drawn over them (the old
+               bottom-right buttons sat under the legend). -->
+          <div class="live-panel-toggles" id="livePanelToggles" role="group" aria-label="Panels">
+            <button type="button" class="live-panel-toggle" id="liveToggleFeed" data-panel="liveFeed" aria-pressed="true" title="Show or hide the packet feed">Feed</button>
+            <button type="button" class="live-panel-toggle" id="liveToggleLegend" data-panel="liveLegend" aria-pressed="true" title="Show or hide the legend">Legend</button>
+          </div>
           <button class="live-header-toggle" data-live-header-toggle id="liveHeaderToggle"
                   aria-expanded="false" aria-controls="liveHeaderBody"
                   aria-label="Show live stats"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-chart-bar"/></svg></button>
@@ -1319,14 +1378,15 @@
         </div><!-- /#liveHeader -->
         <div class="live-overlay live-feed" id="liveFeed">
           <div class="panel-header">
+            <button type="button" class="panel-fold" aria-expanded="true" aria-controls="liveFeedContent" title="Fold the feed"><span class="panel-fold-chev" aria-hidden="true">▾</span>Feed</button>
+            <span class="panel-header-spacer"></span>
             <button class="panel-corner-btn" data-panel="liveFeed" title="Move panel to next corner" aria-label="Move panel to next corner">◫</button>
-            <button class="feed-hide-btn" id="feedHideBtn" title="Hide feed" aria-label="Hide feed"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg></button>
+            <button class="feed-hide-btn" id="feedHideBtn" title="Close feed" aria-label="Close feed"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg></button>
           </div>
-          <div class="panel-content" aria-live="polite" aria-relevant="additions" role="log">
+          <div class="panel-content" id="liveFeedContent" aria-live="polite" aria-relevant="additions" role="log">
             <div class="live-feed-empty" aria-hidden="true">Waiting for packets…</div>
           </div>
         </div>
-        <button class="feed-show-btn hidden" id="feedShowBtn" title="Show feed" aria-label="Show feed"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-clipboard-text"/></svg></button>
         <div id="nodeDetailBackdrop" class="node-detail-backdrop"></div>
         <div class="live-overlay live-node-detail hidden" id="liveNodeDetail">
           <div class="panel-header">
@@ -1335,12 +1395,14 @@
           </div>
           <div class="panel-content" id="nodeDetailContent"></div>
         </div>
-        <button class="legend-toggle-btn" id="legendToggleBtn" aria-label="Show legend" title="Show legend"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-palette"/></svg></button>
         <div class="live-overlay live-legend" id="liveLegend" role="region" aria-label="Map legend">
           <div class="panel-header">
+            <button type="button" class="panel-fold" aria-expanded="true" aria-controls="liveLegendContent" title="Fold the legend"><span class="panel-fold-chev" aria-hidden="true">▾</span>Legend</button>
+            <span class="panel-header-spacer"></span>
             <button class="panel-corner-btn" data-panel="liveLegend" title="Move panel to next corner" aria-label="Move panel to next corner">◫</button>
+            <button class="feed-hide-btn" id="legendCloseBtn" title="Close legend" aria-label="Close legend"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg></button>
           </div>
-          <div class="panel-content">
+          <div class="panel-content" id="liveLegendContent">
           <h3 class="legend-title">PACKET TYPES</h3>
           <ul class="legend-list">
             ${buildLegendHtml(window.PayloadLabels || null)}
@@ -1349,9 +1411,10 @@
           <ul class="legend-list" id="roleLegendList"></ul>
           <h3 class="legend-title" style="margin-top:8px">MARKER STYLES</h3>
           <ul class="legend-list">
-            <li><span class="live-ring live-ring--repeater" aria-hidden="true"></span> Bright white ring — repeater</li>
-            <li><span class="live-ring live-ring--other" aria-hidden="true"></span> Faded ring — companion / sensor / room</li>
+            <li title="Bright white ring — repeater"><span class="live-ring live-ring--repeater" aria-hidden="true"></span> <span class="legend-label">Bright white ring</span><span class="legend-long"> — repeater</span></li>
+            <li title="Faded ring — companion / sensor / room"><span class="live-ring live-ring--other" aria-hidden="true"></span> <span class="legend-label">Faded ring</span><span class="legend-long"> — companion / sensor / room</span></li>
           </ul>
+          <button type="button" class="legend-desc-btn" id="legendDescBtn" aria-pressed="false">Show descriptions</button>
           </div>
         </div>
 
@@ -2025,24 +2088,8 @@
         if (item) { e.preventDefault(); item.click(); }
       }
     });
-    const feedHideBtn = document.getElementById('feedHideBtn');
-    const feedShowBtn = document.getElementById('feedShowBtn');
-    if (localStorage.getItem('live-feed-hidden') === 'true') {
-      feedEl.classList.add('hidden');
-      feedShowBtn.classList.remove('hidden');
-    }
-    feedHideBtn.addEventListener('click', () => {
-      feedEl.classList.add('hidden'); feedShowBtn.classList.remove('hidden');
-      localStorage.setItem('live-feed-hidden', 'true');
-    });
-    feedShowBtn.addEventListener('click', () => {
-      feedEl.classList.remove('hidden'); feedShowBtn.classList.add('hidden');
-      localStorage.setItem('live-feed-hidden', 'false');
-    });
-
-    // Legend toggle for mobile (#60)
     const legendEl = document.getElementById('liveLegend');
-    const legendToggleBtn = document.getElementById('legendToggleBtn');
+    initPanelChrome(feedEl, legendEl);
 
     // ── Live header / controls toggles (#1178, #1179) ──────────────────────
     // At narrow viewports (≤768px) the header collapses to a single
@@ -2209,23 +2256,6 @@
       }
     })();
     // ───────────────────────────────────────────────────────────────────────
-
-    if (legendToggleBtn && legendEl) {
-      // Restore legend collapsed state from localStorage (#279)
-      try {
-        if (localStorage.getItem('live-legend-hidden') === 'true') {
-          legendEl.classList.add('hidden');
-          legendToggleBtn.setAttribute('aria-label', 'Show legend');
-          legendToggleBtn.innerHTML = '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-palette"/></svg>';
-        }
-      } catch (_) { /* private browsing / storage disabled */ }
-      legendToggleBtn.addEventListener('click', () => {
-        const nowHidden = legendEl.classList.toggle('hidden');
-        legendToggleBtn.setAttribute('aria-label', nowHidden ? 'Show legend' : 'Hide legend');
-        legendToggleBtn.innerHTML = nowHidden ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-palette"/></svg>' : '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg>';
-        try { localStorage.setItem('live-legend-hidden', String(nowHidden)); } catch (_) { /* ignore */ }
-      });
-    }
 
     // Populate role legend from shared roles.js
     // Initialize panel corner positions (#608 M0)
