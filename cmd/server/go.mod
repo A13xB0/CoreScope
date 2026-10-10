@@ -5,9 +5,12 @@ go 1.22
 require (
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/meshcore-analyzer/areamap v0.0.0
 	github.com/meshcore-analyzer/geofilter v0.0.0
 	github.com/meshcore-analyzer/sigvalidate v0.0.0
 )
+
+replace github.com/meshcore-analyzer/areamap => ../../internal/areamap
 
 replace github.com/meshcore-analyzer/geofilter => ../../internal/geofilter
 

@@ -276,6 +276,9 @@ func (m *Map) LocateIATA(layer, code string) (string, bool) {
 	return "", false
 }
 
+// Has reports whether an area with code exists.
+func (m *Map) Has(code string) bool { return false }
+
 // Contains reports whether the area with code holds the position.
 func (m *Map) Contains(code string, lat, lon float64) bool {
 	if m == nil || (lat == 0 && lon == 0) {

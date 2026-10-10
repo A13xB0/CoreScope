@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/meshcore-analyzer/areamap"
 	"github.com/meshcore-analyzer/dbconfig"
 	"github.com/meshcore-analyzer/geofilter"
 	"github.com/meshcore-analyzer/packetpath"
@@ -139,6 +140,14 @@ type Config struct {
 	GeoFilter *GeoFilterConfig `json:"geo_filter,omitempty"`
 
 	Areas map[string]AreaEntry `json:"areas,omitempty"`
+	// AreasFile names a GeoJSON FeatureCollection of further areas, relative
+	// to the config directory: real boundaries (coastlines, islands, holes)
+	// in layers, which config.json's polygons cannot hold. See
+	// internal/areamap for the feature properties it reads.
+	AreasFile string `json:"areasFile,omitempty"`
+	// areaMap holds every area, from Areas and AreasFile, once LoadAreaMap
+	// has run. Nil until then.
+	areaMap *areamap.Map
 
 	Timestamps *TimestampConfig `json:"timestamps,omitempty"`
 
