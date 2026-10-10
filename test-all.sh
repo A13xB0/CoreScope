@@ -156,6 +156,7 @@ node tests/unit/test-map-clustering.js
 node tests/unit/test-mqtt-status-panel.js
 node tests/unit/test-my-repeaters-dashboard.js
 node tests/unit/test-naive-banner-tone.js
+node tests/unit/test-nav-stats-throttle.js
 node tests/unit/test-node-hop-analytics.js
 node tests/unit/test-node-reach-coverage-debounce.js
 node tests/unit/test-node-reach-coverage.js
@@ -184,6 +185,7 @@ node tests/unit/test-perf-render-1258.js
 node tests/unit/test-preflight-xss-gate.js
 node tests/unit/test-pull-to-reconnect-1091.js
 node tests/unit/test-pull-to-reconnect.js
+node tests/unit/test-region-filter-setselected.js
 node tests/unit/test-repeater-metric-scatter.js
 node tests/unit/test-rx-coverage-config-race.js
 node tests/unit/test-rx-coverage-mine.js

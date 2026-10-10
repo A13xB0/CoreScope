@@ -41,12 +41,13 @@ type paramMeta struct {
 func routeDescriptions() map[string]routeMeta {
 	return map[string]routeMeta{
 		// Config
-		"GET /api/config/cache":      {Summary: "Get cache configuration", Tag: "config"},
-		"GET /api/config/client":     {Summary: "Get client configuration", Tag: "config"},
-		"GET /api/config/regions":    {Summary: "Get configured regions", Tag: "config"},
-		"GET /api/config/theme":      {Summary: "Get theme configuration", Description: "Returns color maps, CSS variables, and theme defaults.", Tag: "config"},
-		"GET /api/config/map":        {Summary: "Get map configuration", Tag: "config"},
-		"GET /api/config/geo-filter": {Summary: "Get geo-filter configuration", Tag: "config"},
+		"GET /api/config/cache":              {Summary: "Get cache configuration", Tag: "config"},
+		"GET /api/config/client":             {Summary: "Get client configuration", Tag: "config"},
+		"GET /api/config/regions":            {Summary: "Get configured regions", Tag: "config"},
+		"GET /api/config/region-quick-picks": {Summary: "Get region quick picks", Description: "Named groups of region (IATA) codes from config regionQuickPicks, offered as one-tap choices by the region filter. Always a list; empty when none are configured.", Tag: "config"},
+		"GET /api/config/theme":              {Summary: "Get theme configuration", Description: "Returns color maps, CSS variables, and theme defaults.", Tag: "config"},
+		"GET /api/config/map":                {Summary: "Get map configuration", Tag: "config"},
+		"GET /api/config/geo-filter":         {Summary: "Get geo-filter configuration", Tag: "config"},
 
 		// Admin / system
 		"GET /api/health":      {Summary: "Health check", Description: "Returns server health, uptime, and memory stats.", Tag: "admin"},
@@ -103,8 +104,8 @@ func routeDescriptions() map[string]routeMeta {
 		"POST /api/mail/brevo/webhook":                     {Summary: "Brevo delivery-event webhook", Description: "Authenticated with Authorization: Bearer <userManagement.mail.webhookSecret>. Registered only when the secret is set.", Tag: "users"},
 
 		// Node notifications (user management, part E)
-		"GET /api/account/notifications":                     {Summary: "Get own notification settings", Description: "Returns {enabled, events, availableEvents, watches: [{pubkey, name, known, createdAt}], limits: {maxWatches, perUserPerDay, mailsLast24h}}. Creates the default settings (on, node.offline and node.battery) on first use. known is false once the node left the analyzer database. Registered only when userManagement.notifications.enabled.", Tag: "users", Session: true},
-		"PUT /api/account/notifications":                     {Summary: "Change own notification settings", Description: "Body {enabled, events}. events from node.offline, node.battery and, for admins, foreign.new and observer.offline. Answers the GET body. 400 unknown event type, 403 an admin event chosen by a non-admin. Events left out lose their stored state, so choosing them again starts without a mail.", Tag: "users", Session: true},
+		"GET /api/account/notifications":                     {Summary: "Get own notification settings", Description: "Returns {enabled, events, availableEvents, externalLabel, watches: [{pubkey, name, known, createdAt}], limits: {maxWatches, perUserPerDay, mailsLast24h}}. node.external and externalLabel appear only when notifications.externalAlerts is configured. Creates the default settings (on, node.offline and node.battery) on first use. known is false once the node left the analyzer database. Registered only when userManagement.notifications.enabled.", Tag: "users", Session: true},
+		"PUT /api/account/notifications":                     {Summary: "Change own notification settings", Description: "Body {enabled, events}. events from node.offline, node.battery, node.external (when externalAlerts is configured) and, for admins, foreign.new and observer.offline. Answers the GET body. 400 unknown event type or node.external without externalAlerts, 403 an admin event chosen by a non-admin. Events left out lose their stored state, so choosing them again starts without a mail.", Tag: "users", Session: true},
 		"PUT /api/account/notifications/watches/{pubkey}":    {Summary: "Watch a node", Description: "Answers the GET body. 400 when pubkey is not 64 hex characters, 404 when the node is not in the analyzer database, 409 when userManagement.notifications.maxWatchesPerUser nodes are watched. Watching a watched node is 200.", Tag: "users", Session: true},
 		"DELETE /api/account/notifications/watches/{pubkey}": {Summary: "Stop watching a node", Description: "Answers the GET body; removing a node that is not watched is 200. 400 when pubkey is not 64 hex characters.", Tag: "users", Session: true},
 		"POST /api/account/notifications/watch-my-nodes":     {Summary: "Watch the synced My nodes", Description: "Copies the pubkeys of the caller's synced meshcore-my-nodes setting into the watch list, up to the limit. Answers {added, already, skipped, account}; skipped counts malformed keys, nodes not in the analyzer database and nodes over the limit; account is the GET body.", Tag: "users", Session: true},
@@ -169,6 +170,9 @@ func routeDescriptions() map[string]routeMeta {
 		"GET /api/scope-audit": {Summary: "Network-wide scope audit", Description: "For every repeater that has answered a declared-regions request: the regions it declares, which of those it has NOT been observed forwarding in the window, which scopes it forwards without declaring, and whether it forwards unscoped floods while omitting the '*' wildcard. '*' is never listed as a region — it governs unscoped floods, not a scope. Repeaters never successfully asked are absent rather than shown as declaring nothing. Rows with missing regions sort first; a short window is weak evidence, since a quiet region simply has no traffic.", Tag: "analytics",
 			QueryParams: []paramMeta{
 				{Name: "window", Description: "Time window: 1h, 24h, or 7d (default 24h)", Type: "string"},
+				{Name: "mode", Description: "declared (default) or transport", Type: "string"},
+				{Name: "scope", Description: "mode=transport only: region scope to split the fleet by", Type: "string"},
+				{Name: "area", Description: "Keep only repeaters standing in this configured area (by node position); an unknown area matches nothing", Type: "string"},
 			}},
 
 		// Analytics

@@ -186,6 +186,42 @@ function makeDomContainer() {
   return container;
 }
 
+// ---------------------------------------------------------------------------
+// setSelected / getAreas: the map's Areas overlay selects an area on click
+// ---------------------------------------------------------------------------
+(async () => {
+  const { AF, storage } = buildCtx({ fetchResponse: [{ key: 'BEL', label: 'Belgium' }, { key: 'SCO', label: 'Scotland', layer: 'country' }] });
+  await AF.init(makeDomContainer());
+  const calls = [];
+  AF.onChange((v) => calls.push(v));
+  test('getAreas() lists the loaded areas', () => {
+    assert.strictEqual(typeof AF.getAreas, 'function', 'AreaFilter.getAreas is missing');
+    assert.deepStrictEqual(AF.getAreas().map((a) => a.key), ['BEL', 'SCO']);
+  });
+  test('setSelected(key) selects, saves and tells listeners', () => {
+    assert.strictEqual(typeof AF.setSelected, 'function', 'AreaFilter.setSelected is missing');
+    AF.setSelected('SCO');
+    assert.strictEqual(AF.getSelected(), 'SCO');
+    assert.strictEqual(storage['meshcore-area-filter'], 'SCO');
+    assert.deepStrictEqual(calls, ['SCO']);
+  });
+  test('setSelected with the current key does not notify again', () => {
+    AF.setSelected('SCO');
+    assert.deepStrictEqual(calls, ['SCO']);
+  });
+  test('setSelected(null) clears the selection', () => {
+    AF.setSelected(null);
+    assert.strictEqual(AF.getSelected(), null);
+    assert.strictEqual(storage['meshcore-area-filter'], undefined);
+    assert.deepStrictEqual(calls, ['SCO', null]);
+  });
+  test('setSelected ignores a key that is not an area', () => {
+    AF.setSelected('NOPE');
+    assert.strictEqual(AF.getSelected(), null);
+    assert.deepStrictEqual(calls, ['SCO', null]);
+  });
+})();
+
 // Print synchronous results immediately; async tests append on their own.
 setImmediate(() => {
   console.log(`\n${passed} passed, ${failed} failed`);
