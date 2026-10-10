@@ -46,18 +46,19 @@ const legend = between(tpl, 'id="liveLegend"', 'class="panel-content"');
 assert(/class="panel-fold"[^>]*aria-expanded=/.test(feed), 'the feed header has a .panel-fold title button with aria-expanded');
 assert(/class="panel-fold"[^>]*aria-expanded=/.test(legend), 'the legend header has a .panel-fold title button with aria-expanded');
 assert(/id="legendCloseBtn"/.test(legend), 'the legend header has a close button');
-assert(/id="legendDescBtn"[^>]*aria-pressed=/.test(tpl), 'the legend has a descriptions button with aria-pressed');
-for (const key of ['live-feed-folded', 'live-legend-folded', 'live-legend-descriptions', 'live-feed-hidden', 'live-legend-hidden']) {
+assert(!/legendDescBtn|legend-desc-btn|live-legend-descriptions/.test(js + css), 'no "Show descriptions" button: descriptions show on hover, focus or tap');
+for (const key of ['live-feed-folded', 'live-legend-folded', 'live-feed-hidden', 'live-legend-hidden']) {
   assert(js.includes("'" + key + "'"), 'state is remembered under ' + key);
 }
 
 console.log('\n=== CSS ===');
 assert(/\.is-folded\s+\.panel-content\s*\{[^}]*display\s*:\s*none/.test(css), 'a folded panel hides its content');
-assert(/\.legend-short\s+\.legend-long\s*\{[^}]*display\s*:\s*none/.test(css), 'short mode hides the descriptions');
+assert(/\.live-legend\s+\.legend-long\s*\{[^}]*clip/.test(css), 'descriptions are visually hidden but still read by screen readers');
+assert(/\.legend-tip\s*\{/.test(css), 'a styled hover tip shows the description');
+assert(/\.live-legend\s+\.legend-list\s+li[^{]*\{[^}]*pointer-events\s*:\s*auto/.test(css), 'legend rows take hover and taps (the rest of the legend lets clicks through)');
 assert(/\.live-legend\s+\.panel-fold[^{]*\{[^}]*pointer-events\s*:\s*auto/.test(css) || /\.live-legend\s+\.panel-header[^{]*\{[^}]*pointer-events\s*:\s*auto/.test(css),
   'the legend header stays clickable (the legend surface lets clicks through to the map)');
-assert(/#legendDescBtn[^{]*\{[^}]*pointer-events\s*:\s*auto/.test(css) || /\.legend-desc-btn[^{]*\{[^}]*pointer-events\s*:\s*auto/.test(css),
-  'the descriptions button stays clickable');
+
 // Every @media (max-width: 640px) block, brace-matched.
 function mediaBlocks(src, query) {
   const out = [];

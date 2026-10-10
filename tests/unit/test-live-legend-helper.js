@@ -98,15 +98,15 @@ test('every row reads SHORT \u2014 LONG with the em-dash separator (uniform typo
   }
 });
 
-// Short labels: the short name is its own span, the description sits in
-// .legend-long (hidden unless descriptions are on) and in the hover text.
-test('every row has its short label, a .legend-long description and the full text as hover', () => {
+// Short labels: the short name is its own span; the description is in
+// .legend-long (read by screen readers, shown on hover) and data-desc.
+test('every row has its short label, its description in .legend-long and data-desc, and no title', () => {
   for (const k of ctx.window.PayloadLabels.ORDER) {
     const entry = ctx.window.PayloadLabels[k];
-    assert(html.includes('data-enum="' + k + '" title="' + entry.short + ' \u2014 ' + entry.long + '"'),
-      k + ': title should carry "' + entry.short + ' \u2014 ' + entry.long + '"');
+    assert(html.includes('data-enum="' + k + '" data-desc="' + entry.long + '"'), k + ': data-desc should carry "' + entry.long + '"');
     assert(html.includes('<span class="legend-label">' + entry.short + '</span>'), k + ': short label span missing');
     assert(html.includes('<span class="legend-long"> \u2014 ' + entry.long + '</span>'), k + ': .legend-long description missing');
+    assert(!html.includes('data-enum="' + k + '" title='), k + ': a native title would double up with the hover tip');
   }
 });
 

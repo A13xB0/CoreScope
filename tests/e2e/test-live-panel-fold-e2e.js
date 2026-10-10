@@ -22,7 +22,7 @@
 const { chromium } = require('playwright');
 
 const BASE = process.env.BASE_URL || 'http://localhost:13581';
-const KEYS = ['live-feed-hidden', 'live-legend-hidden', 'live-feed-folded', 'live-legend-folded', 'live-legend-descriptions',
+const KEYS = ['live-feed-hidden', 'live-legend-hidden', 'live-feed-folded', 'live-legend-folded',
   'panel-corner-liveFeed', 'panel-corner-liveLegend', 'panel-drag-liveFeed', 'panel-drag-liveLegend'];
 
 let passed = 0, failed = 0;
@@ -152,23 +152,42 @@ const isFolded = (page, id) => page.evaluate((i) => document.getElementById(i).c
       if (dragOn) assert(Math.abs(end.x - start.x) > 40 || Math.abs(end.y - start.y) > 20, 'legend did not move');
     });
 
-    await step(`${tag} the legend shows short labels by default; descriptions are one click and remembered`, async () => {
+    await step(`${tag} the legend shows short labels; a row's description shows on hover, on the side with room`, async () => {
       await freshLive(page);
-      const longShown = () => page.evaluate(() => [...document.querySelectorAll('#liveLegend .legend-long')].filter((e) => e.offsetParent !== null).length);
-      assert(await longShown() === 0, 'descriptions are showing by default');
-      const advert = await page.evaluate(() => {
-        const li = document.querySelector('#liveLegend li[data-enum="ADVERT"]');
-        return li ? { label: li.querySelector('.legend-label').textContent.trim(), title: li.getAttribute('title') || '' } : null;
-      });
-      assert(advert && advert.label.length > 0 && /—/.test(advert.title), 'ADVERT row should show its short label with the description as hover text: ' + JSON.stringify(advert));
-      await page.click('#legendDescBtn');
+      const longShown = () => page.evaluate(() => [...document.querySelectorAll('#liveLegend .legend-long')].filter((e) => e.getBoundingClientRect().width > 2).length);
+      assert(await longShown() === 0, 'descriptions are laid out in the legend');
+      assert(await page.evaluate(() => !document.getElementById('legendDescBtn')), 'the "Show descriptions" button is still there');
+      const tipFor = async (sel) => {
+        await page.hover(sel);
+        await page.waitForTimeout(150);
+        return page.evaluate((s2) => {
+          const tip = document.getElementById('legendTip'), row = document.querySelector(s2).getBoundingClientRect();
+          if (!tip || tip.hidden) return null;
+          const t = tip.getBoundingClientRect();
+          return { text: tip.textContent.trim(), above: t.bottom <= row.top + 1, below: t.top >= row.bottom - 1, inView: t.top >= 0 && t.bottom <= innerHeight };
+        }, sel);
+      };
+      // Bottom-right by default: the tip opens above the row.
+      const low = await tipFor('#liveLegend li[data-enum="ADVERT"]');
+      assert(low && /identity/i.test(low.text), 'tip: ' + JSON.stringify(low));
+      assert(low.above && low.inView, 'near the bottom the tip should open above the row: ' + JSON.stringify(low));
+      await page.mouse.move(5, 300);
       await page.waitForTimeout(150);
-      assert(await longShown() > 0, 'descriptions did not appear');
-      assert(await page.getAttribute('#legendDescBtn', 'aria-pressed') === 'true', 'descriptions button should be pressed');
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.waitForSelector('#liveLegend', { state: 'attached' });
-      await page.waitForTimeout(500);
-      assert(await longShown() > 0, 'descriptions setting was not remembered');
+      assert(await page.evaluate(() => document.getElementById('legendTip').hidden), 'tip stayed after leaving the row');
+      // Move the legend to a top corner: now it opens below.
+      for (let i = 0; i < 3; i++) {
+        const top = await page.evaluate(() => document.getElementById('liveLegend').getBoundingClientRect().top);
+        if (top < 200) break;
+        await page.click('#liveLegend .panel-corner-btn');
+        await page.waitForTimeout(250);
+      }
+      const high = await tipFor('#liveLegend li[data-enum="ADVERT"]');
+      assert(high && high.below && high.inView, 'near the top the tip should open below the row: ' + JSON.stringify(high));
+      // Keyboard: focusing a row shows its tip too.
+      await page.mouse.move(5, 300);
+      await page.focus('#liveLegend li[data-enum="TRACE"]');
+      await page.waitForTimeout(150);
+      assert(/SNR/i.test(await page.evaluate(() => document.getElementById('legendTip').textContent)), 'focus did not show the TRACE description');
     });
 
     await step(`${tag} no page errors`, async () => { assert(errors.length === 0, errors.join('; ')); });
