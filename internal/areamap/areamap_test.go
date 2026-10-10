@@ -186,3 +186,60 @@ func BenchmarkLocate(b *testing.B) {
 		m.Locate("x", 0.5, float64(i%6)+0.5)
 	}
 }
+
+func TestFeatureCollectionKeepsShapesAndLayers(t *testing.T) {
+	m := load(t)
+	fc := m.FeatureCollection("country", 0)
+	if fc.Type != "FeatureCollection" || len(fc.Features) != 2 {
+		t.Fatalf("country layer = %+v, want a FeatureCollection of 2", fc)
+	}
+	mld := fc.Features[0]
+	if mld.Type != "Feature" || mld.Properties.Code != "MLD" || mld.Properties.Label != "Mainland" || mld.Properties.Layer != "country" {
+		t.Errorf("first feature = %+v", mld.Properties)
+	}
+	if mld.Geometry.Type != "MultiPolygon" || len(mld.Geometry.Coordinates) != 2 || len(mld.Geometry.Coordinates[0]) != 2 {
+		t.Errorf("Mainland keeps its island and its lake: %v", mld.Geometry.Coordinates)
+	}
+	if all := m.FeatureCollection("", 0); len(all.Features) != 3 {
+		t.Errorf("every layer = %d features, want 3", len(all.Features))
+	}
+	if none := m.FeatureCollection("county", 0); len(none.Features) != 0 || none.Features == nil {
+		t.Errorf("an unknown layer = %+v, want an empty (not null) list", none.Features)
+	}
+}
+
+func TestFeatureCollectionSimplifiesWithoutLosingAreas(t *testing.T) {
+	// A square with 400 points along its edges, plus a tiny triangle.
+	var ring [][2]float64
+	for i := 0; i <= 100; i++ {
+		ring = append(ring, [2]float64{float64(i) / 100, 0})
+	}
+	for i := 1; i <= 100; i++ {
+		ring = append(ring, [2]float64{1, float64(i) / 100})
+	}
+	for i := 99; i >= 0; i-- {
+		ring = append(ring, [2]float64{float64(i) / 100, 1})
+	}
+	for i := 99; i >= 0; i-- {
+		ring = append(ring, [2]float64{0, float64(i) / 100})
+	}
+	tiny := [][2]float64{{5, 5}, {5.0001, 5}, {5, 5.0001}, {5, 5}}
+	m, err := New([]Area{{Code: "SQ", Label: "Square", Polygons: [][][][2]float64{{ring}, {tiny}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := m.FeatureCollection("", 0.01).Features[0].Geometry.Coordinates
+	sq := g[0][0]
+	if len(sq) > 10 || len(sq) < 4 {
+		t.Errorf("square simplified to %d points, want its corners (4-10)", len(sq))
+	}
+	if sq[0] != sq[len(sq)-1] {
+		t.Errorf("simplified ring is not closed: %v ... %v", sq[0], sq[len(sq)-1])
+	}
+	if len(g) != 2 || len(g[1][0]) < 4 {
+		t.Errorf("a ring smaller than the tolerance must survive as a closed ring, got %v", g)
+	}
+	if full := m.FeatureCollection("", 0).Features[0].Geometry.Coordinates[0][0]; len(full) != len(ring) {
+		t.Errorf("tolerance 0 keeps every point: %d of %d", len(full), len(ring))
+	}
+}

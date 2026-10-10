@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -133,5 +134,53 @@ func TestTheDocumentedExampleAreasFileLoads(t *testing.T) {
 	}
 	if got, _ := m.LocateIATA(areamap.DefaultLayer, "MRY"); got != "MRY" {
 		t.Errorf("observer MRY = %q, want MRY", got)
+	}
+}
+
+func TestConfigAreasGeoJSONServesEveryAreaShape(t *testing.T) {
+	dir := writeAreasFile(t, scotlandGeoJSON)
+	cfg := &Config{Areas: belgium(), AreasFile: "areas.geojson"}
+	if _, err := LoadAreaMap(cfg, dir); err != nil {
+		t.Fatal(err)
+	}
+	r := mux.NewRouter()
+	srv := &Server{db: setupTestDBv2(t), cfg: cfg}
+	r.HandleFunc("/api/config/areas/geojson", srv.handleConfigAreasGeoJSON).Methods("GET")
+	get := func(q string) (int, areamap.FeatureCollection, string) {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/config/areas/geojson"+q, nil))
+		var fc areamap.FeatureCollection
+		body := w.Body.String()
+		_ = json.Unmarshal([]byte(body), &fc)
+		return w.Code, fc, body
+	}
+	code, fc, body := get("")
+	if code != 200 || fc.Type != "FeatureCollection" || len(fc.Features) != 2 {
+		t.Fatalf("all areas = %d %s", code, body)
+	}
+	byCode := map[string]areamap.Feature{}
+	for _, f := range fc.Features {
+		byCode[f.Properties.Code] = f
+	}
+	if byCode["BEL"].Properties.Layer != areamap.DefaultLayer || len(byCode["BEL"].Geometry.Coordinates) != 1 {
+		t.Errorf("config.json's box should come back as a polygon: %+v", byCode["BEL"])
+	}
+	if byCode["SCO"].Properties.Layer != "country" || byCode["SCO"].Properties.Label == "" {
+		t.Errorf("the file's area should keep its layer and label: %+v", byCode["SCO"].Properties)
+	}
+	if _, one, _ := get("?layer=country"); len(one.Features) != 1 || one.Features[0].Properties.Code != "SCO" {
+		t.Errorf("layer=country = %+v, want SCO only", one.Features)
+	}
+	_, _, again := get("")
+	if again != body {
+		t.Error("the same request should give the same bytes (built once)")
+	}
+	empty := &Server{db: setupTestDBv2(t), cfg: &Config{}}
+	r2 := mux.NewRouter()
+	r2.HandleFunc("/api/config/areas/geojson", empty.handleConfigAreasGeoJSON).Methods("GET")
+	w := httptest.NewRecorder()
+	r2.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/config/areas/geojson", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"features":[]`) {
+		t.Errorf("no areas = %d %s, want an empty FeatureCollection", w.Code, w.Body.String())
 	}
 }

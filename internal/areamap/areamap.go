@@ -293,3 +293,35 @@ func (m *Map) Contains(code string, lat, lon float64) bool {
 	i, ok := m.byCode[code]
 	return ok && m.areas[i].contains(lat, lon)
 }
+
+// FeatureCollection is the areas as GeoJSON, for drawing them.
+type FeatureCollection struct {
+	Type     string    `json:"type"`
+	Features []Feature `json:"features"`
+}
+
+// Feature is one area: its code, label and layer, and its shape.
+type Feature struct {
+	Type       string          `json:"type"`
+	Properties FeatureProps    `json:"properties"`
+	Geometry   FeatureGeometry `json:"geometry"`
+}
+
+// FeatureProps names a feature's area.
+type FeatureProps struct {
+	Code  string `json:"code"`
+	Label string `json:"label"`
+	Layer string `json:"layer"`
+}
+
+// FeatureGeometry is always a MultiPolygon, in [lon, lat] order.
+type FeatureGeometry struct {
+	Type        string           `json:"type"`
+	Coordinates [][][][2]float64 `json:"coordinates"`
+}
+
+// FeatureCollection returns one layer's areas ("" for every layer) as
+// GeoJSON, each ring simplified to within tolerance degrees.
+func (m *Map) FeatureCollection(layer string, tolerance float64) FeatureCollection {
+	return FeatureCollection{Type: "FeatureCollection", Features: []Feature{}}
+}

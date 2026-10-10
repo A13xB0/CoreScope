@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -73,4 +74,9 @@ func (c *Config) fileArea(code string) bool {
 		return false
 	}
 	return c.areaMap.Has(code)
+}
+
+// GET /api/config/areas/geojson
+func (s *Server) handleConfigAreasGeoJSON(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, areamap.FeatureCollection{Type: "FeatureCollection", Features: []areamap.Feature{}})
 }
