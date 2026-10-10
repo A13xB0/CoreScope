@@ -495,6 +495,18 @@
 }
 .live-toggles label { display: flex; align-items: center; gap: 3px; cursor: pointer; white-space: nowrap; }
 .live-toggles input { margin: 0; }
+.live-colour-by select {
+  font: inherit; color: var(--text); background: var(--input-bg, var(--surface-1));
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; margin-left: 2px;
+}
+.live-colour-by select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.legend-count { margin-left: auto; padding-left: 6px; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+.legend-list--groups li { display: flex; align-items: center; gap: 0; }
+.legend-note { color: var(--text-muted); font-style: italic; }
+/* Hash mode has no key: the group section is hidden (display:grid above would
+   otherwise override the hidden attribute). */
+.live-legend .legend-title[hidden], .live-legend .legend-list[hidden]:not(#roleLegendList) { display: none; }
 
 /* ---- Live controls cluster (#1205 — re-anchored inside MESH LIVE panel)
  * History: PR #1180 detached the toggles into a `position:fixed` overlay
@@ -1507,4 +1519,25 @@ input.live-node-filter-input:focus {
 .leaflet-zoom-anim .leaflet-overlay-pane,
 .leaflet-zoom-anim .leaflet-liveAnimPane-pane {
   display: none !important;
+}
+
+/* "Colour by" palette: categorical slots in the dataviz reference order,
+   validated against the surfaces in both themes; rest = codes nobody can
+   name, none = not scoped. Read by live.js (livePalette) for the canvas. */
+.live-page {
+  --live-group-1: #2a78d6; --live-group-2: #eb6834; --live-group-3: #1baf7a; --live-group-4: #eda100;
+  --live-group-5: #e87ba4; --live-group-6: #008300; --live-group-7: #4a3aa7;
+  --live-group-rest: #a3b1c6; --live-group-none: #64748b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .live-page {
+    --live-group-1: #3987e5; --live-group-2: #d95926; --live-group-3: #199e70; --live-group-4: #c98500;
+    --live-group-5: #d55181; --live-group-6: #008300; --live-group-7: #9085e9;
+    --live-group-rest: #4e5d75; --live-group-none: #94a3b8;
+  }
+}
+:root[data-theme="dark"] .live-page {
+  --live-group-1: #3987e5; --live-group-2: #d95926; --live-group-3: #199e70; --live-group-4: #c98500;
+  --live-group-5: #d55181; --live-group-6: #008300; --live-group-7: #9085e9;
+  --live-group-rest: #4e5d75; --live-group-none: #94a3b8;
 }
