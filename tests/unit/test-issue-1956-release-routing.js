@@ -133,7 +133,7 @@ function runSteps(source, context, edge, mutateFails = false) {
         input: stubs + '\n' + expand(script, context), cwd: dir, encoding: 'utf8', timeout: 15000,
         env: {
           ...process.env, GITHUB_REF: context.github.ref, GITHUB_SHA: context.github.sha,
-          GITHUB_REF_NAME: context.github.ref_name,
+          GITHUB_REF_NAME: context.github.ref_name, CC: '',
           GITHUB_OUTPUT: bashPath(output), COMMAND_LOG: bashPath(log), TMPDIR: bashPath(dir),
           EDGE_CONFIG: edge === null ? 'missing' : JSON.stringify({ config: { Labels: { 'org.opencontainers.image.revision': edge } } }),
           // :edge is a two-platform index plus the two buildx attestation
