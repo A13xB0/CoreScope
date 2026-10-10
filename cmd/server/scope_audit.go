@@ -845,7 +845,8 @@ type ScopeAuditRow struct {
 // (see AllCurrentDeclaredRegions).
 type ScopeAuditResponse struct {
 	Window    string          `json:"window"`
-	Since     string          `json:"since"` // ISO — start of the observed-forwarding window
+	Since     string          `json:"since"`          // ISO — start of the observed-forwarding window
+	Area      string          `json:"area,omitempty"` // ?area= filter, when given
 	Repeaters []ScopeAuditRow `json:"repeaters"`
 }
 
@@ -888,6 +889,7 @@ type ScopeTransportResponse struct {
 	Window    string              `json:"window"`
 	Since     string              `json:"since"`
 	Scope     string              `json:"scope,omitempty"` // normalised ?scope= filter, when given
+	Area      string              `json:"area,omitempty"`  // ?area= filter, when given
 	Carrying  *int                `json:"carrying,omitempty"`
 	NotCarry  *int                `json:"notCarrying,omitempty"`
 	Repeaters []ScopeTransportRow `json:"repeaters"`
