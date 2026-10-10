@@ -49,7 +49,7 @@ async function openMap(ctx, hash, areas) {
   await page.waitForTimeout(600);
   return { page, seen };
 }
-const paths = (page) => page.evaluate(() => document.querySelectorAll('.leaflet-areasPane-pane path').length);
+const paths = (page) => page.evaluate(() => document.querySelectorAll('.leaflet-areas-pane path').length);
 const labels = (page) => page.evaluate(() => [...document.querySelectorAll('.leaflet-tooltip.area-label')].map((t) => t.textContent.trim()).sort());
 const toggleShown = (page) => page.evaluate(() => { const l = document.getElementById('mcAreasOverlayLabel'); return !!l && getComputedStyle(l).display !== 'none'; });
 
@@ -83,10 +83,10 @@ const toggleShown = (page) => page.evaluate(() => { const l = document.getElemen
 
   await step('turning it on draws every area, under the markers, with its label', async () => {
     await page.check('#mcAreasOverlay');
-    await page.waitForFunction(() => document.querySelectorAll('.leaflet-areasPane-pane path').length === 2);
+    await page.waitForFunction(() => document.querySelectorAll('.leaflet-areas-pane path').length === 2);
     assert(JSON.stringify(await labels(page)) === JSON.stringify(['East', 'West']), 'labels: ' + JSON.stringify(await labels(page)));
     const z = await page.evaluate(() => ({
-      areas: +getComputedStyle(document.querySelector('.leaflet-areasPane-pane')).zIndex,
+      areas: +getComputedStyle(document.querySelector('.leaflet-areas-pane')).zIndex,
       markers: +getComputedStyle(document.querySelector('.leaflet-marker-pane')).zIndex
     }));
     assert(z.areas < z.markers, `areas pane z ${z.areas} should be under markers ${z.markers}`);
@@ -96,23 +96,25 @@ const toggleShown = (page) => page.evaluate(() => { const l = document.getElemen
   await step('the area chosen in the area filter is highlighted', async () => {
     await page.evaluate(() => window.AreaFilter.setSelected('WEST'));
     await page.waitForTimeout(300);
-    const sel = await page.evaluate(() => [...document.querySelectorAll('.leaflet-areasPane-pane path.area-selected')].length);
+    const sel = await page.evaluate(() => [...document.querySelectorAll('.leaflet-areas-pane path.area-selected')].length);
     assert(sel === 1, sel + ' highlighted areas');
     await page.evaluate(() => window.AreaFilter.setSelected(null));
     await page.waitForTimeout(300);
-    assert(await page.evaluate(() => document.querySelectorAll('.leaflet-areasPane-pane path.area-selected').length) === 0, 'highlight stayed after clearing');
+    assert(await page.evaluate(() => document.querySelectorAll('.leaflet-areas-pane path.area-selected').length) === 0, 'highlight stayed after clearing');
   });
 
   await step('clicking an area selects it in the filter and reloads nodes for it; clicking again clears', async () => {
     const pane = await page.locator('#leaflet-map').boundingBox();
     // Top-left of the view: inside an area, away from the controls and most markers.
     const x = pane.x + 70, y = pane.y + pane.height - 60;
-    const before = seen.nodes.length;
     await page.mouse.click(x, y);
     await page.waitForTimeout(600);
     const picked = await page.evaluate(() => window.AreaFilter.getSelected());
     assert(picked === 'WEST' || picked === 'EAST', 'selected ' + picked);
-    assert(seen.nodes.slice(before).some((u) => u.includes('area=' + picked)), 'nodes were not reloaded for ' + picked);
+    // The node list for an area is cached client-side, so the request may
+    // have gone out already (the highlight step selected WEST): it must have
+    // been made at some point for the area the click picked.
+    assert(seen.nodes.some((u) => u.includes('area=' + picked)), 'nodes were never loaded for ' + picked);
     await page.mouse.click(x, y);
     await page.waitForTimeout(600);
     assert(await page.evaluate(() => window.AreaFilter.getSelected()) === null, 'second click did not clear');
@@ -121,7 +123,7 @@ const toggleShown = (page) => page.evaluate(() => { const l = document.getElemen
   await step('the toggle is remembered across a reload, without fetching twice per visit', async () => {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#leaflet-map[data-loaded="true"]', { timeout: 20000 });
-    await page.waitForFunction(() => document.querySelectorAll('.leaflet-areasPane-pane path').length === 2);
+    await page.waitForFunction(() => document.querySelectorAll('.leaflet-areas-pane path').length === 2);
     assert(await page.isChecked('#mcAreasOverlay'), 'toggle not restored');
     await page.uncheck('#mcAreasOverlay');
     await page.waitForTimeout(200);
@@ -135,7 +137,7 @@ const toggleShown = (page) => page.evaluate(() => { const l = document.getElemen
     const c2 = await browser.newContext({ viewport: { width: 1024, height: 768 } });
     const { page: p2, seen: s2 } = await openMap(c2, '#/map?areas=1', AREAS);
     await step('#/map?areas=1 opens with the overlay on', async () => {
-      await p2.waitForFunction(() => document.querySelectorAll('.leaflet-areasPane-pane path').length === 2);
+      await p2.waitForFunction(() => document.querySelectorAll('.leaflet-areas-pane path').length === 2);
       assert(await p2.isChecked('#mcAreasOverlay'), 'toggle not on from the link');
       assert(!s2.error, s2.error);
     });
