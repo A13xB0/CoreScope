@@ -34,6 +34,7 @@ type Server struct {
 	cfg       *Config
 	hub       *Hub
 	store     *PacketStore // in-memory packet store (nil = fallback to DB)
+	data      *dataService // the Data tab's index (nil = tab off)
 	configDir string       // directory containing config.json (for write-back via PUT /api/config/geo-filter)
 	startedAt time.Time
 	perfStats *PerfStats
@@ -280,6 +281,10 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/config/geo-filter", s.handleConfigGeoFilter).Methods("GET")
 	r.HandleFunc("/api/config/areas", s.handleConfigAreas).Methods("GET")
 	r.HandleFunc("/api/config/areas/polygons", s.handleConfigAreasPolygons).Methods("GET")
+	r.HandleFunc("/api/data/config", s.handleDataConfig).Methods("GET")
+	r.HandleFunc("/api/data/summary", s.handleDataSummary).Methods("GET")
+	r.HandleFunc("/api/data/cube", s.handleDataCube).Methods("GET")
+	r.HandleFunc("/api/data/packets", s.handleDataPackets).Methods("GET")
 	r.Handle("/api/config/geo-filter", s.requireAdmin(http.HandlerFunc(s.handlePutConfigGeoFilter))).Methods("PUT")
 
 	// Readiness endpoint (gated on background init completion)

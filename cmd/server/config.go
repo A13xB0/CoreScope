@@ -157,6 +157,10 @@ type Config struct {
 	// has run. Nil until then.
 	areaMap *areamap.Map
 
+	// Data turns on the Data tab: every packet of the last few days placed
+	// by the area it started in and the areas that heard it. Needs areas.
+	Data *DataConfig `json:"data,omitempty"`
+
 	Timestamps *TimestampConfig `json:"timestamps,omitempty"`
 
 	// CORSAllowedOrigins is the list of origins permitted to make cross-origin
