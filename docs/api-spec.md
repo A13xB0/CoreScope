@@ -57,6 +57,7 @@
 - [GET /api/data/summary](#get-apidatasummary)
 - [GET /api/data/cube](#get-apidatacube)
 - [GET /api/data/packets](#get-apidatapackets)
+- [GET /api/data/dashboards](#get-apidatadashboards)
 - [GET /api/config/client](#get-apiconfigclient)
 - [GET /api/config/cache](#get-apiconfigcache)
 - [GET /api/config/map](#get-apiconfigmap)
@@ -2491,6 +2492,53 @@ The packets behind any figure, under the same filters. Newest first, at most 2,0
   }]
 }
 ```
+
+---
+
+## GET /api/data/dashboards
+
+The dashboards the Data tab offers, in this order:
+
+1. the built-in ones (generic, needing only an areas file);
+2. the operator's, from the file named by `data.dashboardsFile`.
+
+All are validated at startup. A visitor's own dashboards live in their browser and are never sent here.
+
+### Response `200`
+
+```jsonc
+{
+  "default": string,            // id of the dashboard to open first (data.defaultDashboard, else the first built-in)
+  "home": string,               // data.homeArea, the default of a $home variable; omitted when unset
+  "dashboards": [{
+    "schema": 1,
+    "id": string,               // lower-case letters, digits and dashes
+    "title": string,
+    "description": string,
+    "window": "24h" | "7d" | "30d",
+    "source": "built-in" | "operator",
+    "variables": [{ "name": string, "kind": "area" | "scope" | "channel" | "text", "label": string, "default": string }],
+    "panels": [{
+      "id": string,
+      "title": string,          // may contain $variables
+      "type": "bar" | "line" | "area" | "matrix" | "stat" | "table" | "top" | "text",
+      "query": {
+        "window": string,       // overrides the dashboard period for this panel
+        "filters": [ /* as /api/data/packets f=; values may be $variables */ ],
+        "x": "time" | dimension, "split": dimension, "facet": dimension,
+        "mode": "count" | "share", "rollup": "10m" | "30m" | "1h" | "6h" | "1d" | "1w",
+        "pick": [string],       // series shown on their own; the rest are counted together
+        "rows": dimension, "cols": dimension,   // matrix
+        "dim": dimension, "top": number          // top list
+      },
+      "options": { "text": string },             // text panels: short Markdown
+      "layout": { "x": number, "y": number, "w": number, "h": number }   // 12-column grid
+    }]
+  }]
+}
+```
+
+`404` when the tab is off. The file is a JSON list of these documents, exactly as the tab's **Export** saves them; a file with an unknown field, panel type or dimension, or more than 50 dashboards or 24 panels, stops startup with the reason.
 
 ---
 

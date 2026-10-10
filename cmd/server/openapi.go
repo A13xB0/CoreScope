@@ -178,6 +178,7 @@ func routeDescriptions() map[string]routeMeta {
 			QueryParams: []paramMeta{{Name: "window", Description: "24h, 7d or 30d, as far as data.days reaches", Type: "string", Required: true}}},
 		"GET /api/data/cube": {Summary: "Data tab cube", Description: "Packets per time bucket along origin, heard, type, scope, how, route, through and channel: rows of [bucket, origin, heard, type, scope, how, route, through, channel, packets], each an index into the lists beside it. Cached 60 s. 404 when the tab is off.", Tag: "data",
 			QueryParams: []paramMeta{{Name: "window", Description: "24h, 7d or 30d, as far as data.days reaches", Type: "string", Required: true}}},
+		"GET /api/data/dashboards": {Summary: "Data tab dashboards", Description: "The built-in dashboards followed by the operator's (data.dashboardsFile), validated, with the one to open first and the home area. Each is a schema-1 document of panels: a query over the cube, a panel type and a place on a 12-column grid. 404 when the tab is off.", Tag: "data"},
 		"GET /api/data/packets": {Summary: "Packets behind a Data tab figure", Description: "The packet rows (one per receiving area) passing every filter, newest first, at most 2,000 with the full total. Two run at a time. 404 when the tab is off.", Tag: "data",
 			QueryParams: []paramMeta{
 				{Name: "window", Description: "24h, 7d or 30d", Type: "string", Required: true},

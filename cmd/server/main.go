@@ -380,6 +380,12 @@ func main() {
 	if ds, err := newDataService(database, cfg); err != nil {
 		log.Fatalf("[data] %v", err)
 	} else if ds != nil {
+		dash, derr := LoadDataDashboards(cfg, configDir)
+		if derr != nil {
+			log.Fatalf("[data] %v", derr)
+		}
+		ds.dashboards = dash
+		log.Printf("[data] %d dashboards, opening on %q", len(dash.Dashboards), dash.Default)
 		srv.data = ds
 		go ds.run(context.Background())
 		log.Printf("[data] Data tab on: layer %q, %d days", ds.layer, ds.days)
