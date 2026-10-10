@@ -74,6 +74,24 @@
     return x ? x.label.toLowerCase() : w;
   }
   function windowKeys() { return (cfg.windows || []).map(function (w) { return w.key; }); }
+  // Without areas (config places false) the place dimensions mean nothing:
+  // every packet starts and is heard in "unknown".
+  var PLACE_DIMS = { border: true, origin: true, heard: true, through: true, how: true };
+  function places() { return !cfg || cfg.places !== false; }
+  function hasDim(k) { return !!DIMS[k] && (places() || !PLACE_DIMS[k]); }
+  // placeUse names the first thing in d that needs areas, or ''.
+  function placeUse(d) {
+    var v = (d.variables || []).filter(function (x) { return x.kind === 'area'; })[0];
+    if (v) return 'variable $' + v.name + ' is an area';
+    for (var i = 0; i < (d.panels || []).length; i++) { var u = panelPlaceUse(d.panels[i]); if (u) return 'panel "' + d.panels[i].id + '" ' + u; }
+    return '';
+  }
+  function panelPlaceUse(p) {
+    var q = p.query || {}, dims = [q.x, q.split, q.facet, q.rows, q.cols, q.dim];
+    for (var i = 0; i < dims.length; i++) if (PLACE_DIMS[dims[i]]) return 'uses ' + DIMS[dims[i]].label;
+    for (var j = 0; j < (q.filters || []).length; j++) if (PLACE_DIMS[q.filters[j].d]) return 'filters on ' + DIMS[q.filters[j].d].label;
+    return '';
+  }
 
   // ---- dimensions -----------------------------------------------------
   var areaSlot = {};
@@ -201,6 +219,8 @@
     }
     var ids = {};
     for (var j = 0; j < d.panels.length; j++) { var bad = validatePanel(d.panels[j], ids); if (bad) return bad; }
+    var use = places() ? '' : placeUse(d);
+    if (use) return 'This dashboard needs areas, which this CoreScope does not have: ' + use + '.';
     return '';
   }
 
@@ -240,7 +260,7 @@
   function loadMine() {
     try {
       var v = JSON.parse(localStorage.getItem(STORE_KEY) || '[]');
-      return Array.isArray(v) ? v.filter(function (d) { return !validateDashboard(d); }).map(function (d) { d.source = 'mine'; return d; }) : [];
+      return Array.isArray(v) ? v.filter(function (d) { var bad = validateDashboard(d); return !bad || /needs areas/.test(bad); }).map(function (d) { d.source = 'mine'; return d; }) : [];
     } catch (e) { return []; }
   }
   function saveMine() { try { localStorage.setItem(STORE_KEY, JSON.stringify(mine.map(stripSource))); } catch (e) { /* storage off: kept for this visit */ } }
@@ -285,6 +305,7 @@
       try {
         var doc = JSON.parse(b64urlDecode(p.get('d')));
         var bad = validateDashboard(doc);
+        if (bad && /needs areas/.test(bad)) bad = '';
         if (bad) toast('The shared dashboard could not be opened: ' + bad);
         else { doc.source = 'shared'; doc.id = 'shared-' + doc.id.slice(0, 56); shared = doc; state.id = doc.id; }
       } catch (e) { toast('The shared link is damaged; it could not be read.'); }
@@ -725,6 +746,7 @@
     body.textContent = '';
     var oldLeg = frame.querySelector('.dt-legend'); if (oldLeg) oldLeg.remove();
     if (p.type === 'text') { body.appendChild(md(substTitle((p.options && p.options.text) || '', d))); return; }
+    if (!places() && panelPlaceUse(p)) { empty(body, 'This panel needs areas, which this CoreScope does not have (it ' + panelPlaceUse(p) + ').'); return; }
     var w = panelWindow(p), c = cubes[w];
     if (!c) { empty(body, 'Loading…'); return; }
     var filters = panelFilters(p, d), rows = filteredRows(c, filters), q = p.query || {};
@@ -883,7 +905,7 @@
     s.addEventListener('change', function () { onChange(s.value); });
     return s;
   }
-  function dimOptions(withNone, withTime) { return (withNone ? [['', 'Nothing']] : []).concat(withTime ? [['time', 'Time']] : []).concat(DIM_ORDER.map(function (k) { return [k, DIMS[k].label]; })); }
+  function dimOptions(withNone, withTime) { return (withNone ? [['', 'Nothing']] : []).concat(withTime ? [['time', 'Time']] : []).concat(DIM_ORDER.filter(hasDim).map(function (k) { return [k, DIMS[k].label]; })); }
   function change(fn) { snapshot(); fn(); persist(); render(); }
   function filterText(f, d) {
     var D = DIMS[f.d], vals = f.v.map(function (v) { return v.charAt(0) === '$' ? substTitle(v, d) + ' (' + v + ')' : D.name(v); });
@@ -939,14 +961,14 @@
     if (p.type === 'matrix') {
       railSection(rail, 'Matrix');
       var mt = el('div', { 'class': 'dt-two' });
-      mt.appendChild(field('Rows', selectOf('dtPRows', dimOptions(false), q.rows || 'origin', function (v) { change(function () { q.rows = v; }); })));
-      mt.appendChild(field('Columns', selectOf('dtPCols', dimOptions(false), q.cols || 'heard', function (v) { change(function () { q.cols = v; }); })));
+      mt.appendChild(field('Rows', selectOf('dtPRows', dimOptions(false), q.rows || addDefaults('matrix').rows, function (v) { change(function () { q.rows = v; }); })));
+      mt.appendChild(field('Columns', selectOf('dtPCols', dimOptions(false), q.cols || addDefaults('matrix').cols, function (v) { change(function () { q.cols = v; }); })));
       rail.appendChild(mt);
     }
     if (p.type === 'table') {
       railSection(rail, 'Table');
       var tt = el('div', { 'class': 'dt-two' });
-      tt.appendChild(field('Rows', selectOf('dtPTX', dimOptions(false), q.x && q.x !== 'time' ? q.x : 'origin', function (v) { change(function () { q.x = v; }); })));
+      tt.appendChild(field('Rows', selectOf('dtPTX', dimOptions(false), q.x && q.x !== 'time' ? q.x : addDefaults('table').x, function (v) { change(function () { q.x = v; }); })));
       tt.appendChild(field('Columns', selectOf('dtPTS', dimOptions(true), q.split || '', function (v) { change(function () { if (v) q.split = v; else delete q.split; }); })));
       rail.appendChild(tt);
     }
@@ -996,7 +1018,8 @@
     });
     rail.appendChild(vchips);
     var vname = el('input', { id: 'dtVarName', 'class': 'dt-inp', placeholder: 'home', maxlength: '32' });
-    var vkind = selectOf('dtVarKind', [['area', 'Area'], ['scope', 'Scope'], ['channel', 'Channel'], ['text', 'Text']], 'area', function () { /* read on add */ });
+    var vkinds = (places() ? [['area', 'Area']] : []).concat([['scope', 'Scope'], ['channel', 'Channel'], ['text', 'Text']]);
+    var vkind = selectOf('dtVarKind', vkinds, vkinds[0][0], function () { /* read on add */ });
     var vadd = el('button', { type: 'button', 'class': 'dt-btn', text: 'Add variable' });
     vadd.addEventListener('click', function () {
       var nm = vname.value.trim().toLowerCase();
@@ -1022,7 +1045,7 @@
     var c = cubes[panelWindow(p)];
     if (!c) return;
     box.hidden = false;
-    var f = { d: 'heard', n: 0, v: [] };
+    var f = { d: hasDim('heard') ? 'heard' : 'scope', n: 0, v: [] };
     var draw = function () {
       box.textContent = '';
       var D = DIMS[f.d];
@@ -1159,14 +1182,23 @@
   }
   var ADD_DEFAULTS = {
     bar: [{ x: 'time', split: 'kind' }, 'Packets by kind', 6, 4],
-    line: [{ x: 'time', split: 'heard' }, 'Packets by receiving area', 6, 4],
+    line: [{ x: 'time', split: 'heard' }, 'Packets by receiving area', 6, 4, 'Packets by kind'],
     area: [{ x: 'time', split: 'kind' }, 'Packets over time', 6, 4],
-    matrix: [{ rows: 'origin', cols: 'heard' }, 'Where it started and where it was heard', 6, 4],
+    matrix: [{ rows: 'origin', cols: 'heard' }, 'Where it started and where it was heard', 6, 4, 'Scope by kind'],
     stat: [{}, 'Packets heard', 3, 2],
-    table: [{ x: 'origin', split: 'kind' }, 'Packets by start and kind', 6, 4],
+    table: [{ x: 'origin', split: 'kind' }, 'Packets by start and kind', 6, 4, 'Packets by scope and kind'],
     top: [{ dim: 'scope', top: 8 }, 'Busiest scopes', 4, 4],
     text: [{}, 'Note', 4, 2]
   };
+  // addDefaults: the query a new panel starts with, on dimensions that exist.
+  function addDefaults(type) {
+    var q = clone(ADD_DEFAULTS[type][0]);
+    if (places()) return q;
+    if (type === 'line') q.split = 'kind';
+    if (type === 'matrix') { q.rows = 'scope'; q.cols = 'kind'; }
+    if (type === 'table') { q.x = 'scope'; q.split = 'kind'; }
+    return q;
+  }
   function openAdd() {
     var d = cur();
     if (!editable(d)) { startEdit(); d = cur(); }
@@ -1181,7 +1213,7 @@
           close();
           var def = ADD_DEFAULTS[t[0]];
           change(function () {
-            var p = { id: newPanelId(d), title: def[1], type: t[0], query: clone(def[0]), layout: { x: 0, y: nextFreeY(d.panels), w: def[2], h: def[3] } };
+            var p = { id: newPanelId(d), title: places() ? def[1] : def[4] || def[1], type: t[0], query: addDefaults(t[0]), layout: { x: 0, y: nextFreeY(d.panels), w: def[2], h: def[3] } };
             if (t[0] === 'text') p.options = { text: 'Write a note for readers of this dashboard.' };
             d.panels.push(p); resolveLayout(d.panels, p); state.sel = p.id;
           });
@@ -1220,6 +1252,8 @@
     heardFrom: { label: 'Heard from', get: function (r) { return r.heardFrom || ''; } },
     boundary: { label: 'Boundary repeater', get: function (r) { return r.boundary || ''; } }
   };
+  var PLACE_COLS = { border: true, origin: true, basis: true, heard: true, through: true, how: true, heardFrom: true, boundary: true };
+  function colOk(k) { return places() || !PLACE_COLS[k]; }
   var COL_ORDER = Object.keys(COLS), DEFAULT_COLS = ['at', 'typeName', 'scope', 'origin', 'heard', 'how', 'hash'], COLS_KEY = 'corescope-data-cols';
   function loadCols() {
     try { var c = JSON.parse(localStorage.getItem(COLS_KEY) || 'null'); if (Array.isArray(c) && c.length && c.every(function (k) { return COLS[k]; })) return c; } catch (e) { /* defaults */ }
@@ -1255,12 +1289,13 @@
     box.textContent = '';
     box.appendChild(el('span', { 'class': 'dt-hint', text: 'Columns' }));
     cols.forEach(function (k, i) {
+      if (!colOk(k)) return;
       var x = el('button', { type: 'button', 'class': 'dt-fchip-x', 'aria-label': 'Remove the ' + COLS[k].label + ' column', text: '×' });
       if (cols.length === 1) x.disabled = true;
       x.addEventListener('click', function () { cols.splice(i, 1); saveCols(); renderColChips(); renderDrillTable(); });
       box.appendChild(el('span', { 'class': 'dt-fchip' }, [el('span', { 'class': 'dt-fchip-edit', text: COLS[k].label }), x]));
     });
-    var free = COL_ORDER.filter(function (k) { return cols.indexOf(k) < 0; });
+    var free = COL_ORDER.filter(function (k) { return cols.indexOf(k) < 0 && colOk(k); });
     if (!free.length) return;
     var s = el('select', { 'aria-label': 'Add a column', 'class': 'dt-addcol' });
     s.appendChild(el('option', { value: '', text: '+ Add column' }));
@@ -1274,8 +1309,8 @@
     if (!drill.rows.length) return;
     var C = COLS[drill.sort] || COLS.at;
     var rows = drill.rows.slice().sort(function (a, b) { var x1 = C.get(a), x2 = C.get(b); return C.num ? (x1 - x2) * drill.dir : String(x1).localeCompare(String(x2), undefined, { numeric: true }) * drill.dir; });
-    var t = el('table', { 'class': 'dt-t dt-drill-t' }), hr = el('tr');
-    cols.forEach(function (k) {
+    var t = el('table', { 'class': 'dt-t dt-drill-t' }), hr = el('tr'), shown = cols.filter(colOk);
+    shown.forEach(function (k) {
       var on = drill.sort === k;
       var th = el('th', { scope: 'col', 'aria-sort': on ? (drill.dir > 0 ? 'ascending' : 'descending') : 'none', 'class': COLS[k].num ? 'dt-n' : '' });
       var b = el('button', { type: 'button', 'class': 'dt-sort', text: COLS[k].label + (on ? (drill.dir > 0 ? ' ↑' : ' ↓') : '') });
@@ -1287,7 +1322,7 @@
     rows.slice(0, drill.shown).forEach(function (r) {
       var href = '#/packets/' + encodeURIComponent(r.hash);
       var tr = el('tr', { 'class': 'dt-link-row' });
-      cols.forEach(function (k) {
+      shown.forEach(function (k) {
         var C2 = COLS[k], text = C2.show ? C2.show(r) : String(C2.get(r));
         var td = el('td', { 'class': (C2.num ? 'dt-n ' : '') + (k === 'hash' ? 'dt-code-cell' : '') });
         if (k === 'hash') td.appendChild(el('a', { href: href, text: text })); else td.textContent = text;

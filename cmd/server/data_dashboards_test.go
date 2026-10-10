@@ -32,8 +32,15 @@ func writeDashboards(t *testing.T, body string) string {
 }
 
 func TestLoadDataDashboardsReadsTheFile(t *testing.T) {
+	// goodDashboards has an area variable, so this deployment has areas.
 	dir := writeDashboards(t, goodDashboards)
-	cfg := &Config{Data: &DataConfig{Enabled: true, DashboardsFile: "dashboards.json", DefaultDashboard: "cross-border"}}
+	if err := os.WriteFile(filepath.Join(dir, "areas.geojson"), []byte(dataAreasGeoJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{AreasFile: "areas.geojson", Data: &DataConfig{Enabled: true, DashboardsFile: "dashboards.json", DefaultDashboard: "cross-border"}}
+	if _, err := LoadAreaMap(cfg, dir); err != nil {
+		t.Fatal(err)
+	}
 	ds, err := LoadDataDashboards(cfg, dir)
 	if err != nil {
 		t.Fatal(err)

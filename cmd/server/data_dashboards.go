@@ -166,6 +166,30 @@ func validatePanel(p DashboardPanel) error {
 	return nil
 }
 
+// placeUse names the first thing in d that needs areas: an area variable or a
+// place dimension in any panel. "" when d works without areas.
+func placeUse(d Dashboard) string {
+	for _, v := range d.Variables {
+		if v.Kind == "area" {
+			return fmt.Sprintf("variable %q is an area", v.Name)
+		}
+	}
+	for _, p := range d.Panels {
+		q := p.Query
+		for _, dim := range []string{q.X, q.Split, q.Facet, q.Rows, q.Cols, q.Dim} {
+			if dataindex.PlaceDimensions[dim] {
+				return fmt.Sprintf("panel %q uses %q", p.ID, dim)
+			}
+		}
+		for _, f := range q.Filters {
+			if dataindex.PlaceDimensions[f.D] {
+				return fmt.Sprintf("panel %q filters on %q", p.ID, f.D)
+			}
+		}
+	}
+	return ""
+}
+
 func validateDashboard(d Dashboard) error {
 	if d.Schema != 1 {
 		return fmt.Errorf("dashboard %q uses schema %d; this CoreScope reads schema 1", d.ID, d.Schema)
@@ -208,7 +232,8 @@ func validateDashboard(d Dashboard) error {
 func LoadDataDashboards(cfg *Config, configDir string) (*DataDashboards, error) {
 	out := &DataDashboards{}
 	ids := map[string]bool{}
-	for _, d := range builtInDashboards() {
+	places := cfg.hasAreas()
+	for _, d := range builtInDashboards(places) {
 		d.Source = "built-in"
 		out.Dashboards = append(out.Dashboards, d)
 		ids[d.ID] = true
@@ -247,6 +272,9 @@ func LoadDataDashboards(cfg *Config, configDir string) (*DataDashboards, error) 
 			if err := validateDashboard(d); err != nil {
 				return nil, fmt.Errorf("data.dashboardsFile: %w", err)
 			}
+			if use := placeUse(d); use != "" && !places {
+				return nil, fmt.Errorf("data.dashboardsFile: dashboard %q: %s, which needs areas: set areasFile or areas in config.json, or drop it", d.ID, use)
+			}
 			if ids[d.ID] {
 				return nil, fmt.Errorf("data.dashboardsFile: dashboard id %q is already used", d.ID)
 			}
@@ -265,29 +293,56 @@ func LoadDataDashboards(cfg *Config, configDir string) (*DataDashboards, error) 
 	return out, nil
 }
 
-// builtInDashboards are generic: they need nothing but an areas file.
-func builtInDashboards() []Dashboard {
+// builtInDashboards are generic: they need an areas file at most. Without
+// areas (places false) they keep to kind, type, channel, scope and routing.
+func builtInDashboards(places bool) []Dashboard {
+	lay := func(x, y, w, h int) DashboardLayout { return DashboardLayout{X: x, Y: y, W: w, H: h} }
+	notChannel := dataindex.Filter{D: "channel", N: 1, V: []string{""}}
+	adverts := dataindex.Filter{D: "kind", V: []string{"adverts"}}
+	if !places {
+		return []Dashboard{
+			{Schema: 1, ID: "overview", Title: "Overview", Window: "24h",
+				Description: "Every packet heard, by kind, scope and channel.",
+				Panels: []DashboardPanel{
+					{ID: "packets", Title: "Packets heard", Type: "stat", Layout: lay(0, 0, 4, 2)},
+					{ID: "adverts", Title: "Flood adverts", Type: "stat", Query: DashboardQuery{Filters: []dataindex.Filter{adverts}}, Layout: lay(4, 0, 4, 2)},
+					{ID: "messages", Title: "Messages", Type: "stat", Query: DashboardQuery{Filters: []dataindex.Filter{{D: "kind", V: []string{"messages"}}}}, Layout: lay(8, 0, 4, 2)},
+					{ID: "by-kind", Title: "Packets over time by kind", Type: "area", Query: DashboardQuery{X: "time", Split: "kind"}, Layout: lay(0, 2, 8, 4)},
+					{ID: "top-scopes", Title: "Busiest scopes", Type: "top", Query: DashboardQuery{Dim: "scope", Top: 8}, Layout: lay(8, 2, 4, 4)},
+					{ID: "top-channels", Title: "Busiest channels", Type: "top", Query: DashboardQuery{Dim: "channel", Top: 8, Filters: []dataindex.Filter{notChannel}}, Layout: lay(0, 6, 5, 5)},
+					{ID: "types", Title: "Packet types by routing", Type: "table", Query: DashboardQuery{X: "type", Split: "routing"}, Layout: lay(5, 6, 7, 5)},
+				}},
+			{Schema: 1, ID: "scopes", Title: "Scopes and channels", Window: "7d",
+				Description: "Which region scopes and channels carry traffic, and what kind.",
+				Panels: []DashboardPanel{
+					{ID: "scope-time", Title: "Packets by scope", Type: "bar", Query: DashboardQuery{X: "time", Split: "scope", Rollup: "6h"}, Layout: lay(0, 0, 8, 4)},
+					{ID: "scope-kinds", Title: "Scope kinds", Type: "top", Query: DashboardQuery{Dim: "sclass", Top: 4}, Layout: lay(8, 0, 4, 4)},
+					{ID: "scope-kind", Title: "Scope by packet kind", Type: "matrix", Query: DashboardQuery{Rows: "scope", Cols: "kind"}, Layout: lay(0, 4, 7, 5)},
+					{ID: "channel-time", Title: "Channel traffic", Type: "line", Query: DashboardQuery{X: "time", Split: "channel", Rollup: "6h", Filters: []dataindex.Filter{notChannel}}, Layout: lay(7, 4, 5, 5)},
+				}},
+		}
+	}
 	crossed := dataindex.Filter{D: "border", V: []string{"crossed"}}
 	return []Dashboard{
 		{Schema: 1, ID: "overview", Title: "Overview", Window: "24h",
 			Description: "Every packet heard, by kind, by the area it started in and the areas that heard it.",
 			Panels: []DashboardPanel{
-				{ID: "packets", Title: "Packets heard", Type: "stat", Layout: DashboardLayout{X: 0, Y: 0, W: 3, H: 2}},
-				{ID: "crossed", Title: "Heard outside their start", Type: "stat", Query: DashboardQuery{Filters: []dataindex.Filter{crossed}}, Layout: DashboardLayout{X: 3, Y: 0, W: 3, H: 2}},
-				{ID: "adverts", Title: "Flood adverts", Type: "stat", Query: DashboardQuery{Filters: []dataindex.Filter{{D: "kind", V: []string{"adverts"}}}}, Layout: DashboardLayout{X: 6, Y: 0, W: 3, H: 2}},
-				{ID: "unknown", Title: "Start not known", Type: "stat", Query: DashboardQuery{Filters: []dataindex.Filter{{D: "border", V: []string{"unknown"}}}}, Layout: DashboardLayout{X: 9, Y: 0, W: 3, H: 2}},
-				{ID: "by-kind", Title: "Packets over time by kind", Type: "area", Query: DashboardQuery{X: "time", Split: "kind"}, Layout: DashboardLayout{X: 0, Y: 2, W: 8, H: 4}},
-				{ID: "top-scopes", Title: "Busiest scopes", Type: "top", Query: DashboardQuery{Dim: "scope", Top: 8}, Layout: DashboardLayout{X: 8, Y: 2, W: 4, H: 4}},
-				{ID: "matrix", Title: "Who hears whom", Type: "matrix", Query: DashboardQuery{Rows: "origin", Cols: "heard"}, Layout: DashboardLayout{X: 0, Y: 6, W: 8, H: 5}},
-				{ID: "top-channels", Title: "Busiest channels", Type: "top", Query: DashboardQuery{Dim: "channel", Top: 8, Filters: []dataindex.Filter{{D: "channel", N: 1, V: []string{""}}}}, Layout: DashboardLayout{X: 8, Y: 6, W: 4, H: 5}},
+				{ID: "packets", Title: "Packets heard", Type: "stat", Layout: lay(0, 0, 3, 2)},
+				{ID: "crossed", Title: "Heard outside their start", Type: "stat", Query: DashboardQuery{Filters: []dataindex.Filter{crossed}}, Layout: lay(3, 0, 3, 2)},
+				{ID: "adverts", Title: "Flood adverts", Type: "stat", Query: DashboardQuery{Filters: []dataindex.Filter{adverts}}, Layout: lay(6, 0, 3, 2)},
+				{ID: "unknown", Title: "Start not known", Type: "stat", Query: DashboardQuery{Filters: []dataindex.Filter{{D: "border", V: []string{"unknown"}}}}, Layout: lay(9, 0, 3, 2)},
+				{ID: "by-kind", Title: "Packets over time by kind", Type: "area", Query: DashboardQuery{X: "time", Split: "kind"}, Layout: lay(0, 2, 8, 4)},
+				{ID: "top-scopes", Title: "Busiest scopes", Type: "top", Query: DashboardQuery{Dim: "scope", Top: 8}, Layout: lay(8, 2, 4, 4)},
+				{ID: "matrix", Title: "Who hears whom", Type: "matrix", Query: DashboardQuery{Rows: "origin", Cols: "heard"}, Layout: lay(0, 6, 8, 5)},
+				{ID: "top-channels", Title: "Busiest channels", Type: "top", Query: DashboardQuery{Dim: "channel", Top: 8, Filters: []dataindex.Filter{notChannel}}, Layout: lay(8, 6, 4, 5)},
 			}},
 		{Schema: 1, ID: "scopes", Title: "Scopes and channels", Window: "7d",
 			Description: "Which region scopes and channels carry traffic, and where they are heard.",
 			Panels: []DashboardPanel{
-				{ID: "scope-time", Title: "Packets by scope", Type: "bar", Query: DashboardQuery{X: "time", Split: "scope", Rollup: "6h"}, Layout: DashboardLayout{X: 0, Y: 0, W: 8, H: 4}},
-				{ID: "scope-kinds", Title: "Scope kinds", Type: "top", Query: DashboardQuery{Dim: "sclass", Top: 4}, Layout: DashboardLayout{X: 8, Y: 0, W: 4, H: 4}},
-				{ID: "scope-heard", Title: "Scope by receiving area", Type: "matrix", Query: DashboardQuery{Rows: "scope", Cols: "heard"}, Layout: DashboardLayout{X: 0, Y: 4, W: 7, H: 5}},
-				{ID: "channel-time", Title: "Channel traffic", Type: "line", Query: DashboardQuery{X: "time", Split: "channel", Rollup: "6h", Filters: []dataindex.Filter{{D: "channel", N: 1, V: []string{""}}}}, Layout: DashboardLayout{X: 7, Y: 4, W: 5, H: 5}},
+				{ID: "scope-time", Title: "Packets by scope", Type: "bar", Query: DashboardQuery{X: "time", Split: "scope", Rollup: "6h"}, Layout: lay(0, 0, 8, 4)},
+				{ID: "scope-kinds", Title: "Scope kinds", Type: "top", Query: DashboardQuery{Dim: "sclass", Top: 4}, Layout: lay(8, 0, 4, 4)},
+				{ID: "scope-heard", Title: "Scope by receiving area", Type: "matrix", Query: DashboardQuery{Rows: "scope", Cols: "heard"}, Layout: lay(0, 4, 7, 5)},
+				{ID: "channel-time", Title: "Channel traffic", Type: "line", Query: DashboardQuery{X: "time", Split: "channel", Rollup: "6h", Filters: []dataindex.Filter{notChannel}}, Layout: lay(7, 4, 5, 5)},
 			}},
 	}
 }

@@ -111,10 +111,20 @@ func newDataService(db *DB, cfg *Config) (*dataService, error) {
 	if !cfg.DataEnabled() {
 		return nil, nil
 	}
-	m := cfg.areaMap
-	if m == nil || len(m.Areas("")) == 0 {
-		return nil, errors.New("data.enabled needs areas: set areasFile or areas in config.json")
+	d := &dataService{
+		db: db, days: cfg.DataDays(),
+		now: time.Now, refreshSpan: dataRefreshSpan,
+		cache: map[string]dataCached{}, slots: make(chan struct{}, dataPacketSlots),
 	}
+	if !cfg.hasAreas() {
+		// No areas: the tab counts by kind, type, channel, scope and routing,
+		// and every packet starts and is heard in Unknown.
+		if cfg.Data.HomeArea != "" {
+			return nil, fmt.Errorf("data.homeArea %q needs areas: set areasFile or areas in config.json", cfg.Data.HomeArea)
+		}
+		return d, nil
+	}
+	m := cfg.areaMap
 	layer := cfg.Data.Layer
 	if layer == "" {
 		layer = m.Layers()[0]
@@ -125,15 +135,39 @@ func newDataService(db *DB, cfg *Config) (*dataService, error) {
 	if h := cfg.Data.HomeArea; h != "" && !m.Has(h) {
 		return nil, fmt.Errorf("data.homeArea %q is not an area", h)
 	}
-	return &dataService{
-		db: db, areas: m, layer: layer, home: cfg.Data.HomeArea, days: cfg.DataDays(),
-		now: time.Now, refreshSpan: dataRefreshSpan,
-		cache: map[string]dataCached{}, slots: make(chan struct{}, dataPacketSlots),
-	}, nil
+	d.areas, d.layer, d.home = m, layer, cfg.Data.HomeArea
+	return d, nil
+}
+
+// hasAreas reports whether config.json or areasFile defines any area, so the
+// Data tab can place packets.
+func (c *Config) hasAreas() bool {
+	return c.areaMap != nil && len(c.areaMap.Areas("")) > 0
+}
+
+// places reports whether the tab places packets in areas.
+func (d *dataService) places() bool { return d.areas != nil }
+
+// dimensions are the filter dimensions that mean something here: all of
+// them with areas, none of the place ones without.
+func (d *dataService) dimensions() []string {
+	if d.places() {
+		return dataindex.Dimensions
+	}
+	var out []string
+	for _, k := range dataindex.Dimensions {
+		if !dataindex.PlaceDimensions[k] {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 func (d *dataService) areaCodes() []string {
 	var out []string
+	if !d.places() {
+		return out
+	}
 	for _, a := range d.areas.Areas(d.layer) {
 		out = append(out, a.Code)
 	}
@@ -228,7 +262,7 @@ func (d *dataService) fill(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ix := dataindex.New(dataindex.Options{Areas: d.areaCodes(), Home: d.home})
+	ix := dataindex.New(dataindex.Options{Areas: d.areaCodes(), Home: d.home, NoPlaces: !d.places()})
 	since := start.Add(-time.Duration(d.days) * 24 * time.Hour).Truncate(time.Second)
 	d.mu.Lock()
 	first := d.ix == nil
@@ -534,6 +568,7 @@ type dataAreaInfo struct {
 
 type dataConfigResponse struct {
 	Enabled     bool               `json:"enabled"`
+	Places      bool               `json:"places"`
 	Layer       string             `json:"layer,omitempty"`
 	Layers      []string           `json:"layers,omitempty"`
 	Home        string             `json:"home,omitempty"`
@@ -562,12 +597,15 @@ func (s *Server) handleDataConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := dataConfigResponse{
-		Enabled: true, Layer: d.layer, Layers: d.areas.Layers(), Home: d.home,
+		Enabled: true, Places: d.places(), Layer: d.layer, Home: d.home,
 		Windows: d.windows(), Groups: dataindex.Groups, TypeNames: dataindex.TypeNames,
-		Dimensions: dataindex.Dimensions, Days: d.days,
+		Dimensions: d.dimensions(), Days: d.days,
 	}
-	for _, a := range d.areas.Areas(d.layer) {
-		resp.Areas = append(resp.Areas, dataAreaInfo{Code: a.Code, Label: a.Label})
+	if d.places() {
+		resp.Layers = d.areas.Layers()
+		for _, a := range d.areas.Areas(d.layer) {
+			resp.Areas = append(resp.Areas, dataAreaInfo{Code: a.Code, Label: a.Label})
+		}
 	}
 	if ix := d.index(); ix != nil {
 		resp.Rows = ix.Len()

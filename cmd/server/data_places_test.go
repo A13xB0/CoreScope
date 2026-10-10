@@ -42,6 +42,17 @@ func TestDataTabRunsWithoutAreas(t *testing.T) {
 		t.Errorf("index rows = %d, want 2 (p1 and p2, each once)", n)
 	}
 	res := f.svc.packets("7d", 0, 0, nil)
+	if res.Total != 2 || len(res.Rows) != 2 {
+		t.Errorf("packets = %d (%d rows), want both packets listed", res.Total, len(res.Rows))
+	}
+	cube := f.svc.index().Cube(dataindex.Window{Key: "7d", Span: 7 * 24 * time.Hour, Bucket: time.Hour}, f.now)
+	n := 0
+	for _, r := range cube.Rows {
+		n += r[9]
+	}
+	if n != 2 {
+		t.Errorf("cube counts %d packets, want 2: with no areas every row is a packet, not a placeholder", n)
+	}
 	for _, r := range res.Rows {
 		if r.Origin != dataindex.Unknown || r.Heard != dataindex.Unknown {
 			t.Errorf("%s: origin %q heard %q, want both unknown with no areas", r.Hash, r.Origin, r.Heard)

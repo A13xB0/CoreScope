@@ -173,6 +173,9 @@ type Options struct {
 	Areas []string
 	// Home, when set, is the area flows count "via home" for.
 	Home string
+	// NoPlaces is set when there are no areas: every packet is then heard in
+	// Unknown, and that row is the packet's count rather than a placeholder.
+	NoPlaces bool
 }
 
 // row flag bits.
@@ -205,17 +208,25 @@ type Index struct {
 	rows      []row
 	covered   int64
 	unknownID uint32
+	noPlaces  bool
 }
 
 // New makes an empty index.
 func New(opt Options) *Index {
-	ix := &Index{areas: append([]string(nil), opt.Areas...), areaOrder: map[string]int{}, home: opt.Home, ids: map[string]uint32{}}
+	ix := &Index{areas: append([]string(nil), opt.Areas...), areaOrder: map[string]int{}, home: opt.Home, ids: map[string]uint32{}, noPlaces: opt.NoPlaces}
 	for i, a := range opt.Areas {
 		ix.areaOrder[a] = i
 	}
 	ix.id("")
 	ix.unknownID = ix.id(Unknown)
 	return ix
+}
+
+// unplaced reports whether x is a placeholder row: a packet no placed
+// observer heard, kept for the summary's starts but not counted as heard.
+// Without areas every row is heard in Unknown and every row counts.
+func (ix *Index) unplaced(x *row) bool {
+	return !ix.noPlaces && uint32(x.heard) == ix.unknownID
 }
 
 func (ix *Index) id(s string) uint32 {
@@ -495,7 +506,7 @@ func (ix *Index) Cube(w Window, now time.Time) Cube {
 	counts := make(map[cubeKey]int, (len(ix.rows)-first)/4)
 	for i := first; i < len(ix.rows); i++ {
 		x := &ix.rows[i]
-		if uint32(x.heard) == ix.unknownID || x.at > now.Unix() {
+		if ix.unplaced(x) || x.at > now.Unix() {
 			continue
 		}
 		counts[cubeKey{
@@ -781,6 +792,10 @@ type Filter struct {
 // Dimensions a filter can name.
 var Dimensions = []string{"border", "origin", "heard", "through", "kind", "type", "channel", "scope", "sclass", "how", "routing"}
 
+// PlaceDimensions are the Dimensions that need areas: without them every
+// packet starts and is heard in Unknown, so they say nothing.
+var PlaceDimensions = map[string]bool{"border": true, "origin": true, "heard": true, "through": true, "how": true}
+
 func (f Filter) matches(v string) bool {
 	hit := false
 	if f.D == "through" && f.Exact == 0 {
@@ -908,7 +923,7 @@ func (ix *Index) Packets(w Window, now time.Time, from, to int64, filters []Filt
 	first := ix.search(lo)
 	for i := len(ix.rows) - 1; i >= first; i-- {
 		x := &ix.rows[i]
-		if x.at >= hi || uint32(x.heard) == ix.unknownID {
+		if x.at >= hi || ix.unplaced(x) {
 			continue
 		}
 		ok := true

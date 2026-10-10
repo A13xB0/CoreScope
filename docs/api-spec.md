@@ -2383,13 +2383,14 @@ Returns `[]` when no areas are configured.
 
 ## GET /api/data/config
 
-The Data tab's set-up. The tab is off unless `data.enabled` is set in `config.json`, and it needs areas (`areasFile` or `areas`).
+The Data tab's set-up. The tab is off unless `data.enabled` is set in `config.json`. Areas (`areasFile` or `areas`) are optional: without them `places` is false, nothing is placed (every packet starts and is heard in `unknown`), and the place dimensions are left out of `dimensions`.
 
 ### Response `200`
 
 ```jsonc
 {
   "enabled":     boolean,          // false: nothing else is sent and the other /api/data routes answer 404
+  "places":      boolean,          // false when no areas are defined: layer, layers, home and areas are omitted
   "layer":       string,           // the areas layer packets are placed in
   "layers":      [string],
   "home":        string,           // data.homeArea, or omitted
@@ -2397,7 +2398,7 @@ The Data tab's set-up. The tab is off unless `data.enabled` is set in `config.js
   "windows":     [{ "key": "24h" | "7d" | "30d", "label": string }],   // those data.days reaches
   "groups":      [{ "key": string, "label": string, "types": [number], "floodOnly": boolean }],
   "typeNames":   { "<payload type>": string },
-  "dimensions":  [string],         // filter dimensions /api/data/packets accepts
+  "dimensions":  [string],         // filter dimensions that mean something here; without areas, not border, origin, heard, through or how
   "days":        number,
   "rows":        number,           // rows held: one per packet per receiving area
   "coveredFrom": string,           // ISO time the index holds every packet from
@@ -2499,10 +2500,10 @@ The packets behind any figure, under the same filters. Newest first, at most 2,0
 
 The dashboards the Data tab offers, in this order:
 
-1. the built-in ones (generic, needing only an areas file);
+1. the built-in ones (generic; without areas, a set that leaves out the place views);
 2. the operator's, from the file named by `data.dashboardsFile`.
 
-All are validated at startup. A visitor's own dashboards live in their browser and are never sent here.
+All are validated at startup. Without areas, an operator dashboard with an `area` variable or a place dimension (`border`, `origin`, `heard`, `through`, `how`) stops startup with the reason. A visitor's own dashboards live in their browser and are never sent here.
 
 ### Response `200`
 

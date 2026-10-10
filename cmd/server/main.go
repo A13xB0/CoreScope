@@ -388,7 +388,11 @@ func main() {
 		log.Printf("[data] %d dashboards, opening on %q", len(dash.Dashboards), dash.Default)
 		srv.data = ds
 		go ds.run(context.Background())
-		log.Printf("[data] Data tab on: layer %q, %d days", ds.layer, ds.days)
+		if ds.places() {
+			log.Printf("[data] Data tab on: layer %q, %d days", ds.layer, ds.days)
+		} else {
+			log.Printf("[data] Data tab on without areas (no places): %d days", ds.days)
+		}
 	}
 	// Optional user management (off by default). Fails startup on a bad
 	// config rather than running with registration that cannot work.
