@@ -53,6 +53,7 @@
 - [GET /api/config/region-quick-picks](#get-apiconfigregion-quick-picks)
 - [GET /api/config/areas](#get-apiconfigareas)
 - [GET /api/config/areas/polygons](#get-apiconfigareaspolygons)
+- [GET /api/config/areas/geojson](#get-apiconfigareasgeojson)
 - [GET /api/data/config](#get-apidataconfig)
 - [GET /api/data/summary](#get-apidatasummary)
 - [GET /api/data/cube](#get-apidatacube)
@@ -2353,7 +2354,7 @@ Available area filters: those defined in `config.json` under `areas`, then those
 
 Returns `[]` when no areas are configured.
 
-**Note:** Polygon coordinates are **not** included. Use `/api/config/areas/polygons` for the full geometry of `config.json` areas; areas from `areasFile` are not repeated there (their geometry is the file itself).
+**Note:** Polygon coordinates are **not** included. Use `/api/config/areas/geojson` for every area's shape (config.json and `areasFile` alike), or `/api/config/areas/polygons` for config.json's raw entries.
 
 ---
 
@@ -2378,6 +2379,33 @@ Full area definitions including polygon/bounding-box coordinates. Intended for m
 ```
 
 Returns `[]` when no areas are configured.
+
+---
+
+## GET /api/config/areas/geojson
+
+Every area's shape, for drawing on a map: config.json's polygons and boxes and the features of `areasFile`, as one GeoJSON FeatureCollection. Rings are simplified to about 450 m (never dropping an area or opening a ring) and the response is built once per layer.
+
+### Query
+
+| Param | Description |
+|---|---|
+| `layer` | Only this layer's areas. Omitted: every layer. |
+
+### Response `200`
+
+```jsonc
+{
+  "type": "FeatureCollection",
+  "features": [{
+    "type": "Feature",
+    "properties": { "code": string, "label": string, "layer": string },
+    "geometry": { "type": "MultiPolygon", "coordinates": [[[[lon, lat]]]] }   // GeoJSON [lon, lat] order
+  }]
+}
+```
+
+`features` is `[]` when no areas are configured.
 
 ---
 

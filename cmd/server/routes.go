@@ -281,6 +281,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/config/geo-filter", s.handleConfigGeoFilter).Methods("GET")
 	r.HandleFunc("/api/config/areas", s.handleConfigAreas).Methods("GET")
 	r.HandleFunc("/api/config/areas/polygons", s.handleConfigAreasPolygons).Methods("GET")
+	r.HandleFunc("/api/config/areas/geojson", s.handleConfigAreasGeoJSON).Methods("GET")
 	r.HandleFunc("/api/data/config", s.handleDataConfig).Methods("GET")
 	r.HandleFunc("/api/data/summary", s.handleDataSummary).Methods("GET")
 	r.HandleFunc("/api/data/cube", s.handleDataCube).Methods("GET")

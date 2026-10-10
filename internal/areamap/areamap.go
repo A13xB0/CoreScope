@@ -323,5 +323,113 @@ type FeatureGeometry struct {
 // FeatureCollection returns one layer's areas ("" for every layer) as
 // GeoJSON, each ring simplified to within tolerance degrees.
 func (m *Map) FeatureCollection(layer string, tolerance float64) FeatureCollection {
-	return FeatureCollection{Type: "FeatureCollection", Features: []Feature{}}
+	fc := FeatureCollection{Type: "FeatureCollection", Features: []Feature{}}
+	for i := range m.areas {
+		a := &m.areas[i]
+		if layer != "" && a.Layer != layer {
+			continue
+		}
+		coords := make([][][][2]float64, 0, len(a.Polygons))
+		for _, poly := range a.Polygons {
+			rings := make([][][2]float64, 0, len(poly))
+			for _, ring := range poly {
+				rings = append(rings, simplifyRing(ring, tolerance))
+			}
+			coords = append(coords, rings)
+		}
+		fc.Features = append(fc.Features, Feature{
+			Type:       "Feature",
+			Properties: FeatureProps{Code: a.Code, Label: a.Label, Layer: a.Layer},
+			Geometry:   FeatureGeometry{Type: "MultiPolygon", Coordinates: coords},
+		})
+	}
+	return fc
+}
+
+// simplifyRing drops points within tolerance degrees of the line between
+// their neighbours (Douglas-Peucker), keeping the ring closed and at least
+// a triangle, so no area disappears from the map however small it is.
+func simplifyRing(ring [][2]float64, tolerance float64) [][2]float64 {
+	closed := len(ring) > 1 && ring[0] == ring[len(ring)-1]
+	pts := ring
+	if closed {
+		pts = ring[:len(ring)-1]
+	}
+	if tolerance <= 0 || len(pts) <= 3 {
+		return closeRing(append([][2]float64(nil), pts...))
+	}
+	// Split at the point furthest from the first, so the two halves each
+	// have distinct ends for the line test.
+	far, best := 0, -1.0
+	for i, p := range pts {
+		if d := sqDist(pts[0], p); d > best {
+			far, best = i, d
+		}
+	}
+	keep := make([]bool, len(pts))
+	keep[0], keep[far] = true, true
+	tol2 := tolerance * tolerance
+	dp(pts, 0, far, tol2, keep)
+	tail := append(append([][2]float64(nil), pts[far:]...), pts[0])
+	keepTail := make([]bool, len(tail))
+	dp(tail, 0, len(tail)-1, tol2, keepTail)
+	for i, k := range keepTail[:len(keepTail)-1] {
+		if k {
+			keep[far+i] = true
+		}
+	}
+	out := make([][2]float64, 0, 8)
+	for i, p := range pts {
+		if keep[i] {
+			out = append(out, p)
+		}
+	}
+	if len(out) < 3 {
+		// Smaller than the tolerance: keep the original's first three corners.
+		out = append([][2]float64(nil), pts[:3]...)
+	}
+	return closeRing(out)
+}
+
+func closeRing(pts [][2]float64) [][2]float64 {
+	if len(pts) > 0 && pts[0] != pts[len(pts)-1] {
+		pts = append(pts, pts[0])
+	}
+	return pts
+}
+
+// dp marks the points of pts[i..j] that stay, i and j excluded.
+func dp(pts [][2]float64, i, j int, tol2 float64, keep []bool) {
+	if j <= i+1 {
+		return
+	}
+	idx, best := -1, tol2
+	for k := i + 1; k < j; k++ {
+		if d := segDist2(pts[k], pts[i], pts[j]); d > best {
+			idx, best = k, d
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	keep[idx] = true
+	dp(pts, i, idx, tol2, keep)
+	dp(pts, idx, j, tol2, keep)
+}
+
+func sqDist(a, b [2]float64) float64 {
+	dx, dy := a[0]-b[0], a[1]-b[1]
+	return dx*dx + dy*dy
+}
+
+// segDist2 is the squared distance from p to the segment a-b.
+func segDist2(p, a, b [2]float64) float64 {
+	dx, dy := b[0]-a[0], b[1]-a[1]
+	l2 := dx*dx + dy*dy
+	if l2 == 0 {
+		return sqDist(p, a)
+	}
+	t := ((p[0]-a[0])*dx + (p[1]-a[1])*dy) / l2
+	t = math.Max(0, math.Min(1, t))
+	return sqDist(p, [2]float64{a[0] + t*dx, a[1] + t*dy})
 }

@@ -41,8 +41,10 @@ type paramMeta struct {
 func routeDescriptions() map[string]routeMeta {
 	return map[string]routeMeta{
 		// Config
-		"GET /api/config/cache":              {Summary: "Get cache configuration", Tag: "config"},
-		"GET /api/config/client":             {Summary: "Get client configuration", Tag: "config"},
+		"GET /api/config/cache":  {Summary: "Get cache configuration", Tag: "config"},
+		"GET /api/config/client": {Summary: "Get client configuration", Tag: "config"},
+		"GET /api/config/areas/geojson": {Summary: "Area shapes as GeoJSON", Description: "Every area (config.json and areasFile) as a GeoJSON FeatureCollection of MultiPolygons with code, label and layer, simplified to about 450 m for drawing.", Tag: "config",
+			QueryParams: []paramMeta{{Name: "layer", Description: "Only this layer's areas; omitted means every layer", Type: "string"}}},
 		"GET /api/config/regions":            {Summary: "Get configured regions", Tag: "config"},
 		"GET /api/config/region-quick-picks": {Summary: "Get region quick picks", Description: "Named groups of region (IATA) codes from config regionQuickPicks, offered as one-tap choices by the region filter. Always a list; empty when none are configured.", Tag: "config"},
 		"GET /api/config/theme":              {Summary: "Get theme configuration", Description: "Returns color maps, CSS variables, and theme defaults.", Tag: "config"},
