@@ -1,0 +1,232 @@
+/* === CoreScope — data.css ===
+   The Data tab (#/data): a full-height workspace. A pinned bar holds the
+   period for the whole page; the question is built in the rail on the left
+   and the answer reads on the right, each scrolling on its own. On a phone
+   the rail folds above the answer. */
+
+/* Categorical slots from the dataviz reference palette, in its fixed order,
+   validated against --card-bg in both themes (light #ffffff, dark #232340).
+   Light slots 3-5 sit under 3:1 against white, so every chart carries a
+   legend with counts and its numbers in a table. */
+.dt-page, .dt-modal {
+  --dt-c1: #2a78d6; --dt-c2: #eb6834; --dt-c3: #1baf7a; --dt-c4: #eda100;
+  --dt-c5: #e87ba4; --dt-c6: #008300; --dt-c7: #4a3aa7; --dt-c-rest: #a3b1c6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dt-page, :root:not([data-theme="light"]) .dt-modal {
+    --dt-c1: #3987e5; --dt-c2: #d95926; --dt-c3: #199e70; --dt-c4: #c98500;
+    --dt-c5: #d55181; --dt-c6: #008300; --dt-c7: #9085e9; --dt-c-rest: #4e5d75;
+  }
+}
+:root[data-theme="dark"] .dt-page, :root[data-theme="dark"] .dt-modal {
+  --dt-c1: #3987e5; --dt-c2: #d95926; --dt-c3: #199e70; --dt-c4: #c98500;
+  --dt-c5: #d55181; --dt-c6: #008300; --dt-c7: #9085e9; --dt-c-rest: #4e5d75;
+}
+
+.dt-page { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--content-bg); color: var(--text); }
+.dt-off { padding: var(--space-lg) var(--gutter); color: var(--text-muted); max-width: 70ch; }
+.dt-off h2 { color: var(--text); margin: 0 0 8px; }
+.dt-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---- the bar ---------------------------------------------------------- */
+.dt-bar { flex: none; display: flex; align-items: center; gap: 10px 14px; padding: 10px var(--gutter); background: var(--card-bg);
+  border-bottom: 1px solid var(--border); min-width: 0; flex-wrap: wrap; }
+.dt-title { margin: 0; font-size: var(--fs-lg); font-weight: var(--fw-semibold); }
+.dt-cover { flex: 1 1 240px; min-width: 0; font-size: var(--fs-sm); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dt-bar-actions { display: inline-flex; gap: 8px; margin-left: auto; flex: none; }
+
+.dt-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; background: var(--card-bg); flex: none; }
+.dt-seg button { font: inherit; font-size: 13.5px; color: var(--text-muted); background: none; border: 0; padding: 6px 12px; cursor: pointer; min-height: 34px; }
+.dt-seg button + button { border-left: 1px solid var(--border); }
+.dt-seg button[aria-pressed="true"] { color: var(--text); background: var(--selected-bg); font-weight: var(--fw-semibold); }
+.dt-seg button:hover:not(:disabled) { color: var(--text); }
+.dt-seg button:disabled { opacity: .4; cursor: not-allowed; }
+
+.dt-btn { font: inherit; font-size: 13.5px; color: var(--text); background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 6px 12px; min-height: 34px; cursor: pointer; }
+.dt-btn:hover:not(:disabled) { border-color: var(--accent); }
+.dt-btn:disabled { opacity: .45; cursor: default; }
+.dt-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent, #fff); }
+.dt-link { font: inherit; font-size: 13px; color: var(--link-color); background: none; border: 0; cursor: pointer; padding: 4px; text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---- rail and main ----------------------------------------------------- */
+.dt-body { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); }
+.dt-rail { overflow-y: auto; border-right: 1px solid var(--border); background: var(--card-bg); padding: 6px 0 24px; }
+.dt-main { overflow-y: auto; padding: var(--space-md) var(--gutter) 40px; display: flex; flex-direction: column; gap: var(--space-md); min-width: 0; }
+.dt-main.dt-stale { opacity: .5; transition: opacity .2s; }
+.dt-block { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.dt-block:last-child { border-bottom: 0; }
+.dt-k { margin: 0 0 8px; font-size: 12px; font-weight: var(--fw-semibold); letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+
+.dt-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.dt-chip { font: inherit; font-size: 13px; color: var(--text); background: none; border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; cursor: pointer; min-height: 32px; }
+.dt-chip:hover { border-color: var(--accent); }
+.dt-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-bg); }
+.dt-add { border-style: dashed; }
+.dt-fchip { display: inline-flex; align-items: stretch; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-bg); overflow: hidden; max-width: 100%; }
+.dt-fchip button, .dt-fchip span { font: inherit; font-size: 13px; color: var(--text); background: none; border: 0; min-height: 32px; }
+.dt-fchip-edit { padding: 5px 4px 5px 12px; text-align: left; cursor: pointer; display: inline-flex; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+span.dt-fchip-edit { cursor: default; }
+.dt-fchip-x { padding: 0 10px 0 6px; font-size: 17px !important; line-height: 1; color: var(--text-muted) !important; cursor: pointer; }
+.dt-fchip-x:hover, button.dt-fchip-edit:hover { color: var(--accent) !important; }
+.dt-picks-k { font-size: 12.5px; color: var(--text-muted); margin-right: 2px; width: 100%; }
+
+.dt-editor { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--content-bg); }
+.dt-ed-row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: end; }
+.dt-ed-row label, .dt-view label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-muted); }
+.dt-ed-row select, .dt-view select, .dt-addcol { font: inherit; font-size: 13.5px; color: var(--text); background: var(--input-bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 6px 8px; min-height: 34px; }
+.dt-hint { margin: 0; font-size: 13px; color: var(--text-muted); }
+
+.dt-view { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.dt-view label { min-width: 0; }
+.dt-view select { width: 100%; }
+.dt-view-seg { display: flex; flex-direction: column; gap: 4px; grid-column: 1 / -1; }
+.dt-view-k { font-size: 12.5px; color: var(--text-muted); }
+
+.dt-vchips { margin: 10px 0; }
+.dt-vchips-bar { display: flex; gap: 6px; margin: 0 0 6px; }
+.dt-vchips-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 240px; overflow-y: auto; padding: 2px; }
+/* Value chips match the filter chips: dashed until chosen, then solid. */
+.dt-vchip { font: inherit; font-size: 13px; color: var(--text); background: none; border: 1px dashed var(--border); border-radius: 999px;
+  padding: 4px 10px; min-height: 32px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; max-width: 100%; }
+.dt-vchip:hover { border-color: var(--accent); }
+.dt-vchip[aria-pressed="true"] { border: 1px solid var(--accent); background: var(--accent-bg); }
+.dt-vchip.is-empty { opacity: .55; }
+.dt-vx { font-size: 15px; line-height: 1; color: var(--text-muted); }
+.dt-vcount { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.dt-sw { width: 10px; height: 10px; border-radius: 2px; flex: none; display: inline-block; }
+
+/* ---- answer side -------------------------------------------------------- */
+.dt-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--space-sm); }
+.dt-tile { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px 14px; min-width: 0; }
+.dt-tile-k { display: block; font-size: 12.5px; color: var(--text-muted); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-tile-vals { display: flex; gap: 18px; flex-wrap: wrap; }
+.dt-tile-v { display: flex; flex-direction: column; min-width: 0; }
+.dt-tile-v b { font-size: var(--fs-xl); font-weight: var(--fw-semibold); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.dt-tile-v small { font-size: 12px; color: var(--text-muted); }
+
+.dt-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-md); min-width: 0; }
+.dt-card-h { padding: 14px 16px 6px; }
+.dt-card-h h3 { margin: 0 0 4px; font-size: var(--fs-md); }
+.dt-card-h p { margin: 0; font-size: 13.5px; color: var(--text-muted); max-width: 90ch; }
+.dt-sum { margin: 0; padding: 14px 16px 0; color: var(--text-muted); font-size: 13.5px; max-width: 100ch; min-height: 2.8em; }
+.dt-sum strong { color: var(--text); }
+.dt-chart { padding: 8px 16px 4px; position: relative; }
+.dt-chart svg { display: block; width: 100%; height: auto; font-family: var(--mono); }
+.dt-grid { stroke: var(--border); stroke-width: 1; }
+.dt-tick { fill: var(--text-muted); font-size: 11px; }
+.dt-chart .dt-col:hover .dt-seg-r, .dt-chart .dt-col:focus .dt-seg-r { filter: brightness(1.15); }
+.dt-chart .dt-col:focus { outline: none; }
+.dt-chart .dt-col:focus .dt-hitr { stroke: var(--accent); stroke-width: 1; }
+.dt-chart .dt-seg-r, .dt-chart .dt-hitr { cursor: pointer; }
+.dt-empty { padding: 12px 16px; color: var(--text-muted); font-size: 13.5px; margin: 0; }
+.dt-tip { position: absolute; pointer-events: none; z-index: 5; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 10px; font-size: 12.5px; box-shadow: 0 8px 24px -12px rgba(0,0,0,.45); min-width: 160px; max-width: 260px; }
+.dt-tip-h { color: var(--text-muted); margin-bottom: 4px; }
+.dt-tip-row { display: flex; align-items: center; gap: 6px; }
+.dt-tip-row strong { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.dt-legend { display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 2px 12px 12px; }
+.dt-leg { font: inherit; font-size: 13px; color: var(--text-muted); background: none; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 3px 8px;
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.dt-leg:hover { border-color: var(--border); }
+.dt-leg[aria-pressed="true"] { border-color: var(--accent); color: var(--text); }
+.dt-leg b { color: var(--text); font-weight: var(--fw-semibold); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.dt-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); border-top: 1px solid var(--border); }
+.dt-panel { border-bottom: 1px solid var(--border); min-width: 0; }
+.dt-panel-h { margin: 0; padding: 10px 16px 0; font-size: 13px; font-weight: var(--fw-normal); color: var(--text-muted); }
+.dt-panel-h strong { color: var(--text); }
+
+.dt-t { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.dt-t caption { text-align: left; font-size: 13px; color: var(--text-muted); padding: 10px 16px 4px; }
+.dt-t th { text-align: left; font-weight: var(--fw-normal); font-size: 12.5px; color: var(--text-muted); padding: 8px 16px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.dt-t td { padding: 8px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.dt-t tr:last-child td { border-bottom: 0; }
+.dt-n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dt-code { font-family: var(--mono); white-space: nowrap; }
+.dt-rg { color: var(--text-muted); font-size: 12.5px; white-space: nowrap; }
+.dt-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); border-top: 1px solid var(--border); }
+.dt-grid2 > div { overflow-x: auto; min-width: 0; }
+.dt-more { border-top: 1px solid var(--border); }
+.dt-more summary, .dt-method summary { cursor: pointer; padding: 12px 16px; font-size: 13.5px; color: var(--link-color); }
+.dt-scroll { overflow-x: auto; padding-bottom: 6px; }
+
+.dt-groups { margin: 6px 16px 0; flex-wrap: wrap; }
+.dt-note { margin: 8px 16px 0; font-size: 13px; color: var(--text-muted); line-height: 1.45; min-height: 1.45em; max-width: 90ch; }
+.dt-note:empty { display: none; }
+#dtGroupNote { min-height: 2.9em; display: block; }
+.dt-matrix-wrap { overflow-x: auto; padding: 8px 12px 12px; }
+.dt-matrix { border-collapse: separate; border-spacing: 3px; font-size: 13.5px; min-width: 100%; }
+.dt-matrix th { font-weight: var(--fw-normal); font-size: 12.5px; color: var(--text-muted); padding: 6px 8px; white-space: nowrap; }
+.dt-matrix thead th { text-align: center; vertical-align: bottom; }
+.dt-matrix tbody th { text-align: right; position: sticky; left: 0; background: var(--card-bg); z-index: 1; }
+.dt-corner { text-align: left !important; line-height: 1.3; font-size: 12px; }
+.dt-corner span { display: block; }
+.dt-corner span:first-child { text-align: right; }
+.dt-matrix td { text-align: center; padding: 9px 8px; border-radius: var(--radius-sm); font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); min-width: 64px; }
+.dt-matrix td.dt-local { color: var(--text-muted); background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--border) 60%, transparent) 6px 7px); }
+.dt-hit { cursor: pointer; }
+.dt-matrix td.dt-hit:hover, .dt-matrix td.dt-hit:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.dt-matrix th.dt-hit:hover, .dt-matrix th.dt-hit:focus-visible { color: var(--accent); outline: none; text-decoration: underline; text-underline-offset: 3px; }
+
+.dt-method-in { display: grid; gap: 10px; padding: 0 16px 16px; font-size: 13.5px; color: var(--text-muted); max-width: 90ch; }
+.dt-method-in p { margin: 0; }
+.dt-method-in strong { display: block; color: var(--text); }
+
+/* ---- packets behind a figure -------------------------------------------- */
+.dt-modal { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--card-bg); color: var(--text); box-shadow: 0 24px 64px -24px rgba(0,0,0,.6); }
+.dt-modal::backdrop { background: rgba(4, 10, 20, .55); }
+.dt-modal-in { display: flex; flex-direction: column; max-height: calc(100vh - 50px); }
+.dt-modal-head { display: flex; align-items: flex-start; gap: 14px; padding: 16px 18px 10px; border-bottom: 1px solid var(--border); }
+.dt-modal-head > div { flex: 1 1 auto; min-width: 0; }
+.dt-modal-head h3 { margin: 0 0 4px; font-size: var(--fs-md); }
+.dt-modal-sum { margin: 0; font-size: 13.5px; color: var(--text-muted); max-width: 95ch; }
+.dt-modal-cols { padding: 10px 18px; border-bottom: 1px solid var(--border); }
+.dt-modal-cols .dt-picks-k { width: auto; }
+.dt-modal-table { overflow: auto; flex: 1 1 auto; }
+.dt-drill-t thead th { position: sticky; top: 0; background: var(--card-bg); z-index: 1; padding: 0; }
+.dt-sort { font: inherit; font-size: 12.5px; color: var(--text-muted); background: none; border: 0; padding: 9px 16px; cursor: pointer; width: 100%; text-align: inherit; white-space: nowrap; }
+.dt-sort:hover { color: var(--text); }
+th[aria-sort="ascending"] .dt-sort, th[aria-sort="descending"] .dt-sort { color: var(--text); font-weight: var(--fw-semibold); }
+.dt-drill-t td { white-space: nowrap; font-size: 13px; padding: 7px 16px; }
+.dt-link-row { cursor: pointer; }
+.dt-link-row:hover td { background: var(--row-hover); }
+.dt-drill-t a { color: var(--link-color); }
+.dt-more-btn { margin: 12px 18px 16px; }
+
+/* ---- full screen: hide the site chrome ---------------------------------- */
+body.dt-full .top-nav, body.dt-full .bottom-nav, body.dt-full nav.top-nav { display: none !important; }
+body.dt-full #app.app-fixed { height: 100vh; height: 100dvh; }
+
+/* ---- narrow screens ------------------------------------------------------ */
+.dt-rail-toggle { display: none; }
+@media (max-width: 900px) {
+  .dt-rail-toggle { display: block; width: calc(100% - 32px); margin: 0 16px 12px; font: inherit; font-size: 13.5px; color: var(--link-color);
+    background: none; border: 1px dashed var(--border); border-radius: var(--radius-md); padding: 8px 12px; min-height: 38px; cursor: pointer; text-align: left; }
+  .dt-rail-toggle::after { content: " \25BE"; }
+  .dt-rail-toggle[aria-expanded="true"]::after { content: " \25B4"; }
+  .dt-rail-more { display: none; border-top: 1px solid var(--border); }
+  .dt-rail-open .dt-rail-more { display: block; }
+  .dt-filters-block { border-bottom: 0; }
+  .dt-body { grid-template-columns: 1fr; overflow-y: auto; }
+  .dt-rail { overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); }
+  .dt-main { overflow: visible; }
+  .dt-cover { order: 5; flex-basis: 100%; white-space: normal; }
+}
+@media (max-width: 560px) {
+  .dt-bar { gap: 8px; }
+  .dt-bar .dt-seg { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; order: 3; }
+  .dt-bar .dt-seg button { font-size: 12.5px; padding: 6px 4px; }
+  #dtFill { display: none; }
+  .dt-groups { display: grid; grid-template-columns: 1fr 1fr; }
+  .dt-groups button { border-left: 0 !important; }
+  .dt-groups button:nth-child(even) { border-left: 1px solid var(--border) !important; }
+  .dt-groups button:nth-child(n+3) { border-top: 1px solid var(--border); }
+  .dt-view { grid-template-columns: 1fr; }
+  .dt-tiles { grid-template-columns: 1fr 1fr; }
+  .dt-tile-v b { font-size: var(--fs-lg); }
+  .dt-t th, .dt-t td { padding-left: 10px; padding-right: 10px; }
+  .dt-modal { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; margin: 0; }
+  .dt-modal-in { max-height: 100dvh; height: 100%; }
+}

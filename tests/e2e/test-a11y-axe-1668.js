@@ -60,6 +60,7 @@ const ROUTES = [
   '/live',
   '/map',
   '/observers',
+  '/data',
   '/compare',
   '/analytics?tab=overview',
   '/analytics?tab=rf',
@@ -90,7 +91,7 @@ const ROUTES = [
 const REGISTERED_PAGES = [
   'home', 'packets', 'packet-detail', 'nodes', 'node-analytics', 'node-reach',
   'channels', 'live', 'map', 'observers', 'observer-detail', 'compare',
-  'analytics', 'audio-lab', 'perf', 'traces', 'path-inspector', 'tools-landing',
+  'analytics', 'audio-lab', 'perf', 'traces', 'path-inspector', 'tools-landing', 'data',
 ];
 const REGISTERED_ANALYTICS_TABS = [
   'overview', 'rf', 'topology', 'channels', 'hashsizes', 'collisions',
