@@ -3078,33 +3078,30 @@ async function run() {
     assert(isFullScreen, 'Details button should open full-screen node view');
   });
 
-  // === Hash color toggle E2E tests (#946) ===
+  // === Hash colouring on Live (#946), now the "Colour by" menu's Hash mode ===
 
-  await test('Color-by-hash toggle present on Live page, defaults ON', async () => {
+  await test('Live "Colour by" menu present, defaults to Hash (the old checkbox default)', async () => {
     await page.goto(BASE + '#/live', { waitUntil: 'domcontentloaded' });
-    // Wait until live.js has initialized the toggle (checked = true by default)
     await page.waitForFunction(() => {
-      const el = document.getElementById('liveColorHashToggle');
-      return el && el.checked === true;
+      const el = document.getElementById('liveColourBy');
+      return el && el.value === 'hash';
     }, { timeout: 10000 });
-    const checked = await page.$eval('#liveColorHashToggle', el => el.checked);
-    assert(checked, 'Color by hash toggle should default to ON');
+    const value = await page.$eval('#liveColourBy', el => el.value);
+    assert(value === 'hash', 'Colour by should default to Hash, got ' + value);
   });
 
-  await test('Color-by-hash toggle persists across reload', async () => {
+  await test('Live "Colour by" choice persists across reload', async () => {
     await page.goto(BASE + '#/live', { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#liveColorHashToggle', { timeout: 10000 });
-    // Uncheck toggle
-    await page.click('#liveColorHashToggle');
-    const unchecked = await page.$eval('#liveColorHashToggle', el => !el.checked);
-    assert(unchecked, 'Toggle should be OFF after click');
-    // Reload
+    await page.waitForSelector('#liveColourBy', { state: 'attached', timeout: 10000 });
+    await page.evaluate(() => { const c = document.getElementById('liveControls'); if (c) c.classList.remove('is-collapsed'); });
+    await page.selectOption('#liveColourBy', 'type');
+    assert(await page.$eval('#liveColourBy', el => el.value) === 'type', 'should be Packet type after choosing it');
     await page.goto(BASE + '#/live', { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#liveColorHashToggle', { timeout: 10000 });
-    const afterReload = await page.$eval('#liveColorHashToggle', el => !el.checked);
-    assert(afterReload, 'Toggle OFF state should persist after reload');
-    // Reset to ON for other tests
-    await page.click('#liveColorHashToggle');
+    await page.waitForSelector('#liveColourBy', { state: 'attached', timeout: 10000 });
+    assert(await page.$eval('#liveColourBy', el => el.value) === 'type', 'Packet type should persist after reload');
+    // Reset to Hash for the tests that follow.
+    await page.evaluate(() => { const c = document.getElementById('liveControls'); if (c) c.classList.remove('is-collapsed'); });
+    await page.selectOption('#liveColourBy', 'hash');
   });
 
   await test('Packets table rows have border-left stripe when toggle ON', async () => {

@@ -61,7 +61,11 @@
   let multibyteOnly = localStorage.getItem('live-multibyte-only') === 'true';
   let matrixMode = localStorage.getItem('live-matrix-mode') === 'true';
   let matrixRain = localStorage.getItem('live-matrix-rain') === 'true';
-  let colorByHash = localStorage.getItem('meshcore-color-packets-by-hash') !== 'false';
+  // Colour packets by: 'type' | 'scope' | 'sclass' | 'hashsize' | 'hash'.
+  // colorByHash stays as the "hash mode" flag the drawing code reads.
+  // Read from storage once the modes are defined (see initColourBy's block).
+  let colourBy = 'hash';
+  let colorByHash = true;
   /** Current theme string for hash-color functions. */
   function _liveTheme() { return document.documentElement.dataset.theme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); }
   let nodeFilterKeys = (localStorage.getItem('live-node-filter') || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -195,6 +199,216 @@
         '<span class="legend-label">' + e.short + '</span><span class="legend-long"> \u2014 ' + e.long + '</span></li>';
     }).join('');
   }
+  // ---- Colour packets by ------------------------------------------------
+  // Flying packets, their trails, node pulses and the feed stripe take the
+  // colour of the packet's group in the chosen mode. The feed icon and type
+  // label keep the packet-type colour. Scope kind follows the Data tab's
+  // classes. Colour follows the value, never its rank.
+  var COLOUR_MODES = [
+    { key: 'type', label: 'Packet type', title: 'Packet types' },
+    { key: 'scope', label: 'Scope', title: 'Scopes, last 15 min' },
+    { key: 'sclass', label: 'Scope kind', title: 'Scope kind, last 15 min' },
+    { key: 'hashsize', label: 'Path hash size', title: 'Path hash size, last 15 min' },
+    { key: 'hash', label: 'Hash', title: 'Packet hash' }
+  ];
+  // [key, label, description, palette slot (0 = the neutral "rest" colour)]
+  var SCOPE_KINDS = [
+    ['scoped', 'Region scope', 'flooded under a scope CoreScope can name', 1],
+    ['unscoped', 'Unscoped flood', 'flooded with no scope, so every repeater forwards it', 2],
+    ['unrecognised', 'Unrecognised code', 'flooded under a scope code nobody here holds a key for', 5],
+    ['direct', 'Direct', 'routed along a known path, not flooded', 3]
+  ];
+  var HASH_SIZES = [
+    ['1', '1-byte', 'hop prefixes many repeaters share, so paths can jump', 2],
+    ['2', '2-byte', 'hop prefixes that usually name one repeater', 3],
+    ['3', '3-byte', 'hop prefixes that name one repeater', 1],
+    ['unknown', 'Unknown', 'no raw packet to read the size from', 0]
+  ];
+  var MAX_NAMED_SCOPES = 6, GROUP_WINDOW_MS = 15 * 60 * 1000, GROUP_HITS_MAX = 5000;
+  function readColourMode(store) {
+    var saved = null, old = null;
+    try { saved = store.getItem('live-colour-by'); old = store.getItem('meshcore-color-packets-by-hash'); } catch (_) { /* storage off */ }
+    if (COLOUR_MODES.some(function (m) { return m.key === saved; })) return saved;
+    return old === 'false' ? 'type' : 'hash';
+  }
+  function scopeKindOf(pkt) {
+    var r = pkt.route_type;
+    if (r === 2 || r === 3) return 'direct';
+    if (r === 0) return pkt.scope_name ? 'scoped' : 'unrecognised';
+    return 'unscoped';
+  }
+  function normScopeName(n) { return '#' + String(n).trim().replace(/^#/, '').toLowerCase(); }
+  function packetGroup(pkt, mode) {
+    var kind;
+    if (mode === 'type') {
+      var t = (pkt.decoded && pkt.decoded.header && pkt.decoded.header.payloadTypeName) || 'UNKNOWN';
+      return { key: t, label: t };
+    }
+    if (mode === 'scope') {
+      kind = scopeKindOf(pkt);
+      if (kind === 'scoped') { var k = normScopeName(pkt.scope_name); return { key: k, label: k }; }
+      if (kind === 'unrecognised') return { key: '__unrecognised', label: 'Unrecognised code', desc: 'flooded under a scope code nobody here holds a key for' };
+      return { key: '__none', label: 'Not scoped', desc: 'unscoped floods and direct-routed packets' };
+    }
+    if (mode === 'sclass') {
+      kind = scopeKindOf(pkt);
+      var sk = SCOPE_KINDS.filter(function (x) { return x[0] === kind; })[0];
+      return { key: kind, label: sk[1], desc: sk[2] };
+    }
+    if (mode === 'hashsize') {
+      var size = (window.MC_packetHashSize && pkt.raw_hex) ? window.MC_packetHashSize(pkt.raw_hex, pkt.route_type) : 0;
+      var hs = HASH_SIZES.filter(function (x) { return x[0] === String(size); })[0] || HASH_SIZES[3];
+      return { key: hs[0], label: hs[1], desc: hs[2] };
+    }
+    return { key: pkt.hash || '', label: pkt.hash || '' };
+  }
+  // Palette: CSS variables on .live-page (live.css), read once per theme.
+  // The fallbacks are the light theme's values, for when no stylesheet is
+  // there to read (tests); live.css is the source of truth.
+  var PALETTE_FALLBACK = { slots: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7'], rest: '#a3b1c6', none: '#64748b' };
+  var _palette = null, _paletteTheme = null;
+  function livePalette() {
+    var theme = '';
+    try { theme = _liveTheme(); } catch (_) { /* no document theme (tests) */ }
+    if (_palette && _paletteTheme === theme) return _palette;
+    var cs = null;
+    try { cs = getComputedStyle(document.querySelector('.live-page') || document.documentElement); } catch (_) { /* no styles (tests) */ }
+    var read = function (name, fb) { var v = cs && cs.getPropertyValue ? cs.getPropertyValue(name).trim() : ''; return v || fb; };
+    _palette = {
+      slots: PALETTE_FALLBACK.slots.map(function (fb, i) { return read('--live-group-' + (i + 1), fb); }),
+      rest: read('--live-group-rest', PALETTE_FALLBACK.rest),
+      none: read('--live-group-none', PALETTE_FALLBACK.none)
+    };
+    _paletteTheme = theme;
+    return _palette;
+  }
+  var scopeSlots = new Map();
+  function resetColours() { scopeSlots = new Map(); _palette = null; }
+  function slotColour(slot) { var p = livePalette(); return slot > 0 ? p.slots[slot - 1] : p.rest; }
+  function groupColour(mode, key) {
+    if (mode === 'type') return TYPE_COLORS[key] || '#6b7280';
+    if (mode === 'sclass') { var sk = SCOPE_KINDS.filter(function (x) { return x[0] === key; })[0]; return slotColour(sk ? sk[3] : 0); }
+    if (mode === 'hashsize') { var hs = HASH_SIZES.filter(function (x) { return x[0] === key; })[0]; return slotColour(hs ? hs[3] : 0); }
+    if (mode === 'scope') {
+      if (key === '__none') return livePalette().none;
+      if (key === '__unrecognised') return livePalette().rest;
+      if (!scopeSlots.has(key)) scopeSlots.set(key, scopeSlots.size < MAX_NAMED_SCOPES ? scopeSlots.size + 1 : 7);
+      return slotColour(scopeSlots.get(key));
+    }
+    return (window.HashColor && key) ? window.HashColor.hashToHsl(key, _liveTheme()) : '#6b7280';
+  }
+  // pathColour: the colour a packet flies in. Type and hash modes keep the
+  // type colour here (hash colouring is applied where the line is drawn).
+  function pathColour(pkt, typeColour) {
+    if (colourBy === 'type' || colourBy === 'hash') return typeColour;
+    return groupColour(colourBy, packetGroup(pkt, colourBy).key);
+  }
+  function feedStripeColour(pkt) {
+    if (colourBy === 'hash') return (pkt.hash && window.HashColor) ? window.HashColor.hashToHsl(pkt.hash, _liveTheme()) : null;
+    if (colourBy === 'type') return null;
+    return groupColour(colourBy, packetGroup(pkt, colourBy).key);
+  }
+
+  // Recent packets, for the legend's counts: the fields each mode needs.
+  var groupHits = [], legendTimer = null;
+  function notePacketGroup(pkt) {
+    groupHits.push({ t: Date.now(), route_type: pkt.route_type, scope_name: pkt.scope_name, raw_hex: pkt.raw_hex, decoded: { header: { payloadTypeName: (pkt.decoded && pkt.decoded.header && pkt.decoded.header.payloadTypeName) || 'UNKNOWN' } } });
+    if (groupHits.length > GROUP_HITS_MAX) groupHits.splice(0, groupHits.length - GROUP_HITS_MAX);
+    if (!legendTimer && colourBy !== 'type' && colourBy !== 'hash') legendTimer = setTimeout(function () { legendTimer = null; renderGroupLegend(); }, 1000);
+  }
+  function legendEsc(v) { return String(v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function legendRow(key, label, desc, colour, count) {
+    return '<li data-group="' + legendEsc(key) + '" title="' + legendEsc(label + (desc ? ' \u2014 ' + desc : '')) + '"><span class="live-dot" style="background:' + legendEsc(colour) + '" aria-hidden="true"></span> ' +
+      '<span class="legend-label">' + legendEsc(label) + '</span>' + (desc ? '<span class="legend-long"> \u2014 ' + legendEsc(desc) + '</span>' : '') +
+      (count !== undefined ? ' <span class="legend-count">' + count + '</span>' : '') + '</li>';
+  }
+  function renderGroupLegend() {
+    var title = document.getElementById('legendGroupTitle'), list = document.getElementById('legendGroupList');
+    if (!title || !list) return;
+    var mode = COLOUR_MODES.filter(function (m) { return m.key === colourBy; })[0] || COLOUR_MODES[0];
+    title.textContent = mode.title.toUpperCase();
+    list.classList.toggle('legend-list--groups', colourBy !== 'type');
+    if (colourBy === 'type') { list.innerHTML = buildLegendHtml(window.PayloadLabels || null); return; }
+    if (colourBy === 'hash') {
+      // Flying packets take a colour per packet; the feed icons keep the
+      // packet-type colours listed below the note.
+      title.textContent = 'PACKET TYPES';
+      list.classList.remove('legend-list--groups');
+      list.innerHTML = '<li class="legend-note">Flying packets: each packet its own colour, shared by its copies, so you can follow one as it spreads.</li>' +
+        buildLegendHtml(window.PayloadLabels || null);
+      return;
+    }
+    var cutoff = Date.now() - GROUP_WINDOW_MS;
+    while (groupHits.length && groupHits[0].t < cutoff) groupHits.shift();
+    var counts = {}, meta = {};
+    groupHits.forEach(function (h) {
+      var g = packetGroup(h, colourBy);
+      counts[g.key] = (counts[g.key] || 0) + 1;
+      meta[g.key] = g;
+    });
+    var rows;
+    if (colourBy === 'sclass') rows = SCOPE_KINDS.map(function (k) { return legendRow(k[0], k[1], k[2], groupColour('sclass', k[0]), counts[k[0]] || 0); });
+    else if (colourBy === 'hashsize') rows = HASH_SIZES.filter(function (h) { return h[0] !== 'unknown' || counts.unknown; }).map(function (h) { return legendRow(h[0], h[1], h[2], groupColour('hashsize', h[0]), counts[h[0]] || 0); });
+    else {
+      // Busiest first; a scope's colour is the one it got when first seen.
+      var named = Object.keys(counts).filter(function (k) { return k.charAt(0) === '#'; }).sort(function (a, b) { return counts[b] - counts[a]; });
+      named.forEach(function (k) { groupColour('scope', k); });
+      var groups = [], overflow = [];
+      named.forEach(function (k) {
+        if (scopeSlots.get(k) <= MAX_NAMED_SCOPES) groups.push({ key: k, label: k, desc: '', colour: groupColour('scope', k), n: counts[k] });
+        else overflow.push(k);
+      });
+      if (overflow.length) {
+        groups.push({ key: '__other', label: 'Other scopes', desc: overflow.slice(0, 6).join(', ') + (overflow.length > 6 ? '\u2026' : ''),
+          colour: slotColour(7), n: overflow.reduce(function (sum, k) { return sum + counts[k]; }, 0) });
+      }
+      ['__unrecognised', '__none'].forEach(function (k) {
+        if (counts[k]) groups.push({ key: k, label: meta[k].label, desc: meta[k].desc, colour: groupColour('scope', k), n: counts[k] });
+      });
+      groups.sort(function (x, y) { return y.n - x.n; });
+      rows = groups.map(function (g) { return legendRow(g.key, g.label, g.desc, g.colour, g.n); });
+      if (!rows.length) rows = ['<li class="legend-note">No packets seen yet.</li>'];
+    }
+    list.innerHTML = rows.join('');
+  }
+  function setColourMode(mode, opts) {
+    if (!COLOUR_MODES.some(function (m) { return m.key === mode; })) return;
+    colourBy = mode;
+    colorByHash = mode === 'hash';
+    try {
+      localStorage.setItem('live-colour-by', mode);
+      // The packets page reads this key for its own hash colouring.
+      localStorage.setItem('meshcore-color-packets-by-hash', String(mode === 'hash'));
+    } catch (_) { /* storage off: this visit only */ }
+    window.dispatchEvent(new Event('storage'));
+    var sel = document.getElementById('liveColourBy');
+    if (sel && sel.value !== mode) sel.value = mode;
+    if (!opts || !opts.quiet) {
+      var params = new URLSearchParams(location.hash.split('?')[1] || '');
+      params.set('colourBy', mode);
+      try { history.replaceState(null, '', location.hash.split('?')[0] + '?' + params.toString()); } catch (_) { /* not fatal */ }
+    }
+    renderGroupLegend();
+  }
+  function initColourBy() {
+    // Re-read on every visit: the page module outlives one visit.
+    colourBy = readColourMode(localStorage);
+    var sel = document.getElementById('liveColourBy');
+    var linked = new URLSearchParams(location.hash.split('?')[1] || '').get('colourBy');
+    if (linked && COLOUR_MODES.some(function (m) { return m.key === linked; })) colourBy = linked;
+    if (sel) {
+      sel.value = colourBy;
+      sel.addEventListener('change', function () { setColourMode(sel.value); });
+    }
+    setColourMode(colourBy, { quiet: !linked });
+  }
+  colourBy = readColourMode(typeof localStorage !== 'undefined' ? localStorage : { getItem: function () { return null; } });
+  colorByHash = colourBy === 'hash';
+  if (typeof window !== 'undefined') {
+    window._liveColourBy = { MODES: COLOUR_MODES, packetGroup: packetGroup, readMode: readColourMode, groupColour: groupColour, resetColours: resetColours,
+      note: notePacketGroup, renderLegendNow: renderGroupLegend };
+  }
+
   // Feed and legend chrome: close (the panel's ×), reopen (the toggles in
   // the MESH LIVE header, which no panel can cover), fold (the title
   // button) and, for the legend, short labels with descriptions on demand.
@@ -1259,13 +1473,6 @@
           realisticPropagation = v;
           localStorage.setItem('live-realistic-propagation', realisticPropagation);
         } },
-      { id: 'liveColorHashToggle',
-        restore: () => colorByHash,
-        onChange: (v) => {
-          colorByHash = v;
-          localStorage.setItem('meshcore-color-packets-by-hash', colorByHash);
-          window.dispatchEvent(new Event('storage'));
-        } },
       { id: 'liveFavoritesToggle',
         restore: () => showOnlyFavorites,
         onChange: (v) => {
@@ -1387,8 +1594,8 @@
             <span id="ghostDesc" class="sr-only">Show inferred hop markers for unknown hops</span>
             <label><input type="checkbox" id="liveRealisticToggle" aria-describedby="realisticDesc"> Realistic</label>
             <span id="realisticDesc" class="sr-only">Buffer packets by hash and animate all paths simultaneously</span>
-            <label><input type="checkbox" id="liveColorHashToggle" aria-describedby="colorHashDesc"> Color by hash</label>
-            <span id="colorHashDesc" class="sr-only">Color flying-packet dots and contrails by packet hash for propagation tracing</span>
+            <label class="live-colour-by" for="liveColourBy">Colour by <select id="liveColourBy" aria-describedby="colourByDesc">${COLOUR_MODES.map(function (m) { return '<option value="' + m.key + '">' + m.label + '</option>'; }).join('')}</select></label>
+            <span id="colourByDesc" class="sr-only">Colour flying packets, their trails and the feed stripe by packet type, region scope, scope kind, path hash size, or packet hash for propagation tracing</span>
             <label><input type="checkbox" id="liveMatrixToggle" aria-describedby="matrixDesc"> Matrix</label>
             <span id="matrixDesc" class="sr-only">Animate packet hex bytes flowing along paths like the Matrix</span>
             <label><input type="checkbox" id="liveMatrixRainToggle" aria-describedby="rainDesc"> Rain</label>
@@ -1448,8 +1655,8 @@
             <button class="feed-hide-btn" id="legendCloseBtn" title="Close legend" aria-label="Close legend"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg></button>
           </div>
           <div class="panel-content" id="liveLegendContent">
-          <h3 class="legend-title">PACKET TYPES</h3>
-          <ul class="legend-list">
+          <h3 class="legend-title" id="legendGroupTitle">PACKET TYPES</h3>
+          <ul class="legend-list" id="legendGroupList">
             ${buildLegendHtml(window.PayloadLabels || null)}
           </ul>
           <h3 class="legend-title" style="margin-top:8px">NODE ROLES</h3>
@@ -2134,6 +2341,7 @@
     });
     const legendEl = document.getElementById('liveLegend');
     initPanelChrome(feedEl, legendEl);
+    initColourBy();
 
     // ── Live header / controls toggles (#1178, #1179) ──────────────────────
     // At narrow viewports (≤768px) the header collapses to a single
@@ -3452,6 +3660,8 @@
     const typeName = header.payloadTypeName || 'UNKNOWN';
     const icon = PAYLOAD_ICONS[typeName] || '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-package"/></svg>';
     const color = TYPE_COLORS[typeName] || '#6b7280';
+    const flyColour = pathColour(first, color); // the chosen "Colour by" group
+    notePacketGroup(first);
     const obsCount = packets.length;
 
     // --- Counters ---
@@ -3573,7 +3783,7 @@
       if (hopPositions.length >= 2) {
         allPaths.push({ hopPositions: hopPositions, raw: qpkt.raw || first.raw });
       } else if (hopPositions.length === 1) {
-        pulseNode(hopPositions[0].key, hopPositions[0].pos, typeName);
+        pulseNode(hopPositions[0].key, hopPositions[0].pos, typeName, flyColour);
       }
     }
 
@@ -3584,7 +3794,7 @@
       if (fallbackPositions.length >= 2) {
         allPaths.push({ hopPositions: fallbackPositions, raw: first.raw });
       } else if (fallbackPositions.length === 1) {
-        pulseNode(fallbackPositions[0].key, fallbackPositions[0].pos, typeName);
+        pulseNode(fallbackPositions[0].key, fallbackPositions[0].pos, typeName, flyColour);
       }
     }
 
@@ -3609,15 +3819,15 @@
         var completedPositions = allPaths[ai].hopPositions.slice(0, hopsCompleted + 1);
         var remainingPositions = allPaths[ai].hopPositions.slice(hopsCompleted);
         if (completedPositions.length >= 2) {
-          animatePath(completedPositions, typeName, color, allPaths[ai].raw, onHop, pktMeta);
+          animatePath(completedPositions, typeName, flyColour, allPaths[ai].raw, onHop, pktMeta);
         } else if (completedPositions.length === 1) {
-          pulseNode(completedPositions[0].key, completedPositions[0].pos, typeName);
+          pulseNode(completedPositions[0].key, completedPositions[0].pos, typeName, flyColour);
         }
         if (remainingPositions.length >= 2) {
-          drawDashedPath(remainingPositions, color);
+          drawDashedPath(remainingPositions, flyColour);
         }
       } else {
-        animatePath(allPaths[ai].hopPositions, typeName, color, allPaths[ai].raw, onHop, pktMeta);
+        animatePath(allPaths[ai].hopPositions, typeName, flyColour, allPaths[ai].raw, onHop, pktMeta);
       }
     }
   }
@@ -3774,7 +3984,7 @@
           }
         }
       } else {
-        pulseNode(hp.key, hp.pos, typeName);
+        pulseNode(hp.key, hp.pos, typeName, color);
       }
 
       if (hopIndex < hopPositions.length - 1) {
@@ -3784,14 +3994,14 @@
         const lineOpacity = (isGhost || nextGhost) ? 0.3 : undefined;
         drawAnimatedLine(hp.pos, nextPos, lineColor, () => { hopIndex++; nextHop(); }, lineOpacity, rawHex, pktMeta?.hash);
       } else {
-        if (!isGhost) pulseNode(hp.key, hp.pos, typeName);
+        if (!isGhost) pulseNode(hp.key, hp.pos, typeName, color);
         hopIndex++; nextHop();
       }
     }
     nextHop();
   }
 
-  function pulseNode(key, pos, typeName) {
+  function pulseNode(key, pos, typeName, colour) {
     if (!animLayer || !nodesLayer) return;
     if (!nodeMarkers[key]) {
       const ghost = L.circleMarker(pos, {
@@ -3808,7 +4018,7 @@
 
     const marker = nodeMarkers[key];
     if (!marker) return;
-    const color = TYPE_COLORS[typeName] || '#6b7280';
+    const color = colour || TYPE_COLORS[typeName] || '#6b7280';
 
     const baseColor = marker._baseColor || '#6b7280';
     const baseSize = marker._baseSize || 14;
@@ -4496,9 +4706,8 @@
     item.setAttribute('role', 'button');
     item.style.cursor = 'pointer';
     // Hash-color stripe for feed items (mirrors packets table border-left)
-    if (colorByHash && pkt.hash && window.HashColor) {
-      item.style.borderLeft = '4px solid ' + HashColor.hashToHsl(pkt.hash, _liveTheme());
-    }
+    const stripe = feedStripeColour(pkt);
+    if (stripe) item.style.borderLeft = '4px solid ' + stripe;
     // Channel color highlighting for GRP_TXT packets (#271)
     var _cs = _getChannelStyle(pkt);
     if (_cs) item.style.cssText += _cs;
@@ -4584,9 +4793,8 @@
     if (hash) item.setAttribute('data-hash', hash);
     item.style.cursor = 'pointer';
     // Hash-color stripe for feed items (mirrors packets table border-left)
-    if (colorByHash && hash && window.HashColor) {
-      item.style.borderLeft = '4px solid ' + HashColor.hashToHsl(hash, _liveTheme());
-    }
+    const stripe = feedStripeColour(pkt);
+    if (stripe) item.style.borderLeft = '4px solid ' + stripe;
     // Channel color highlighting for GRP_TXT packets (#271)
     var _chanStyle = _getChannelStyle(pkt);
     if (_chanStyle) item.style.cssText += _chanStyle;
