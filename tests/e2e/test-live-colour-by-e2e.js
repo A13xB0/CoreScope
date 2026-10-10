@@ -5,9 +5,11 @@
  * Scope, Scope kind, Path hash size, or Hash (the old checkbox's colouring).
  * The legend's first section follows the choice: packet types, the scopes
  * seen recently with counts, the four scope kinds, or the three hash sizes.
- * The choice is remembered, migrates the old checkbox (off -> Packet type,
- * otherwise Hash, its old default), keeps the packets page's hash colouring
- * in step, and deep-links as #/live?colourBy=<mode>.
+ * Packet type is the default; Hash mode hides the key, since its colours
+ * are per packet and mean nothing in a legend. The choice is remembered,
+ * migrates the old checkbox (only an explicit "on" becomes Hash), changes
+ * the packets page's hash colouring only when the menu is changed, and
+ * deep-links as #/live?colourBy=<mode>.
  *
  * Run: BASE_URL=http://localhost:13581 node tests/e2e/test-live-colour-by-e2e.js
  */
@@ -63,8 +65,18 @@ async function choose(page, value) {
     assert(JSON.stringify(opts) === JSON.stringify(['type', 'scope', 'sclass', 'hashsize', 'hash']), 'options: ' + JSON.stringify(opts));
     assert(await page.evaluate(() => !!document.getElementById('liveColourBy').closest('#liveControls')), 'menu is not in the live controls');
   });
-  await step('with nothing saved it starts on Hash, the old checkbox default', async () => {
-    assert(await mode(page) === 'hash', 'mode ' + await mode(page));
+  await step('with nothing saved it starts on Packet type, and opening Live leaves the packets page setting alone', async () => {
+    assert(await mode(page) === 'type', 'mode ' + await mode(page));
+    assert(await page.evaluate(() => localStorage.getItem('meshcore-color-packets-by-hash')) === null, 'opening Live wrote the packets page setting');
+  });
+  await step('Hash: no key, since each packet has its own colour', async () => {
+    await choose(page, 'hash');
+    const shown = await page.evaluate(() => {
+      const t = document.getElementById('legendGroupTitle'), l = document.getElementById('legendGroupList');
+      return [t, l].some((e) => e && e.offsetParent !== null && getComputedStyle(e).display !== 'none');
+    });
+    assert(!shown, 'the key section is still shown in Hash mode');
+    assert(await page.evaluate(() => !/Flying packets/.test(document.getElementById('liveLegend').textContent)), 'the flying-packets note is still there');
   });
 
   await step('Packet type: the legend lists the packet types', async () => {
@@ -110,20 +122,22 @@ async function choose(page, value) {
     await choose(page, 'hash');
     assert(await page.evaluate(() => localStorage.getItem('meshcore-color-packets-by-hash')) === 'true', 'hash mode should turn the packets page colouring back on');
   });
-  await step('the legend descriptions button still works in a group mode', async () => {
+  await step('a group row shows its description on hover', async () => {
     await choose(page, 'sclass');
-    const before = await page.evaluate(() => [...document.querySelectorAll('#legendGroupList .legend-long')].filter((e) => e.offsetParent !== null).length);
-    await page.click('#legendDescBtn');
+    await page.hover('#legendGroupList li[data-group="unscoped"]');
     await page.waitForTimeout(150);
-    const after = await page.evaluate(() => [...document.querySelectorAll('#legendGroupList .legend-long')].filter((e) => e.offsetParent !== null).length);
-    assert(before === 0 && after > 0, `descriptions ${before} -> ${after}`);
+    const tip = await page.evaluate(() => { const t = document.getElementById('legendTip'); return t && !t.hidden ? t.textContent : null; });
+    assert(tip && /every repeater forwards/i.test(tip), 'tip: ' + tip);
+    assert(await page.evaluate(() => !document.querySelector('#legendGroupList li[title]')), 'group rows still carry a native title');
   });
   await step('no page errors', async () => { assert(errors.length === 0, errors.join('; ')); });
 
   const p2 = await ctx.newPage();
-  await step('an old "Color by hash" off migrates to Packet type', async () => {
+  await step('an old "Color by hash" turned on migrates to Hash; turned off, Packet type', async () => {
+    await openLive(p2, '#/live', { 'meshcore-color-packets-by-hash': 'true' });
+    assert(await mode(p2) === 'hash', 'on -> ' + await mode(p2));
     await openLive(p2, '#/live', { 'meshcore-color-packets-by-hash': 'false' });
-    assert(await mode(p2) === 'type', 'mode ' + await mode(p2));
+    assert(await mode(p2) === 'type', 'off -> ' + await mode(p2));
   });
   await step('#/live?colourBy=sclass opens on Scope kind', async () => {
     await openLive(p2, '#/live?colourBy=sclass');

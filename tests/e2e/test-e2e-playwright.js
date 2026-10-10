@@ -3080,26 +3080,26 @@ async function run() {
 
   // === Hash colouring on Live (#946), now the "Colour by" menu's Hash mode ===
 
-  await test('Live "Colour by" menu present, defaults to Hash (the old checkbox default)', async () => {
+  await test('Live "Colour by" menu present, defaults to Packet type', async () => {
     await page.goto(BASE + '#/live', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => {
       const el = document.getElementById('liveColourBy');
-      return el && el.value === 'hash';
+      return el && el.value === 'type';
     }, { timeout: 10000 });
     const value = await page.$eval('#liveColourBy', el => el.value);
-    assert(value === 'hash', 'Colour by should default to Hash, got ' + value);
+    assert(value === 'type', 'Colour by should default to Packet type, got ' + value);
   });
 
   await test('Live "Colour by" choice persists across reload', async () => {
     await page.goto(BASE + '#/live', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#liveColourBy', { state: 'attached', timeout: 10000 });
     await page.evaluate(() => { const c = document.getElementById('liveControls'); if (c) c.classList.remove('is-collapsed'); });
-    await page.selectOption('#liveColourBy', 'type');
-    assert(await page.$eval('#liveColourBy', el => el.value) === 'type', 'should be Packet type after choosing it');
+    await page.selectOption('#liveColourBy', 'scope');
+    assert(await page.$eval('#liveColourBy', el => el.value) === 'scope', 'should be Scope after choosing it');
     await page.goto(BASE + '#/live', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#liveColourBy', { state: 'attached', timeout: 10000 });
-    assert(await page.$eval('#liveColourBy', el => el.value) === 'type', 'Packet type should persist after reload');
-    // Reset to Hash for the tests that follow.
+    assert(await page.$eval('#liveColourBy', el => el.value) === 'scope', 'Scope should persist after reload');
+    // Hash for the stripe tests that follow (they set the packets page key themselves).
     await page.evaluate(() => { const c = document.getElementById('liveControls'); if (c) c.classList.remove('is-collapsed'); });
     await page.selectOption('#liveColourBy', 'hash');
   });

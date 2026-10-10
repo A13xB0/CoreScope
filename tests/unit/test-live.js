@@ -1195,12 +1195,13 @@ console.log('\n=== live.js: colour packets by ===');
   test('packet type mode groups by payload type', () => {
     assert.strictEqual(C.packetGroup(pkt(1, null), 'type').key, 'GRP_TXT');
   });
-  test('the saved mode wins; an old "Color by hash" off becomes Packet type, otherwise Hash (the old default)', () => {
+  test('the saved mode wins; Packet type by default; only an old "Color by hash" turned on becomes Hash', () => {
     const store = (o) => ({ getItem: (k) => (k in o ? o[k] : null) });
     assert.strictEqual(C.readMode(store({ 'live-colour-by': 'scope' })), 'scope');
+    assert.strictEqual(C.readMode(store({})), 'type');
     assert.strictEqual(C.readMode(store({ 'meshcore-color-packets-by-hash': 'false' })), 'type');
-    assert.strictEqual(C.readMode(store({})), 'hash');
-    assert.strictEqual(C.readMode(store({ 'live-colour-by': 'nonsense' })), 'hash');
+    assert.strictEqual(C.readMode(store({ 'meshcore-color-packets-by-hash': 'true' })), 'hash');
+    assert.strictEqual(C.readMode(store({ 'live-colour-by': 'nonsense' })), 'type');
   });
   test('a scope keeps its colour as others arrive; the first six get their own, later ones share "Other scopes"', () => {
     C.resetColours();
