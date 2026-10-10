@@ -15,6 +15,11 @@
   let wsHandler = null;
   let heatLayer = null;
   let geoFilterLayer = null;
+  // Areas overlay: every area's outline from /api/config/areas/geojson,
+  // fetched once per visit when first turned on.
+  let areasLayer = null;
+  let areasGeo = null;
+  let areasFilterFn = null;
   let affinityLayer = null;
   let affinityData = null;
   let topRoutesLayer = null;
@@ -518,6 +523,7 @@
             <label for="mcMultiByte"><input type="checkbox" id="mcMultiByte"> Multi-byte support</label>
             <label for="mcScopeOverlay" title="Colour repeater markers by their region-scope configuration"><input type="checkbox" id="mcScopeOverlay"> Scope config colours</label>
             <label id="mcGeoFilterLabel" for="mcGeoFilter" style="display:none"><input type="checkbox" id="mcGeoFilter"> Mesh live area</label>
+            <label id="mcAreasOverlayLabel" for="mcAreasOverlay" style="display:none" title="Draw the areas packets and nodes are placed in; click one to filter by it"><input type="checkbox" id="mcAreasOverlay"> Areas</label>
           </fieldset>
           <div id="mapAreaFilter"></div>
           <fieldset class="mc-section">
@@ -899,8 +905,9 @@
     }
     document.getElementById('mcLastHeard').addEventListener('change', e => { filters.lastHeard = e.target.value; loadNodes(); });
 
-    AreaFilter.init(document.getElementById('mapAreaFilter'));
+    const areasReady = AreaFilter.init(document.getElementById('mapAreaFilter'));
     AreaFilter.onChange(function () { loadNodes(); });
+    initAreasOverlay(areasReady, urlParams);
 
     // Status filter buttons
     document.querySelectorAll('#mcStatusFilter .btn').forEach(btn => {
@@ -1027,6 +1034,85 @@
         loadRouteFromDeepLink();
       }
     });
+  }
+
+  // ---- Areas overlay ------------------------------------------------------
+  // Off by default and only offered when areas exist. Outlines sit in their
+  // own pane under the markers; the area chosen in the area filter is
+  // highlighted, and clicking an area selects it (again: clears it).
+  function areaStyle(selected) {
+    const accent = (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '').trim() || '#3b82f6';
+    return selected
+      ? { color: accent, weight: 2.5, opacity: 0.9, fillColor: accent, fillOpacity: 0.16 }
+      : { color: accent, weight: 1.2, opacity: 0.55, fillColor: accent, fillOpacity: 0.04 };
+  }
+  function restyleAreas() {
+    if (!areasLayer) return;
+    const sel = AreaFilter.getSelected();
+    areasLayer.eachLayer(function (layer) {
+      const on = layer.feature && layer.feature.properties.code === sel;
+      layer.setStyle(areaStyle(on));
+      const el = layer.getElement && layer.getElement();
+      if (el) el.classList.toggle('area-selected', on);
+    });
+  }
+  function drawAreas() {
+    if (!map || !areasGeo) return;
+    if (!map.getPane('areasPane')) {
+      map.createPane('areasPane');
+      map.getPane('areasPane').style.zIndex = 350; // above tiles, below overlays (400) and markers (600)
+      // Labels get their own pane under the markers too, so a marker on an
+      // area's centre is never hidden by its name.
+      map.createPane('areaLabelsPane');
+      map.getPane('areaLabelsPane').style.zIndex = 390;
+      map.getPane('areaLabelsPane').style.pointerEvents = 'none';
+    }
+    const known = new Set(AreaFilter.getAreas().map(function (a) { return a.key; }));
+    areasLayer = L.geoJSON(areasGeo, {
+      pane: 'areasPane',
+      style: function () { return areaStyle(false); },
+      onEachFeature: function (feature, layer) {
+        const code = feature.properties.code;
+        layer.bindTooltip(feature.properties.label || code, { permanent: true, direction: 'center', className: 'area-label', opacity: 1, pane: 'areaLabelsPane' });
+        if (!known.has(code)) return;
+        layer.on('click', function (e) {
+          L.DomEvent.stopPropagation(e);
+          AreaFilter.setSelected(AreaFilter.getSelected() === code ? null : code);
+        });
+      }
+    }).addTo(map);
+    restyleAreas();
+  }
+  function setAreasOverlay(on) {
+    try { localStorage.setItem('meshcore-map-areas', String(on)); } catch (_e) { /* storage off */ }
+    const params = new URLSearchParams(location.hash.split('?')[1] || '');
+    if (on) params.set('areas', '1'); else params.delete('areas');
+    const qs = params.toString();
+    try { history.replaceState(null, '', location.hash.split('?')[0] + (qs ? '?' + qs : '')); } catch (_e) { /* not fatal */ }
+    if (!on) {
+      if (areasLayer && map) map.removeLayer(areasLayer);
+      areasLayer = null;
+      return;
+    }
+    if (areasGeo) { drawAreas(); return; }
+    fetch('/api/config/areas/geojson').then(function (r) { return r.json(); }).then(function (fc) {
+      areasGeo = fc;
+      const el = document.getElementById('mcAreasOverlay');
+      if (el && el.checked) drawAreas();
+    }).catch(function () { /* the toggle stays; nothing to draw */ });
+  }
+  async function initAreasOverlay(areasReady, urlParams) {
+    await areasReady;
+    const label = document.getElementById('mcAreasOverlayLabel');
+    const el = document.getElementById('mcAreasOverlay');
+    if (!label || !el || !map || typeof AreaFilter.getAreas !== 'function' || AreaFilter.getAreas().length === 0) return;
+    label.style.display = '';
+    let saved = false;
+    try { saved = localStorage.getItem('meshcore-map-areas') === 'true'; } catch (_e) { /* storage off */ }
+    el.checked = urlParams.get('areas') === '1' || saved;
+    el.addEventListener('change', function (e) { setAreasOverlay(e.target.checked); });
+    areasFilterFn = AreaFilter.onChange(restyleAreas);
+    if (el.checked) setAreasOverlay(true);
   }
 
   async function drawPacketRoute(hopKeys, origin, opts) {
@@ -2439,6 +2525,8 @@
   function destroy() {
     if (wsHandler) offWS(wsHandler);
     wsHandler = null;
+    if (areasFilterFn) { AreaFilter.offChange(areasFilterFn); areasFilterFn = null; }
+    areasLayer = null;
     if (map) {
       map.remove();
       map = null;

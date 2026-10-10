@@ -3385,6 +3385,23 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 /* #1862: the active region filter, on the map itself, so it stays visible
    while the controls panel is collapsed (the default on phones). Centred
    between Leaflet's top-left controls and the top-right toggle. */
+/* Map Areas overlay: each area's label sits at its centre as quiet text,
+   readable over tiles in both themes, and never takes a click. */
+.leaflet-tooltip.area-label {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 0 3px var(--surface-1), 0 0 6px var(--surface-1);
+  pointer-events: none;
+}
+.leaflet-tooltip.area-label::before { display: none; }
+
 .mc-region-chip {
   position: absolute;
   top: 10px;

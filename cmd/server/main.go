@@ -105,6 +105,14 @@ func main() {
 	if err != nil {
 		log.Printf("[config] warning: %v (using defaults)", err)
 	}
+	// Areas from config.json and areasFile. A bad areas file stops startup:
+	// running with areas silently missing would put packets in the wrong
+	// place without anyone noticing.
+	if am, err := LoadAreaMap(cfg, configDir); err != nil {
+		log.Fatalf("[areas] %v", err)
+	} else if n := len(am.Areas("")); n > 0 {
+		log.Printf("[areas] %d areas in layers %v", n, am.Layers())
+	}
 
 	// CLI flags override config
 	if port > 0 {
@@ -367,6 +375,25 @@ func main() {
 	srv := NewServer(database, cfg, hub)
 	srv.configDir = configDir
 	srv.store = store
+	// The Data tab's index (off unless data.enabled). A tab switched on with
+	// nothing to place packets in stops startup rather than serving nothing.
+	if ds, err := newDataService(database, cfg); err != nil {
+		log.Fatalf("[data] %v", err)
+	} else if ds != nil {
+		dash, derr := LoadDataDashboards(cfg, configDir)
+		if derr != nil {
+			log.Fatalf("[data] %v", derr)
+		}
+		ds.dashboards = dash
+		log.Printf("[data] %d dashboards, opening on %q", len(dash.Dashboards), dash.Default)
+		srv.data = ds
+		go ds.run(context.Background())
+		if ds.places() {
+			log.Printf("[data] Data tab on: layer %q, %d days", ds.layer, ds.days)
+		} else {
+			log.Printf("[data] Data tab on without areas (no places): %d days", ds.days)
+		}
+	}
 	// Optional user management (off by default). Fails startup on a bad
 	// config rather than running with registration that cannot work.
 	if err := srv.initUserManagement(resolvedDB); err != nil {

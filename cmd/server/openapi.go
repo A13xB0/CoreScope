@@ -41,8 +41,10 @@ type paramMeta struct {
 func routeDescriptions() map[string]routeMeta {
 	return map[string]routeMeta{
 		// Config
-		"GET /api/config/cache":              {Summary: "Get cache configuration", Tag: "config"},
-		"GET /api/config/client":             {Summary: "Get client configuration", Tag: "config"},
+		"GET /api/config/cache":  {Summary: "Get cache configuration", Tag: "config"},
+		"GET /api/config/client": {Summary: "Get client configuration", Tag: "config"},
+		"GET /api/config/areas/geojson": {Summary: "Area shapes as GeoJSON", Description: "Every area (config.json and areasFile) as a GeoJSON FeatureCollection of MultiPolygons with code, label and layer, simplified to about 450 m for drawing.", Tag: "config",
+			QueryParams: []paramMeta{{Name: "layer", Description: "Only this layer's areas; omitted means every layer", Type: "string"}}},
 		"GET /api/config/regions":            {Summary: "Get configured regions", Tag: "config"},
 		"GET /api/config/region-quick-picks": {Summary: "Get region quick picks", Description: "Named groups of region (IATA) codes from config regionQuickPicks, offered as one-tap choices by the region filter. Always a list; empty when none are configured.", Tag: "config"},
 		"GET /api/config/theme":              {Summary: "Get theme configuration", Description: "Returns color maps, CSS variables, and theme defaults.", Tag: "config"},
@@ -174,6 +176,21 @@ func routeDescriptions() map[string]routeMeta {
 				{Name: "scope", Description: "mode=transport only: region scope to split the fleet by", Type: "string"},
 				{Name: "region", Description: "Observer IATA codes, comma-separated: count only forwarding heard by observers there. All means no filter", Type: "string"},
 				{Name: "area", Description: "Keep only repeaters standing in this configured area (by node position); an unknown area matches nothing", Type: "string"},
+			}},
+
+		// Data tab (#data): every packet of the last data.days days, placed by area
+		"GET /api/data/config": {Summary: "Data tab configuration", Description: "Whether the Data tab is on, and if so its layer, areas in order, home area, the periods the index reaches, packet kinds, type names, filter dimensions, rows held and how far back it is filled.", Tag: "data"},
+		"GET /api/data/summary": {Summary: "Data tab summary", Description: "One period's packets, those heard outside the area they started in, how starts were decided, the start-by-receiving-area matrix overall and per packet kind, and the flows between areas with the relays that carried them. Cached 60 s. 404 when the tab is off.", Tag: "data",
+			QueryParams: []paramMeta{{Name: "window", Description: "24h, 7d or 30d, as far as data.days reaches", Type: "string", Required: true}}},
+		"GET /api/data/cube": {Summary: "Data tab cube", Description: "Packets per time bucket along origin, heard, type, scope, how, route, through and channel: rows of [bucket, origin, heard, type, scope, how, route, through, channel, packets], each an index into the lists beside it. Cached 60 s. 404 when the tab is off.", Tag: "data",
+			QueryParams: []paramMeta{{Name: "window", Description: "24h, 7d or 30d, as far as data.days reaches", Type: "string", Required: true}}},
+		"GET /api/data/dashboards": {Summary: "Data tab dashboards", Description: "The built-in dashboards followed by the operator's (data.dashboardsFile), validated, with the one to open first and the home area. Each is a schema-1 document of panels: a query over the cube, a panel type and a place on a 12-column grid. 404 when the tab is off.", Tag: "data"},
+		"GET /api/data/packets": {Summary: "Packets behind a Data tab figure", Description: "The packet rows (one per receiving area) passing every filter, newest first, at most 2,000 with the full total. Two run at a time. 404 when the tab is off.", Tag: "data",
+			QueryParams: []paramMeta{
+				{Name: "window", Description: "24h, 7d or 30d", Type: "string", Required: true},
+				{Name: "from", Description: "Unix seconds, inclusive", Type: "integer"},
+				{Name: "to", Description: "Unix seconds, exclusive", Type: "integer"},
+				{Name: "f", Description: `JSON list of filters, each {"d": dimension, "v": [values], "n": 1 to exclude, "x": 1 for an exact "through" match}. Dimensions: border, origin, heard, through, kind, type, channel, scope, sclass, how, routing.`, Type: "string"},
 			}},
 
 		// Analytics
@@ -492,12 +509,13 @@ func buildOpenAPISpec(router *mux.Router, version string) map[string]interface{}
 	}
 
 	// Build tags array (sorted)
-	tagOrder := []string{"admin", "analytics", "channels", "config", "nodes", "observers", "packets", "users"}
+	tagOrder := []string{"admin", "analytics", "channels", "config", "data", "nodes", "observers", "packets", "users"}
 	tagDescriptions := map[string]string{
 		"admin":     "Server administration and diagnostics",
 		"analytics": "Network analytics and statistics",
 		"channels":  "Mesh channel operations",
 		"config":    "Server configuration",
+		"data":      "The Data tab: packets placed by the area they started in and the areas that heard them",
 		"nodes":     "Mesh node operations",
 		"observers": "Packet observer/gateway operations",
 		"packets":   "Packet capture and decoding",
