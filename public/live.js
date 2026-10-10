@@ -229,7 +229,8 @@
     var saved = null, old = null;
     try { saved = store.getItem('live-colour-by'); old = store.getItem('meshcore-color-packets-by-hash'); } catch (_) { /* storage off */ }
     if (COLOUR_MODES.some(function (m) { return m.key === saved; })) return saved;
-    return old === 'false' ? 'type' : 'hash';
+    // Only someone who turned the old "Color by hash" on keeps Hash.
+    return old === 'true' ? 'hash' : 'type';
   }
   function scopeKindOf(pkt) {
     var r = pkt.route_type;
@@ -318,7 +319,9 @@
   }
   function legendEsc(v) { return String(v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function legendRow(key, label, desc, colour, count) {
-    return '<li data-group="' + legendEsc(key) + '" title="' + legendEsc(label + (desc ? ' \u2014 ' + desc : '')) + '"><span class="live-dot" style="background:' + legendEsc(colour) + '" aria-hidden="true"></span> ' +
+    // Same shape as the packet-type rows: the description shows on hover,
+    // focus or tap (initLegendTips), and is read by screen readers.
+    return '<li data-group="' + legendEsc(key) + '"' + (desc ? ' data-desc="' + legendEsc(desc.charAt(0).toUpperCase() + desc.slice(1)) + '" tabindex="0"' : '') + '><span class="live-dot" style="background:' + legendEsc(colour) + '" aria-hidden="true"></span> ' +
       '<span class="legend-label">' + legendEsc(label) + '</span>' + (desc ? '<span class="legend-long"> \u2014 ' + legendEsc(desc) + '</span>' : '') +
       (count !== undefined ? ' <span class="legend-count">' + count + '</span>' : '') + '</li>';
   }
@@ -329,15 +332,9 @@
     title.textContent = mode.title.toUpperCase();
     list.classList.toggle('legend-list--groups', colourBy !== 'type');
     if (colourBy === 'type') { list.innerHTML = buildLegendHtml(window.PayloadLabels || null); return; }
-    if (colourBy === 'hash') {
-      // Flying packets take a colour per packet; the feed icons keep the
-      // packet-type colours listed below the note.
-      title.textContent = 'PACKET TYPES';
-      list.classList.remove('legend-list--groups');
-      list.innerHTML = '<li class="legend-note">Flying packets: each packet its own colour, shared by its copies, so you can follow one as it spreads.</li>' +
-        buildLegendHtml(window.PayloadLabels || null);
-      return;
-    }
+    // Hash: every packet has its own colour, so there is no key to show.
+    title.hidden = list.hidden = colourBy === 'hash';
+    if (colourBy === 'hash') { list.innerHTML = ''; return; }
     var cutoff = Date.now() - GROUP_WINDOW_MS;
     while (groupHits.length && groupHits[0].t < cutoff) groupHits.shift();
     var counts = {}, meta = {};
@@ -375,12 +372,15 @@
     if (!COLOUR_MODES.some(function (m) { return m.key === mode; })) return;
     colourBy = mode;
     colorByHash = mode === 'hash';
-    try {
-      localStorage.setItem('live-colour-by', mode);
-      // The packets page reads this key for its own hash colouring.
-      localStorage.setItem('meshcore-color-packets-by-hash', String(mode === 'hash'));
-    } catch (_) { /* storage off: this visit only */ }
-    window.dispatchEvent(new Event('storage'));
+    if (opts && opts.chosen) {
+      // Saved only when someone picks it. The packets page reads the old key
+      // for its own hash colouring, so a real change keeps it in step.
+      try {
+        localStorage.setItem('live-colour-by', mode);
+        localStorage.setItem('meshcore-color-packets-by-hash', String(mode === 'hash'));
+      } catch (_) { /* storage off: this visit only */ }
+      window.dispatchEvent(new Event('storage'));
+    }
     var sel = document.getElementById('liveColourBy');
     if (sel && sel.value !== mode) sel.value = mode;
     if (!opts || !opts.quiet) {
@@ -398,7 +398,7 @@
     if (linked && COLOUR_MODES.some(function (m) { return m.key === linked; })) colourBy = linked;
     if (sel) {
       sel.value = colourBy;
-      sel.addEventListener('change', function () { setColourMode(sel.value); });
+      sel.addEventListener('change', function () { setColourMode(sel.value, { chosen: true }); });
     }
     setColourMode(colourBy, { quiet: !linked });
   }
@@ -1594,7 +1594,7 @@
             <span id="ghostDesc" class="sr-only">Show inferred hop markers for unknown hops</span>
             <label><input type="checkbox" id="liveRealisticToggle" aria-describedby="realisticDesc"> Realistic</label>
             <span id="realisticDesc" class="sr-only">Buffer packets by hash and animate all paths simultaneously</span>
-            <label class="live-colour-by" for="liveColourBy">Colour by <select id="liveColourBy" aria-describedby="colourByDesc">${COLOUR_MODES.map(function (m) { return '<option value="' + m.key + '">' + m.label + '</option>'; }).join('')}</select></label>
+            <label class="live-colour-by" for="liveColourBy">Colour by <select id="liveColourBy" aria-describedby="colourByDesc">${(function () { var cur = readColourMode(localStorage); return COLOUR_MODES.map(function (m) { return '<option value="' + m.key + '"' + (m.key === cur ? ' selected' : '') + '>' + m.label + '</option>'; }).join(''); })()}</select></label>
             <span id="colourByDesc" class="sr-only">Colour flying packets, their trails and the feed stripe by packet type, region scope, scope kind, path hash size, or packet hash for propagation tracing</span>
             <label><input type="checkbox" id="liveMatrixToggle" aria-describedby="matrixDesc"> Matrix</label>
             <span id="matrixDesc" class="sr-only">Animate packet hex bytes flowing along paths like the Matrix</span>

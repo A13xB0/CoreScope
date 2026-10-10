@@ -3097,7 +3097,10 @@ async function run() {
     await page.selectOption('#liveColourBy', 'scope');
     assert(await page.$eval('#liveColourBy', el => el.value) === 'scope', 'should be Scope after choosing it');
     await page.goto(BASE + '#/live', { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#liveColourBy', { state: 'attached', timeout: 10000 });
+    await page.waitForFunction(() => {
+      const el = document.getElementById('liveColourBy');
+      return el && el.value === 'scope';
+    }, { timeout: 10000 }).catch(() => {});
     assert(await page.$eval('#liveColourBy', el => el.value) === 'scope', 'Scope should persist after reload');
     // Hash for the stripe tests that follow (they set the packets page key themselves).
     await page.evaluate(() => { const c = document.getElementById('liveControls'); if (c) c.classList.remove('is-collapsed'); });

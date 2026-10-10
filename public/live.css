@@ -504,6 +504,9 @@
 .legend-count { margin-left: auto; padding-left: 6px; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
 .legend-list--groups li { display: flex; align-items: center; gap: 0; }
 .legend-note { color: var(--text-muted); font-style: italic; }
+/* Hash mode has no key: the group section is hidden (display:grid above would
+   otherwise override the hidden attribute). */
+.live-legend .legend-title[hidden], .live-legend .legend-list[hidden]:not(#roleLegendList) { display: none; }
 
 /* ---- Live controls cluster (#1205 — re-anchored inside MESH LIVE panel)
  * History: PR #1180 detached the toggles into a `position:fixed` overlay
