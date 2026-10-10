@@ -216,9 +216,8 @@
           '<aside class="dt-rail" aria-label="Build the question">' +
             '<section class="dt-block dt-filters-block"><h3 class="dt-k">Filters</h3><div class="dt-chips" id="dtFilters" role="group" aria-label="Filters"></div>' +
               '<div class="dt-editor" id="dtEditor" hidden></div></section>' +
-            '<button type="button" class="dt-rail-toggle" id="dtRailToggle" aria-expanded="false" aria-controls="dtRailMore">Presets and chart options</button>' +
+            '<button type="button" class="dt-rail-toggle" id="dtRailToggle" aria-expanded="false" aria-controls="dtRailMore">Chart options</button>' +
             '<div class="dt-rail-more" id="dtRailMore">' +
-            '<section class="dt-block"><h3 class="dt-k">Start from</h3><div class="dt-chips" id="dtPresets" role="group" aria-label="Start from"></div></section>' +
             '<section class="dt-block"><h3 class="dt-k">Chart</h3><div class="dt-view" id="dtView"></div></section>' +
             '<section class="dt-block" id="dtPicksBlock"><h3 class="dt-k">Series</h3><div class="dt-chips" id="dtPicks" role="group" aria-label="Picked-out values"></div>' +
               '<div class="dt-editor" id="dtPicker" hidden></div></section>' +
@@ -401,15 +400,8 @@
   }
 
   // ---- explorer controls ---------------------------------------------
+  // Back to the view the tab opens with. The period is the page's, so it stays.
   function renderPresets() {
-    var box = $('dtPresets');
-    box.textContent = '';
-    presets().forEach(function (p) {
-      var b = el('button', { type: 'button', 'class': 'dt-chip', 'aria-pressed': String(JSON.stringify(q.f) === JSON.stringify(p[1])), text: p[0] });
-      b.addEventListener('click', function () { q.f = JSON.parse(JSON.stringify(p[1])); closeEditor(); syncHash(); renderExplorer(); });
-      box.appendChild(b);
-    });
-    // Back to the view the tab opens with. The period is the page's, so it stays.
     var reset = el('button', { type: 'button', 'class': 'dt-btn', text: 'Reset' });
     if (JSON.stringify(q) === JSON.stringify(defaultQuery())) reset.disabled = true;
     reset.addEventListener('click', function () {
@@ -440,6 +432,20 @@
     var add = el('button', { type: 'button', 'class': 'dt-chip dt-add', text: '+ Add filter' });
     add.addEventListener('click', function () { openEditor(-1); });
     box.appendChild(add);
+    // Presets are only ready-made sets of these filters: picking one
+    // replaces the chips above, and they edit like any others.
+    var pre = el('select', { 'class': 'dt-preset', 'aria-label': 'Preset filters' });
+    pre.appendChild(el('option', { value: '', text: 'Preset filters…' }));
+    var list = presets();
+    list.forEach(function (p, i) {
+      pre.appendChild(el('option', { value: String(i), text: p[0] }));
+    });
+    pre.addEventListener('change', function () {
+      if (pre.value === '') return;
+      q.f = JSON.parse(JSON.stringify(list[+pre.value][1]));
+      closeEditor(); syncHash(); renderExplorer();
+    });
+    box.appendChild(pre);
     if (q.f.length) {
       var clear = el('button', { type: 'button', 'class': 'dt-link', text: 'Clear all' });
       clear.addEventListener('click', function () { q.f = []; closeEditor(); syncHash(); renderExplorer(); });

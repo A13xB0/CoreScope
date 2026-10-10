@@ -74,7 +74,7 @@ span.dt-fchip-edit { cursor: default; }
 .dt-editor { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--content-bg); }
 .dt-ed-row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: end; }
 .dt-ed-row label, .dt-view label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-muted); }
-.dt-ed-row select, .dt-view select, .dt-addcol { font: inherit; font-size: 13.5px; color: var(--text); background: var(--input-bg); border: 1px solid var(--border);
+.dt-ed-row select, .dt-view select, .dt-addcol, .dt-preset { font: inherit; font-size: 13.5px; color: var(--text); background: var(--input-bg); border: 1px solid var(--border);
   border-radius: var(--radius-sm); padding: 6px 8px; min-height: 34px; }
 .dt-hint { margin: 0; font-size: 13px; color: var(--text-muted); }
 
@@ -96,6 +96,8 @@ span.dt-fchip-edit { cursor: default; }
 .dt-vx { font-size: 15px; line-height: 1; color: var(--text-muted); }
 .dt-vcount { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .dt-sw { width: 10px; height: 10px; border-radius: 2px; flex: none; display: inline-block; }
+
+.dt-chips .dt-preset { width: auto; background: none; border-style: dashed; border-radius: 999px; padding: 4px 10px; min-height: 32px; font-size: 13px; color: var(--link-color); cursor: pointer; }
 
 /* ---- answer side -------------------------------------------------------- */
 .dt-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--space-sm); }
