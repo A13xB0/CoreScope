@@ -202,22 +202,27 @@
   function readFlag(key) { try { return localStorage.getItem(key) === 'true'; } catch (_) { return false; } }
   function writeFlag(key, on) { try { localStorage.setItem(key, String(on)); } catch (_) { /* storage off: this visit only */ } }
   function initPanelChrome(feedEl, legendEl) {
-    var panels = [
+    const panels = [
       { el: feedEl, toggle: document.getElementById('liveToggleFeed'), close: document.getElementById('feedHideBtn'), hiddenKey: 'live-feed-hidden', foldKey: 'live-feed-folded', name: 'feed' },
       { el: legendEl, toggle: document.getElementById('liveToggleLegend'), close: document.getElementById('legendCloseBtn'), hiddenKey: 'live-legend-hidden', foldKey: 'live-legend-folded', name: 'legend' }
     ];
     panels.forEach(function (p) {
       if (!p.el) return;
-      var fold = p.el.querySelector('.panel-fold');
-      var setOpen = function (open, flash) {
+      const fold = p.el.querySelector('.panel-fold');
+      const setOpen = function (open, flash) {
         p.el.classList.toggle('hidden', !open);
         if (p.toggle) {
           p.toggle.setAttribute('aria-pressed', String(open));
-          if (flash) { p.toggle.classList.remove('is-flashing'); void p.toggle.offsetWidth; p.toggle.classList.add('is-flashing'); }
+          if (flash) {
+            // Restart the flash: drop the class, force a reflow, add it back.
+            p.toggle.classList.remove('is-flashing');
+            p.toggle.getBoundingClientRect();
+            p.toggle.classList.add('is-flashing');
+          }
         }
         writeFlag(p.hiddenKey, !open);
       };
-      var setFolded = function (folded) {
+      const setFolded = function (folded) {
         p.el.classList.toggle('is-folded', folded);
         if (fold) {
           fold.setAttribute('aria-expanded', String(!folded));
@@ -231,9 +236,9 @@
       if (p.toggle) p.toggle.addEventListener('click', function () { setOpen(p.el.classList.contains('hidden'), false); });
       if (fold) fold.addEventListener('click', function () { setFolded(!p.el.classList.contains('is-folded')); });
     });
-    var descBtn = document.getElementById('legendDescBtn');
+    const descBtn = document.getElementById('legendDescBtn');
     if (legendEl && descBtn) {
-      var setDesc = function (on) {
+      const setDesc = function (on) {
         legendEl.classList.toggle('legend-short', !on);
         descBtn.setAttribute('aria-pressed', String(on));
         descBtn.textContent = on ? 'Hide descriptions' : 'Show descriptions';

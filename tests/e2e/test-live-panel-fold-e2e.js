@@ -49,7 +49,9 @@ async function onTop(page, sel) {
     const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
     if (r.width === 0 || r.height === 0 || cs.visibility === 'hidden' || cs.display === 'none') return 'not shown';
     const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    return top && (top === el || el.contains(top)) ? 'ok' : 'covered by ' + (top ? (top.id || top.className || top.tagName) : 'nothing');
+    if (!top) return 'covered by nothing';
+    if (top === el || el.contains(top)) return 'ok';
+    return 'covered by ' + (top.id || top.className || top.tagName);
   }, sel);
 }
 const isHidden = (page, id) => page.evaluate((i) => document.getElementById(i).classList.contains('hidden'), id);

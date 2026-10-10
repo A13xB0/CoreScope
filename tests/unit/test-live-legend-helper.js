@@ -83,8 +83,11 @@ test('every row carries data-enum="<ENUM>" attribute', () => {
 
 // A row's text, as a reader or textContent sees it: tags stripped.
 function rowText(k) {
-  const m = html.match(new RegExp('<li data-enum="' + k + '"[^>]*>([\\s\\S]*?)</li>'));
-  return m ? m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : null;
+  const start = html.indexOf('<li data-enum="' + k + '"');
+  if (start < 0) return null;
+  const open = html.indexOf('>', start) + 1;
+  const row = html.slice(open, html.indexOf('</li>', open));
+  return row.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 }
 
 test('every row reads SHORT \u2014 LONG with the em-dash separator (uniform typography, item 1)', () => {
@@ -100,10 +103,10 @@ test('every row reads SHORT \u2014 LONG with the em-dash separator (uniform typo
 test('every row has its short label, a .legend-long description and the full text as hover', () => {
   for (const k of ctx.window.PayloadLabels.ORDER) {
     const entry = ctx.window.PayloadLabels[k];
-    assert(html.indexOf('data-enum="' + k + '" title="' + entry.short + ' \u2014 ' + entry.long + '"') !== -1,
+    assert(html.includes('data-enum="' + k + '" title="' + entry.short + ' \u2014 ' + entry.long + '"'),
       k + ': title should carry "' + entry.short + ' \u2014 ' + entry.long + '"');
-    assert(html.indexOf('<span class="legend-label">' + entry.short + '</span>') !== -1, k + ': short label span missing');
-    assert(html.indexOf('<span class="legend-long"> \u2014 ' + entry.long + '</span>') !== -1, k + ': .legend-long description missing');
+    assert(html.includes('<span class="legend-label">' + entry.short + '</span>'), k + ': short label span missing');
+    assert(html.includes('<span class="legend-long"> \u2014 ' + entry.long + '</span>'), k + ': .legend-long description missing');
   }
 });
 

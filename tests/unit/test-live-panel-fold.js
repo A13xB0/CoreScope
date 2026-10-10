@@ -9,9 +9,9 @@
  * The fix moves the reopen controls into the MESH LIVE header.
  */
 'use strict';
-const REPO_ROOT = require('path').resolve(__dirname, '..', '..');
-const fs = require('fs');
-const path = require('path');
+const path = require('node:path');
+const fs = require('node:fs');
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 let passed = 0, failed = 0;
 function assert(cond, msg) {
@@ -48,7 +48,7 @@ assert(/class="panel-fold"[^>]*aria-expanded=/.test(legend), 'the legend header 
 assert(/id="legendCloseBtn"/.test(legend), 'the legend header has a close button');
 assert(/id="legendDescBtn"[^>]*aria-pressed=/.test(tpl), 'the legend has a descriptions button with aria-pressed');
 for (const key of ['live-feed-folded', 'live-legend-folded', 'live-legend-descriptions', 'live-feed-hidden', 'live-legend-hidden']) {
-  assert(js.indexOf("'" + key + "'") !== -1, 'state is remembered under ' + key);
+  assert(js.includes("'" + key + "'"), 'state is remembered under ' + key);
 }
 
 console.log('\n=== CSS ===');
