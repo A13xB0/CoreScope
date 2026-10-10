@@ -105,6 +105,14 @@ func main() {
 	if err != nil {
 		log.Printf("[config] warning: %v (using defaults)", err)
 	}
+	// Areas from config.json and areasFile. A bad areas file stops startup:
+	// running with areas silently missing would put packets in the wrong
+	// place without anyone noticing.
+	if am, err := LoadAreaMap(cfg, configDir); err != nil {
+		log.Fatalf("[areas] %v", err)
+	} else if n := len(am.Areas("")); n > 0 {
+		log.Printf("[areas] %d areas in layers %v", n, am.Layers())
+	}
 
 	// CLI flags override config
 	if port > 0 {

@@ -272,6 +272,8 @@
     "mode": "flag",
     "_comment": "Controls how the ingestor handles ADVERTs whose GPS is OUTSIDE the geo_filter polygon (#730). 'flag' (default): store the advert/node and tag it foreign_advert=1 so operators can see bridged/leaked nodes via the API ('foreign': true on /api/nodes). 'drop': legacy behavior — silently discard the advert (no log, no node row). Only applies when geo_filter is configured; otherwise has no effect."
   },
+  "_comment_areasFile": "Optional. A GeoJSON FeatureCollection of further areas, path relative to this file (or absolute). Use it for real boundaries that the polygons below cannot hold: coastlines, islands (MultiPolygon) and holes. Each feature is one area; its properties are code (required, unique across every area including those below), label, layer (default \"region\"; one file can hold several sets, such as countries and counties) and iata (airport codes of observers that report no position, so they still belong to an area). Coordinates are GeoJSON's [lon, lat]. Its areas join the area filter beside the ones below. A missing or invalid file stops the server at startup. Example: docs/examples/areas.example.geojson.",
+  "areasFile": "",
   "areas": {
     "_comment": "Optional. GPS-based display filter. Each entry defines a geographic area by polygon ([lat, lon] pairs) or bounding box (latMin/latMax/lonMin/lonMax). Packets and nodes are attributed to an area based on the transmitting node's own GPS coordinates — not the observer's location. Areas appear as a filter pill bar in the dashboard. Remove this section to disable the area filter UI.",
     "BAY": {

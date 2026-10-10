@@ -25,6 +25,9 @@ type AreaEntry struct {
 	LatMax  *float64     `json:"latMax,omitempty"`
 	LonMin  *float64     `json:"lonMin,omitempty"`
 	LonMax  *float64     `json:"lonMax,omitempty"`
+	// match, when set, decides membership instead of the polygon or box: an
+	// area from areasFile, tested against its GeoJSON geometry.
+	match func(lat, lon float64) bool
 }
 
 // ListLimitsConfig defines maximum row limits for list endpoints to prevent DoS.

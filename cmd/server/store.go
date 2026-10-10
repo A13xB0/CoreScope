@@ -3861,12 +3861,18 @@ const areaNodeTTL = 30 * time.Second
 // TTL is served as-is while one background refresh re-queries it (#2146).
 // Uses its own RWMutex so callers holding s.mu won't deadlock.
 func (s *PacketStore) resolveAreaNodes(areaKey string) map[string]bool {
-	if s.config == nil || s.config.Areas == nil {
+	if s.config == nil {
 		return nil
 	}
 	entry, ok := s.config.Areas[areaKey]
 	if !ok {
-		return nil
+		if !s.config.fileArea(areaKey) {
+			return nil
+		}
+		// An area from areasFile: matched by position against its GeoJSON
+		// geometry, through the same cache as config.json's areas.
+		m := s.config.areaMap
+		entry = AreaEntry{match: func(lat, lon float64) bool { return m.Contains(areaKey, lat, lon) }}
 	}
 
 	s.areaNodeMu.RLock()
