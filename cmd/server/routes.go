@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/meshcore-analyzer/areamap"
 	"log"
 	"math"
 	"net/http"
@@ -541,13 +542,22 @@ func (s *Server) handleConfigAreas(w http.ResponseWriter, r *http.Request) {
 	type areaListEntry struct {
 		Key   string `json:"key"`
 		Label string `json:"label"`
+		Layer string `json:"layer"`
 	}
 	result := make([]areaListEntry, 0, len(s.cfg.Areas))
 	for k, v := range s.cfg.Areas {
 		if v.Label == "" {
 			continue // skip comment/invalid entries (e.g. "_comment" keys in config)
 		}
-		result = append(result, areaListEntry{Key: k, Label: v.Label})
+		result = append(result, areaListEntry{Key: k, Label: v.Label, Layer: areamap.DefaultLayer})
+	}
+	// Areas from areasFile, in the file's order, with their layer.
+	if s.cfg.areaMap != nil {
+		for _, a := range s.cfg.areaMap.Areas("") {
+			if s.cfg.fileArea(a.Code) {
+				result = append(result, areaListEntry{Key: a.Code, Label: a.Label, Layer: a.Layer})
+			}
+		}
 	}
 	writeJSON(w, result)
 }
@@ -1594,8 +1604,13 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		var areaNodes map[string]bool
 		if s.store != nil {
 			areaNodes = s.store.resolveAreaNodes(area)
-		} else if s.cfg != nil && s.cfg.Areas != nil {
-			if entry, ok := s.cfg.Areas[area]; ok {
+		} else if s.cfg != nil {
+			entry, ok := s.cfg.Areas[area]
+			if !ok && s.cfg.fileArea(area) {
+				m := s.cfg.areaMap
+				entry, ok = AreaEntry{match: func(lat, lon float64) bool { return m.Contains(area, lat, lon) }}, true
+			}
+			if ok {
 				pks, err := s.db.GetNodePubkeysInArea(entry)
 				if err == nil {
 					areaNodes = make(map[string]bool, len(pks))

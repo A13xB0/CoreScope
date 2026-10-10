@@ -2252,22 +2252,23 @@ Returns a flat key-value object.
 
 ## GET /api/config/areas
 
-Available area filters defined in `config.json` under `areas`. Used by the frontend to populate the area pill bar. Entries with an empty `label` (e.g. comment keys) are excluded.
+Available area filters: those defined in `config.json` under `areas`, then those in the GeoJSON file named by `areasFile`, in the file's order. Used by the frontend to populate the area pill bar. Entries with an empty `label` (e.g. comment keys) are excluded.
 
 ### Response `200`
 
 ```jsonc
 [
   {
-    "key":   string,   // area key as defined in config (e.g. "bayarea")
-    "label": string    // display name (e.g. "Bay Area")
+    "key":   string,   // area key as defined in config (e.g. "bayarea"), or a feature's code in areasFile
+    "label": string,   // display name (e.g. "Bay Area")
+    "layer": string    // "region" for config.json areas; the feature's layer for areasFile areas
   }
 ]
 ```
 
 Returns `[]` when no areas are configured.
 
-**Note:** Polygon coordinates are **not** included. Use `/api/config/areas/polygons` for the full geometry.
+**Note:** Polygon coordinates are **not** included. Use `/api/config/areas/polygons` for the full geometry of `config.json` areas; areas from `areasFile` are not repeated there (their geometry is the file itself).
 
 ---
 

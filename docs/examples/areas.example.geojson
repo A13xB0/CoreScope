@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "code": "BAY", "label": "Bay Area", "layer": "region", "iata": ["SJC", "SFO", "OAK"] },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-122.55, 37.90], [-121.75, 37.90], [-121.75, 37.25], [-122.55, 37.25], [-122.55, 37.90]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "code": "MRY", "label": "Monterey Bay", "layer": "region", "iata": ["MRY"] },
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [[[-122.05, 37.05], [-121.60, 37.05], [-121.60, 36.45], [-122.05, 36.45], [-122.05, 37.05]]]
+        ]
+      }
+    }
+  ]
+}

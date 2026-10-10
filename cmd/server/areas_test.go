@@ -15,7 +15,7 @@ import (
 // A rough Scotland on the "country" layer, in GeoJSON's [lon, lat] order.
 const scotlandGeoJSON = `{"type":"FeatureCollection","features":[
  {"type":"Feature","properties":{"code":"SCO","label":"Scotland","layer":"country","iata":["EDI"]},
-  "geometry":{"type":"Polygon","coordinates":[[[-7.5,54.6],[-1.5,54.6],[-1.5,60.9],[-7.5,60.9],[-7.5,54.6]]]}}]}`
+  "geometry":{"type":"Polygon","coordinates":[[[-7.5,55.0],[-1.5,55.0],[-1.5,60.9],[-7.5,60.9],[-7.5,55.0]]]}}]}`
 
 func writeAreasFile(t *testing.T, body string) string {
 	t.Helper()
@@ -118,5 +118,20 @@ func TestAreaFilterWorksForFileAreas(t *testing.T) {
 	cfg.Areas = belgium()
 	if got := s.resolveAreaNodes("BEL"); got != nil {
 		t.Errorf("no Belgian nodes, got %v", got)
+	}
+}
+
+// The example in docs/ must load as documented.
+func TestTheDocumentedExampleAreasFileLoads(t *testing.T) {
+	cfg := &Config{AreasFile: "../../docs/examples/areas.example.geojson"}
+	m, err := LoadAreaMap(cfg, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := m.Locate(areamap.DefaultLayer, 37.34, -121.89); got != "BAY" {
+		t.Errorf("San Jose = %q, want BAY", got)
+	}
+	if got, _ := m.LocateIATA(areamap.DefaultLayer, "MRY"); got != "MRY" {
+		t.Errorf("observer MRY = %q, want MRY", got)
 	}
 }

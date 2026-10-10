@@ -3190,6 +3190,10 @@ func (db *DB) GetNodePubkeysInArea(entry AreaEntry) ([]string, error) {
 		LonMin:  entry.LonMin,
 		LonMax:  entry.LonMax,
 	}
+	inside := func(lat, lon float64) bool { return geofilter.PassesFilter(lat, lon, gf) }
+	if entry.match != nil {
+		inside = entry.match
+	}
 
 	var result []string
 	for rows.Next() {
@@ -3205,7 +3209,7 @@ func (db *DB) GetNodePubkeysInArea(entry AreaEntry) ([]string, error) {
 		if lat.Float64 == 0 && lon.Float64 == 0 {
 			continue
 		}
-		if geofilter.PassesFilter(lat.Float64, lon.Float64, gf) {
+		if inside(lat.Float64, lon.Float64) {
 			result = append(result, pk)
 		}
 	}
