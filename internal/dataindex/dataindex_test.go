@@ -416,3 +416,46 @@ func BenchmarkReplace(b *testing.B) {
 		ix.Replace(now.Unix()-1800, tail)
 	}
 }
+
+func TestStartedInKeepsEveryPacketThatStartedThere(t *testing.T) {
+	ix := testIndex()
+	in := ix.StartedIn("SCO")
+	if in == nil {
+		t.Fatal("SCO is one of the index's areas")
+	}
+	if !in("00000000000000a1") {
+		t.Error("the Scottish advert started in SCO")
+	}
+	if in("00000000000000a2") {
+		t.Error("the Irish message only passed through SCO")
+	}
+	if in("00000000000000a3") {
+		t.Error("a packet with no known start is in no area")
+	}
+	if !ix.StartedIn("NEE")("not-a-hex-hash") {
+		t.Error("hashes that are not 16 hex digits are matched too")
+	}
+	if !in("00000000000000A1") {
+		t.Error("hashes match whatever their case")
+	}
+	if !ix.StartedIn("IOI")("00000000000000a2") {
+		t.Error("the Irish message started in IOI")
+	}
+	if ix.StartedIn("WLS") != nil {
+		t.Error("an area the index does not place in must say so (nil), not match nothing")
+	}
+}
+
+func TestOriginsOfNamesWhereEachPacketStarted(t *testing.T) {
+	ix := testIndex()
+	got := ix.OriginsOf([]string{"00000000000000a1", "00000000000000A2", "00000000000000a3", "not-a-hex-hash", "ffffffffffffffff"})
+	want := map[string]Origin{
+		"00000000000000a1": {Area: "SCO", Basis: origin.BasisRelay},
+		"00000000000000A2": {Area: "IOI", Basis: origin.BasisRelay},
+		"00000000000000a3": {Area: Unknown, Basis: origin.BasisRelay},
+		"not-a-hex-hash":   {Area: "NEE", Basis: origin.BasisRelay},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("OriginsOf = %v, want %v (a hash the index does not hold is left out)", got, want)
+	}
+}
