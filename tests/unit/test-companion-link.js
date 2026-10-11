@@ -160,23 +160,9 @@ test('client: a command with no reply times out instead of hanging', async () =>
   await assert.rejects(c.start(), /timed out/);
 });
 
-test('backup round-trips every field, path included', async () => {
-  const fake = new FakeCompanion({ contacts: [{ key: KEY_A, type: 3, name: 'Room', flags: 1, outPathLen: 2, lat: 54.6, lon: -5.9, lastAdvert: 1758000000 }] });
-  const c = new CL.Client(fakeTransport(fake));
-  await c.start();
-  const list = await c.listContacts();
-  const json = CL.toBackup(list, { device: 'Test' });
-  const back = CL.fromBackup(json);
-  assert.strictEqual(back.length, 1);
-  const fake2 = new FakeCompanion();
-  const c2 = new CL.Client(fakeTransport(fake2));
-  await c2.start();
-  await c2.addContacts(back);
-  const v = fake2.contactView(KEY_A);
-  assert.strictEqual(v.outPathLen, 2);
-  assert.strictEqual(v.flags, 1);
-  assert.strictEqual(v.name, 'Room');
-  assert.ok(Math.abs(v.lat - 54.6) < 1e-6, 'position kept: ' + v.lat);
+test('there is no backup format', () => {
+  assert.strictEqual(CL.toBackup, undefined);
+  assert.strictEqual(CL.fromBackup, undefined);
 });
 
 test('contactFromNode builds a contact from a CoreScope node', () => {
