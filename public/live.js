@@ -553,6 +553,18 @@
     }
   }
 
+  // syncMapControlsInset tells the CSS how wide the map's top-right control
+  // column (zoom, layers, fullscreen, settings) is, so the top-right panel
+  // corner sits beside it rather than over it. It skips a measurement taken
+  // while the layers menu is open, which widens the column for a moment.
+  function syncMapControlsInset() {
+    var page = document.querySelector('.live-page');
+    var col = page && page.querySelector('.leaflet-top.leaflet-right');
+    if (!col || col.querySelector('.leaflet-control-layers-expanded')) return;
+    var w = Math.ceil(col.getBoundingClientRect().width);
+    if (w > 0) page.style.setProperty('--live-map-controls-w', w + 'px');
+  }
+
   function initPanelPositions() {
     var positions = getPanelPositions();
     for (var id in positions) {
@@ -2533,7 +2545,9 @@
 
     // Populate role legend from shared roles.js
     // Initialize panel corner positions (#608 M0)
+    syncMapControlsInset();
     initPanelPositions();
+    window.addEventListener('resize', syncMapControlsInset);
 
     // Initialize DragManager for free-form panel dragging (#608 M1)
     if (window.DragManager) {
@@ -4961,6 +4975,7 @@
       window.removeEventListener('orientationchange', _onResize);
       if (window.visualViewport) window.visualViewport.removeEventListener('resize', _onResize);
     }
+    window.removeEventListener('resize', syncMapControlsInset);
     if (_vcrHeightCleanup) { try { _vcrHeightCleanup(); } catch (_) {} _vcrHeightCleanup = null; }
     // Restore #app height to CSS default
     const appEl = document.getElementById('app');

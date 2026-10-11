@@ -5,7 +5,7 @@
  * the nearest corner (the quadrant its centre is in), anchored there by
  * data-position, so it stays in that corner as the window resizes. A corner
  * another panel holds is swapped: that panel takes the dragged one's old
- * corner. The title (the fold button) is a drag handle too; a plain click on
+ * corner. The top-right corner sits beside the map's control column. The title (the fold button) is a drag handle too; a plain click on
  * it still folds. While dragging, a hint marks the corner it will land in. Holding
  * Shift on release keeps the old free placement.
  *
@@ -104,12 +104,34 @@ const state = (page, id) => page.$eval('#' + id, (el) => ({
 
   await step('a panel dropped top-right stays in that corner as the window narrows', async () => {
     await drag(page, 'liveFeed', 1100, 200);
+    await page.waitForTimeout(500); // the corner change is animated
     const before = await state(page, 'liveFeed');
     assert(before.position === 'tr', 'feed data-position ' + before.position);
+    const gap = before.rect.right;
     await page.setViewportSize({ width: 1000, height: 800 });
     await page.waitForTimeout(400);
     const after = await state(page, 'liveFeed');
-    assert(Math.abs(after.rect.right - (1000 - 12)) <= 2, 'feed right edge ' + after.rect.right + ', want 988');
+    assert(Math.abs((1280 - gap) - (1000 - after.rect.right)) <= 2,
+      'feed right edge ' + after.rect.right + ', want ' + (1000 - (1280 - gap)) + ' (same inset as at 1280)');
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.waitForTimeout(300);
+  });
+
+  // The map's zoom, layers, fullscreen and settings buttons run down the
+  // top-right edge; a panel parked in that corner sits beside them.
+  const overlapsControls = (page, id) => page.evaluate((pid) => {
+    const p = document.getElementById(pid).getBoundingClientRect();
+    return [...document.querySelectorAll('.leaflet-top.leaflet-right .leaflet-control')].some((c) => {
+      const r = c.getBoundingClientRect();
+      return r.width > 0 && p.left < r.right && p.right > r.left && p.top < r.bottom && p.bottom > r.top;
+    });
+  }, id);
+  await step('a panel in the top-right corner sits beside the map controls, not over them', async () => {
+    assert((await state(page, 'liveFeed')).position === 'tr', 'fixture: feed not top-right');
+    assert(!(await overlapsControls(page, 'liveFeed')), 'the feed covers the map controls at 1280px');
+    await page.setViewportSize({ width: 900, height: 800 });
+    await page.waitForTimeout(400);
+    assert(!(await overlapsControls(page, 'liveFeed')), 'the feed covers the map controls at 900px');
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.waitForTimeout(300);
   });

@@ -1402,7 +1402,9 @@ input.live-node-filter-input:focus {
 /* ========== Panel Corner Positioning (#608 M0) ========== */
 /* Corner positions — applied via data-position attribute on .live-overlay panels */
 .live-overlay[data-position="tl"] { top: 64px; left: 12px; bottom: auto; right: auto; }
-.live-overlay[data-position="tr"] { top: 64px; right: 12px; bottom: auto; left: auto; }
+/* The top-right corner sits beside the map's control column; live.js sets
+   --live-map-controls-w to its measured width. */
+.live-overlay[data-position="tr"] { top: 64px; right: calc(var(--live-map-controls-w, 62px) + 8px); bottom: auto; left: auto; }
 .live-overlay[data-position="bl"] { bottom: calc(var(--vcr-bar-height, 58px) + 10px); left: 12px; top: auto; right: auto; }
 .live-overlay[data-position="br"] { bottom: calc(var(--vcr-bar-height, 58px) + 10px); right: 12px; top: auto; left: auto; }
 
@@ -1425,7 +1427,7 @@ input.live-node-filter-input:focus {
 }
 .panel-snap-hint[hidden] { display: none; }
 .panel-snap-hint[data-corner="tl"] { top: 64px; left: 12px; }
-.panel-snap-hint[data-corner="tr"] { top: 64px; right: 12px; }
+.panel-snap-hint[data-corner="tr"] { top: 64px; right: calc(var(--live-map-controls-w, 62px) + 8px); }
 .panel-snap-hint[data-corner="bl"] { bottom: calc(var(--vcr-bar-height, 58px) + 10px); left: 12px; }
 .panel-snap-hint[data-corner="br"] { bottom: calc(var(--vcr-bar-height, 58px) + 10px); right: 12px; }
 
