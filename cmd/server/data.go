@@ -97,6 +97,9 @@ type dataService struct {
 	loc     *origin.Locator
 	locAt   time.Time
 	filling bool
+	// waitFor, when set, holds the first fill until it closes: the packet
+	// store's startup-load-done signal (see main.go).
+	waitFor <-chan struct{}
 	builtAt time.Time
 	cache   map[string]dataCached
 	sf      singleflight.Group
