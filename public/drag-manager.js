@@ -6,7 +6,8 @@
  * Panels registered with { snap: true } drop into the nearest corner
  * instead (the quadrant their centre is in): the manager hands the corner
  * to onSnap(panel, corner), which anchors it there. A hint marks the corner
- * while dragging. Holding Shift on release keeps free placement.
+ * while dragging. Holding Shift on release, or setting snapping to false
+ * (the page's "Snap panels" switch), keeps free placement.
  */
 (function () {
   'use strict';
@@ -51,6 +52,7 @@
     this._panels = [];
     this._onKeyDown = this._handleKeyDown.bind(this);
     this.onSnap = null; // function (panel, corner) — set by the page
+    this.snapping = true; // false: snapping panels land where they are dropped
     this._hint = null;
   }
 
@@ -144,7 +146,7 @@
 
       panel.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
       if (panel._dragSnap && self.onSnap) {
-        if (e.shiftKey) self._hideHint();
+        if (e.shiftKey || !self.snapping) self._hideHint();
         else self._showHint(panel, nearestCorner(panel.getBoundingClientRect()));
       }
     });
@@ -198,10 +200,10 @@
   };
 
   // _land ends a drag: into the nearest corner for a snapping panel, unless
-  // Shift is held, else where it was dropped.
+  // Shift is held or snapping is off, else where it was dropped.
   DragManager.prototype._land = function (panel, free) {
     this._hideHint();
-    if (panel._dragSnap && this.onSnap && !free) {
+    if (panel._dragSnap && this.onSnap && this.snapping && !free) {
       var corner = nearestCorner(panel.getBoundingClientRect());
       clearPanel(panel, panel.id);
       this.onSnap(panel, corner);

@@ -109,13 +109,26 @@ const state = (page, id) => page.$eval('#' + id, (el) => ({
     const h = document.getElementById('liveHeader').getBoundingClientRect();
     return { panelTop: p.top, headerBottom: h.bottom, clear: p.top >= h.bottom || p.left >= h.right || p.right <= h.left };
   }, id);
+  // The controls row opens inside the header from the cog button, making it taller.
+  const openControls = async (page) => {
+    const open = await page.$eval('#liveControlsToggle', (el) => el.getAttribute('aria-expanded') === 'true');
+    if (!open) await page.click('#liveControlsToggle');
+    await page.waitForSelector('#liveSnapToggle', { state: 'visible' });
+  };
   await step('a panel in the top-left corner sits below the header bar, not over it', async () => {
+    await page.waitForTimeout(500); // the corner change is animated
     let u = await underHeader(page, 'liveLegend');
     assert(u.clear, 'legend top ' + u.panelTop + ' is above the header bottom ' + u.headerBottom + ' at 1280px');
     await page.setViewportSize({ width: 820, height: 800 });
     await page.waitForTimeout(400);
     u = await underHeader(page, 'liveLegend');
     assert(u.clear, 'legend top ' + u.panelTop + ' is above the header bottom ' + u.headerBottom + ' at 820px');
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openControls(page);
+    await page.waitForTimeout(500);
+    u = await underHeader(page, 'liveLegend');
+    assert(u.clear, 'with the controls open, legend top ' + u.panelTop + ' is above the header bottom ' + u.headerBottom);
+    await page.click('#liveControlsToggle');
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.waitForTimeout(300);
   });
@@ -186,6 +199,7 @@ const state = (page, id) => page.$eval('#' + id, (el) => ({
   });
 
   await step('with "Snap panels" off, a dropped panel stays where it was let go, and the choice is kept', async () => {
+    await openControls(page);
     assert(await page.isChecked('#liveSnapToggle'), 'Snap panels is on by default');
     await page.uncheck('#liveSnapToggle');
     await drag(page, 'liveFeed', 600, 380);
@@ -194,6 +208,7 @@ const state = (page, id) => page.$eval('#' + id, (el) => ({
     await page.reload({ waitUntil: 'load' });
     await page.waitForSelector('#liveFeed .panel-header');
     await page.waitForTimeout(500);
+    await openControls(page);
     assert(!(await page.isChecked('#liveSnapToggle')), 'the off choice did not survive a reload');
     assert((await state(page, 'liveFeed')).dragged === 'true', 'the free position did not survive a reload');
     await page.check('#liveSnapToggle');

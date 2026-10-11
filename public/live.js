@@ -351,6 +351,24 @@
     if (w > 0) page.style.setProperty('--live-map-controls-w', w + 'px');
   }
 
+  // syncTopInsets keeps the top panel corners below the live header bar,
+  // which starts at the top-left and grows when its rows wrap. The top-right
+  // corner only moves down when the header reaches across to it.
+  var PANEL_GAP = 8;
+  function syncTopInsets() {
+    var page = document.querySelector('.live-page');
+    var header = document.getElementById('liveHeader');
+    if (!page || !header) return;
+    var p = page.getBoundingClientRect(), h = header.getBoundingClientRect();
+    if (!h.height) return;
+    var below = Math.ceil(h.bottom - p.top + PANEL_GAP);
+    page.style.setProperty('--live-top-inset', below + 'px');
+    var controlsW = parseFloat(page.style.getPropertyValue('--live-map-controls-w')) || 62;
+    var trLeft = p.right - controlsW - PANEL_GAP - 360; // a top-right panel is at most ~360px wide
+    page.style.setProperty('--live-top-inset-right', (h.right > trLeft ? below : 64) + 'px');
+  }
+  var _headerObserver = null;
+
   function initPanelPositions() {
     var positions = getPanelPositions();
     for (var id in positions) {
@@ -1433,6 +1451,8 @@
             <span id="favDesc" class="sr-only">Show only favorited and claimed nodes</span>
             <label><input type="checkbox" id="liveMultibyteToggle" aria-describedby="multibyteDesc"> Multibyte only</label>
             <span id="multibyteDesc" class="sr-only">Show only multibyte (≥2-byte path-hash) packets; hide unreliable single-byte traffic</span>
+            <label><input type="checkbox" id="liveSnapToggle" checked aria-describedby="snapDesc"> Snap panels</label>
+            <span id="snapDesc" class="sr-only">Drop dragged panels into the nearest corner; off leaves them where you let go</span>
             <label id="liveGeoFilterLabel" style="display:none"><input type="checkbox" id="liveGeoFilterToggle"> Mesh live area</label>
             </div>
             <div class="live-toggles">
@@ -2338,8 +2358,14 @@
     // Populate role legend from shared roles.js
     // Initialize panel corner positions (#608 M0)
     syncMapControlsInset();
+    syncTopInsets();
     initPanelPositions();
     window.addEventListener('resize', syncMapControlsInset);
+    window.addEventListener('resize', syncTopInsets);
+    if (window.ResizeObserver && document.getElementById('liveHeader')) {
+      _headerObserver = new ResizeObserver(syncTopInsets);
+      _headerObserver.observe(document.getElementById('liveHeader'));
+    }
 
     // Initialize DragManager for free-form panel dragging (#608 M1)
     if (window.DragManager) {
@@ -2350,6 +2376,16 @@
       // The three corner panels drop into the nearest corner (Shift on
       // release places them freely); see snapPanelToCorner.
       dragMgr.onSnap = function (panel, corner) { snapPanelToCorner(panel.id, corner); };
+      // "Snap panels" off: panels land where they are dropped, as with Shift.
+      var snapToggle = document.getElementById('liveSnapToggle');
+      try { dragMgr.snapping = localStorage.getItem('live-panel-snap') !== 'false'; } catch (_) { /* storage blocked */ }
+      if (snapToggle) {
+        snapToggle.checked = dragMgr.snapping;
+        snapToggle.addEventListener('change', function () {
+          dragMgr.snapping = snapToggle.checked;
+          try { localStorage.setItem('live-panel-snap', String(snapToggle.checked)); } catch (_) { /* quota */ }
+        });
+      }
       var dragPanels = ['liveFeed', 'liveLegend', 'liveNodeDetail'];
       for (var di = 0; di < dragPanels.length; di++) {
         dragMgr.register(document.getElementById(dragPanels[di]), { snap: true });
@@ -4768,6 +4804,8 @@
       if (window.visualViewport) window.visualViewport.removeEventListener('resize', _onResize);
     }
     window.removeEventListener('resize', syncMapControlsInset);
+    window.removeEventListener('resize', syncTopInsets);
+    if (_headerObserver) { _headerObserver.disconnect(); _headerObserver = null; }
     if (_vcrHeightCleanup) { try { _vcrHeightCleanup(); } catch (_) {} _vcrHeightCleanup = null; }
     // Restore #app height to CSS default
     const appEl = document.getElementById('app');
