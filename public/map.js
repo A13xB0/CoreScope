@@ -419,6 +419,24 @@
     });
   }
 
+  // Unclustered markers are drawn the way the live page draws its nodes: the
+  // shared role shape, sized by zoom with live.js's own numbers (addNodeMarker
+  // and rescaleMarkers), and stale ones dimmed.
+  function liveMarkerSize(role, zoom) {
+    var n = Math.max(10, Math.round((role === 'repeater' ? 18 : 14) * Math.max(0.4, (zoom - 8) / 6)));
+    return n % 2 ? n + 1 : n;
+  }
+  function makeLiveStyleIcon(role, isStale, color, zoom) {
+    var size = liveMarkerSize(role, zoom);
+    return L.divIcon({
+      html: window.makeRoleMarkerSVG(role || 'companion', color || null, size),
+      className: 'meshcore-marker live-node-marker' + (isStale ? ' map-node-stale' : ''),
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+      popupAnchor: [0, -size / 2],
+    });
+  }
+
   function makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus, scopeState) {
     // Show the short mesh hash ID (first N bytes of pubkey, uppercased). When
     // the width is unobserved the label falls back to one byte — it has to draw
@@ -2003,6 +2021,16 @@
     if (!map || _currentMarkerData.length === 0) return;
     if (filters.clustering) return; // markercluster lays itself out
     map.invalidateSize({ animate: false });
+    // Resize markers for the new zoom, as the live page does.
+    var zoom = map.getZoom();
+    for (var i = 0; i < _currentMarkerData.length; i++) {
+      var m = _currentMarkerData[i];
+      if (!m._leafletMarker || !m.role) continue;
+      var size = liveMarkerSize(m.role, zoom);
+      if (m.icon && m.icon.options.iconSize && m.icon.options.iconSize[0] === size) continue;
+      m.icon = makeLiveStyleIcon(m.role, m.stale, m.tint, zoom);
+      m._leafletMarker.setIcon(m.icon);
+    }
     placeHashLabels();
   }
 
@@ -2131,7 +2159,10 @@
       // scope overlay stands down rather than the two fighting over the fill.
       var scopeState = (scopeTintEnabled(filters.scopeOverlay, filters.scopeState) && !mbColor) ? (node.scope_config_state || null) : null;
       var scopeColor = scopeState ? scopeTint(node) : null;
-      const icon = useLabel ? makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus, scopeState) : makeMarkerIcon(node.role || 'companion', isStale, isAlsoObserver, mbColor || scopeColor);
+      const tint = mbColor || scopeColor;
+      const icon = useLabel ? makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus, scopeState)
+        : filters.clustering ? makeMarkerIcon(node.role || 'companion', isStale, isAlsoObserver, tint)
+        : makeLiveStyleIcon(node.role || 'companion', isStale, tint, map.getZoom());
       const latLng = L.latLng(node.lat, node.lon);
       // The scope state has to leave the fill and reach the DOM, or a dot marker
       // is colour and nothing else — which on the achromat preset is six greys
@@ -2150,7 +2181,7 @@
         hashKnown = hp.known;
         markerAlt += ', hash ' + hp.prefix;
       }
-      allMarkers.push({ latLng, node, icon, isLabel: useLabel, stale: isStale, hashText: hashText, hashKnown: hashKnown, popupFn: function() { return buildPopup(node); }, alt: markerAlt, title: scopeLabel ? markerAlt : '' });
+      allMarkers.push({ latLng, node, icon, isLabel: useLabel, stale: isStale, role: node.role || 'companion', tint: tint, hashText: hashText, hashKnown: hashKnown, popupFn: function() { return buildPopup(node); }, alt: markerAlt, title: scopeLabel ? markerAlt : '' });
     }
 
     // Add observer markers (skip observers already represented as a node marker)
@@ -2163,9 +2194,9 @@
         if (!obs.lat || !obs.lon) continue;
         // Skip observers whose pubkey matches a displayed node — they're shown as combined markers
         if (obs.id && displayedNodePubkeys.has(obs.id.toLowerCase())) continue;
-        const icon = makeMarkerIcon('observer');
+        const icon = filters.clustering ? makeMarkerIcon('observer') : makeLiveStyleIcon('observer', false, null, map.getZoom());
         const latLng = L.latLng(obs.lat, obs.lon);
-        allMarkers.push({ latLng, node: obs, icon, isLabel: false, popupFn: function() { return buildObserverPopup(obs); }, alt: (obs.name || obs.id || 'Unknown') + ' (observer)' });
+        allMarkers.push({ latLng, node: obs, icon, isLabel: false, role: 'observer', popupFn: function() { return buildObserverPopup(obs); }, alt: (obs.name || obs.id || 'Unknown') + ' (observer)' });
       }
     }
 

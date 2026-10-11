@@ -4921,6 +4921,8 @@ body[data-cb-preset="achromat"] {
 /* Hash labels beside repeater markers on the unclustered map (placeHashLabels):
    plain text with a halo in the page background, so it reads on any tile. */
 .mc-hash-label-icon { background: transparent; border: 0; pointer-events: none; }
+/* Stale nodes on the unclustered map, dimmed like the live page's. */
+.map-node-stale { opacity: 0.35; }
 .mc-hash-label {
   display: block; height: 100%; box-sizing: border-box; padding: 0 4px;
   font: 600 11px/15px ui-monospace, "SF Mono", Consolas, monospace;
