@@ -10,13 +10,13 @@
 //   - subpathReady / pathHopReady are atomic.Bool flags written exactly
 //     once by the background builder (false → true) and never reset
 //     thereafter. Handlers read them via SubpathIndexReady() /
-//     PathHopIndexReady() before touching s.spTxIndex /
+//     PathHopIndexReady() before touching s.spTotalPaths /
 //     s.byPathHop. While a flag is false, the handler responds 503 +
 //     Retry-After: 5.
 //
 //   - The builder itself acquires s.mu.Lock() and calls the existing
 //     buildSubpathIndex() / buildPathHopIndex() methods. Those methods
-//     replace s.spTxIndex / s.byPathHop with freshly-
+//     replace s.spTotalPaths / s.byPathHop with freshly-
 //     allocated maps under the write lock. Visibility of the populated
 //     maps to handlers that see Ready()==true is guaranteed by Go's
 //     sync/atomic acquire-release semantics (formalized in Go 1.19):
@@ -30,7 +30,7 @@
 //
 //   - Ingest-side incremental updates in StoreNewTransmissions /
 //     pruning / hash-collision paths continue to write
-//     s.spTxIndex / s.byPathHop directly under s.mu.Lock(). Because
+//     s.spTotalPaths / s.byPathHop directly under s.mu.Lock(). Because
 //     the builder also runs under s.mu.Lock() and the builder
 //     overwrites whatever is there, the brief window between Load()
 //     returning and the goroutine acquiring s.mu means any
@@ -91,7 +91,7 @@ func writeIndexLoading503(w http.ResponseWriter) {
 
 // SubpathIndexReady reports whether the subpath index build kicked off
 // by Load() has completed (#1008). Until this returns true, callers
-// must NOT read s.spTxIndex.
+// must NOT read s.spTotalPaths.
 func (s *PacketStore) SubpathIndexReady() bool {
 	return s.subpathReady.Load()
 }
@@ -197,7 +197,7 @@ func (s *PacketStore) markIndexesReadySync() {
 // WaitIndexesReady blocks until both background indexes built by
 // startBackgroundIndexBuilds() report ready, or the deadline expires.
 // Returns true if both flipped in time. Intended for tests that read
-// s.spTxIndex / s.byPathHop directly after Load(); production
+// s.spTotalPaths / s.byPathHop directly after Load(); production
 // code paths gate via SubpathIndexReady() / PathHopIndexReady() and
 // respond 503 + Retry-After to clients instead of blocking.
 //

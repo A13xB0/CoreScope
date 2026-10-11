@@ -119,7 +119,9 @@ func TestSubpathDetailCountsOccurrences(t *testing.T) {
 func TestEvictStaleDropsEvictedPathsFromTotals(t *testing.T) {
 	now := time.Now().UTC()
 	store := makeTestStore(10, now.Add(-48*time.Hour), 0)
-	store.spTotalPaths = 10 // makeTestStore's paths all have three hops
+	if store.spTotalPaths != 10 {
+		t.Fatalf("fixture: spTotalPaths = %d, want 10", store.spTotalPaths)
+	}
 	for i := 5; i < 10; i++ {
 		store.packets[i].FirstSeen = now.Add(-time.Hour).Format(time.RFC3339)
 	}
