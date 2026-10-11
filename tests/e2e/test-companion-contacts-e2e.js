@@ -9,8 +9,8 @@
  * Run: BASE_URL=http://localhost:13581 node tests/e2e/test-companion-contacts-e2e.js
  */
 'use strict';
-const path = require('path');
-const fs = require('fs');
+const path = require('node:path');
+const fs = require('node:fs');
 const { chromium } = require('playwright');
 
 const BASE = process.env.BASE_URL || 'http://localhost:13581';
