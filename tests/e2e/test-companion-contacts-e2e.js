@@ -40,7 +40,7 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
   const placed = all.filter((n) => typeof n.lat === 'number' && typeof n.lon === 'number' && (n.lat || n.lon) && /^[0-9a-f]{64}$/i.test(n.public_key));
   const lat = placed.reduce((s, n) => s + n.lat, 0) / placed.length;
   const lon = placed.reduce((s, n) => s + n.lon, 0) / placed.length;
-  const seeded = placed[0];
+  const seeded = placed.find((n) => /repeater/i.test(n.role || '')) || placed[0];
   const seed = { key: seeded.public_key.toLowerCase(), type: 2, name: seeded.name || 'seeded', lat: seeded.lat, lon: seeded.lon, lastAdvert: 1759000000, outPathLen: 1 };
   const far = { key: 'ee'.repeat(32), type: 1, name: 'Far Away', lat: lat + 20, lon: lon + 20, lastAdvert: 1700000000 };
 
@@ -79,6 +79,7 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
 
   await step('a circle on the map selects nodes, split into new and already on the device', async () => {
     // Draw for real: pick the circle tool, press at the centre, drag out.
+    await page.selectOption('#ccHeard', 'any');
     await page.click('#ccToolCircle');
     const box = await page.locator('#ccMap').boundingBox();
     await page.evaluate(([la, lo]) => window._companionContacts.centreOn(la, lo, 9), [seeded.lat, seeded.lon]);
@@ -97,7 +98,7 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
 
   let toAdd = 0;
   await step('the whole area: roles filter, counts and the add button agree', async () => {
-    await page.evaluate(([la, lo]) => window._companionContacts.selectCircle(la, lo, 50000), [lat, lon]);
+    await page.evaluate(([la, lo]) => window._companionContacts.selectCircle(la, lo, 2e7), [lat, lon]); // every node, outliers included
     // Include every role so the count is predictable.
     for (const r of ['repeater', 'room', 'companion', 'sensor']) {
       const cb = page.locator(`#ccRoles input[value="${r}"]`);
@@ -119,6 +120,8 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
     assert(n === 2 + toAdd, `device holds ${n}, expected ${2 + toAdd}`);
     const v = await page.evaluate((k) => window.__fake.contactView(k), seed.key);
     assert(v.outPathLen === 1, 'the existing contact\'s path was reset');
+    await page.click('#ccDoneBtn');
+    await page.waitForSelector('#ccProgress', { state: 'hidden' });
   });
 
   await step('when the area is bigger than the free space, only what fits is offered', async () => {
@@ -137,7 +140,7 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
   });
 
   await step('selecting an area of contacts and removing them asks first, offers a backup, then removes', async () => {
-    await page.evaluate(([la, lo]) => window._companionContacts.selectCircle(la + 20, lo + 20, 100000), [lat, lon]);
+    await page.evaluate(([la, lo]) => window._companionContacts.selectCircle(la, lo, 100000), [far.lat, far.lon]);
     const s = await page.evaluate(() => window._companionContacts.state());
     assert(s.toRemove === 1, 'only the far contact should be selected: ' + s.toRemove);
     await page.click('#ccRemoveBtn');
