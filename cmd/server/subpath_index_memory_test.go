@@ -141,8 +141,9 @@ func BenchmarkBuildSubpathIndex(b *testing.B) {
 
 // TestSubpathIndexRetainedHeap bounds the live heap the subpath index keeps for
 // the production-shaped fixture. It kept 250 MB when a separate key → count
-// map duplicated every key of spTxIndex; with counts read as len(txs) it keeps
-// about 197 MB. The bound sits between the two.
+// map duplicated every key of spTxIndex, and about 197 MB with counts read as
+// len(txs). Subpaths are now counted per request (the result is cached), so
+// the store keeps nothing per subpath.
 func TestSubpathIndexRetainedHeap(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a 1.5M-key index")
@@ -153,10 +154,45 @@ func TestSubpathIndexRetainedHeap(t *testing.T) {
 	for _, tx := range txs {
 		txGetParsedPath(tx)
 	}
-	const limitMB = 225
+	const limitMB = 5
 	mb := retainedHeapMB(func() interface{} { return buildSubpathIndexForTest(txs) })
 	t.Logf("subpath index for 41k production-shaped transmissions keeps %.1f MB", mb)
 	if mb > limitMB {
 		t.Fatalf("subpath index keeps %.1f MB, limit %d MB", mb, limitMB)
+	}
+}
+
+// TestSubpathRequestAllocations bounds what one analytics request allocates
+// to count the production-shaped fixture's subpaths. Counting with a map from
+// each named key string to a heap-allocated accumulator allocated about
+// 336 MB for its 1.5M keys: on a small instance that is a spike the size of
+// the whole store, every time the cache expires. Pointer-free tallies under
+// a hash of the name allocate about 110 MB, nearly all of it the one map's
+// growth.
+func TestSubpathRequestAllocations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("counts 1.5M subpaths")
+	}
+	txs := subpathFixture(41000, 1)
+	for _, tx := range txs {
+		txGetParsedPath(tx)
+	}
+	s := &PacketStore{packets: txs}
+	groups := []subpathGroup{{2, 2, 50}, {3, 3, 50}, {4, 4, 50}, {5, 8, 50}}
+	identity := func(h string) string { return h }
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	res := s.rankNamedSubpaths(groups, identity)
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(res)
+	mb := float64(after.TotalAlloc-before.TotalAlloc) / (1 << 20)
+	t.Logf("one subpaths request over 41k production-shaped transmissions allocates %.1f MB", mb)
+	const limitMB = 150
+	if mb > limitMB {
+		t.Fatalf("one subpaths request allocates %.1f MB, limit %d MB", mb, limitMB)
+	}
+	if got := len(res[0]["subpaths"].([]map[string]interface{})); got != 50 {
+		t.Fatalf("group 2-2 returned %d subpaths, want 50", got)
 	}
 }
