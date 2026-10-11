@@ -4227,6 +4227,18 @@ func (s *PacketStore) buildSubpathIndex() {
 	log.Printf("[store] Counted %d paths with subpaths", s.spTotalPaths)
 }
 
+// rankNamedSubpaths returns, per group, the top g.Limit subpaths of the
+// stored paths by resolved name, in the rankSubpaths result shape. Callers
+// hold s.mu.RLock.
+func (s *PacketStore) rankNamedSubpaths(groups []subpathGroup, resolveHop func(string) string) []map[string]interface{} {
+	perGroup, totalPaths := s.countNamedSubpaths(groups, resolveHop)
+	results := make([]map[string]interface{}, len(groups))
+	for i, g := range groups {
+		results[i] = s.rankSubpaths(perGroup[i], totalPaths, g.Limit)
+	}
+	return results
+}
+
 // countNamedSubpaths counts every run of 2 to subpathMaxLen hops in the
 // stored paths, once per occurrence, by resolved name. A run counts in every
 // group whose length range holds it; each entry keeps the first raw hops it
@@ -10445,13 +10457,8 @@ func (s *PacketStore) GetAnalyticsSubpathsBulk(region string, groups []subpathGr
 		return hop
 	}
 
-	perGroup, totalPaths := s.countNamedSubpaths(groups, resolveHop)
+	results := s.rankNamedSubpaths(groups, resolveHop)
 	s.mu.RUnlock()
-
-	results := make([]map[string]interface{}, len(groups))
-	for i, g := range groups {
-		results[i] = s.rankSubpaths(perGroup[i], totalPaths, g.Limit)
-	}
 
 	// Cache individual results for future single-key lookups too.
 	s.cacheMu.Lock()
@@ -10539,8 +10546,7 @@ func (s *PacketStore) computeAnalyticsSubpaths(region string, minLen, maxLen, li
 		return s.computeSubpathsSlow(region, minLen, maxLen, limit, resolveHop)
 	}
 
-	counts, totalPaths := s.countNamedSubpaths([]subpathGroup{{MinLen: minLen, MaxLen: maxLen, Limit: limit}}, resolveHop)
-	return s.rankSubpaths(counts[0], totalPaths, limit)
+	return s.rankNamedSubpaths([]subpathGroup{{MinLen: minLen, MaxLen: maxLen, Limit: limit}}, resolveHop)[0]
 }
 
 // computeSubpathsSlow is the original O(N) packet-iteration path, used only
