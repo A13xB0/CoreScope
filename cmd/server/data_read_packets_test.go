@@ -202,4 +202,3 @@ func TestDataReadPacketsAllocationsPerObservation(t *testing.T) {
 		t.Fatalf("readPackets allocates %.0f bytes per packet, limit %d", per, limit)
 	}
 }
-
