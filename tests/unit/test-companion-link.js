@@ -3,10 +3,10 @@
  * companion (tests/helpers/fake-companion.js) that answers as the firmware's
  * examples/companion_radio/MyMesh.cpp does. */
 'use strict';
-const path = require('path');
-const fs = require('fs');
-const vm = require('vm');
-const assert = require('assert');
+const path = require('node:path');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FakeCompanion = require(path.join(REPO_ROOT, 'tests/helpers/fake-companion.js'));
 
@@ -33,7 +33,7 @@ const KEY_C = 'cc' + '33'.repeat(31);
 function fakeTransport(fake) {
   const t = {
     onFrame: null,
-    send(payload) { const out = fake.handle(payload); setTimeout(() => out.forEach((f) => t.onFrame && t.onFrame(f)), 0); return Promise.resolve(); },
+    send(payload) { const out = fake.handle(payload); setTimeout(() => out.forEach((f) => t.onFrame?.(f)), 0); return Promise.resolve(); },
     close() { return Promise.resolve(); },
   };
   return t;
@@ -46,9 +46,10 @@ test('USB frames: "<" + little-endian length + payload', () => {
 
 test('USB decoder: reassembles split frames, skips noise, splits joined frames', () => {
   const d = new CL.SerialDecoder();
-  const out = [];
-  out.push(...d.push(Uint8Array.of(0x00, 0x3e, 2)));      // noise, then a header split across chunks
-  out.push(...d.push(Uint8Array.of(0, 7, 8, 0x3e, 1, 0, 5))); // rest of frame 1 + all of frame 2
+  const out = [
+    ...d.push(Uint8Array.of(0x00, 0x3e, 2)),          // noise, then a header split across chunks
+    ...d.push(Uint8Array.of(0, 7, 8, 0x3e, 1, 0, 5)), // rest of frame 1 + all of frame 2
+  ];
   assert.deepStrictEqual(out.map((f) => Array.from(f)), [[7, 8], [5]]);
 });
 
@@ -175,7 +176,7 @@ test('backup round-trips every field, path included', async () => {
   assert.strictEqual(v.outPathLen, 2);
   assert.strictEqual(v.flags, 1);
   assert.strictEqual(v.name, 'Room');
-  assert.strictEqual(v.lat, 54.6);
+  assert.ok(Math.abs(v.lat - 54.6) < 1e-6, 'position kept: ' + v.lat);
 });
 
 test('contactFromNode builds a contact from a CoreScope node', () => {

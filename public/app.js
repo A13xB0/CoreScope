@@ -1233,7 +1233,7 @@ function navigate() {
     } else if (routeParam === 'path-inspector' || (routeParam && routeParam.startsWith('path-inspector'))) {
       basePage = 'path-inspector';
       routeParam = null;
-    } else if (routeParam && routeParam.startsWith('companion-contacts')) {
+    } else if (routeParam?.startsWith('companion-contacts')) {
       basePage = 'companion-contacts';
       routeParam = null;
     } else if (!routeParam) {
