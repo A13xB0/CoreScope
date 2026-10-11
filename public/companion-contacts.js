@@ -126,7 +126,8 @@
                 '<label class="cc-field">Type<select id="ccMType"><option value="">All types</option><option value="repeater">Repeaters</option><option value="companion">Companions</option><option value="room">Room servers</option><option value="sensor">Sensors</option></select></label>' +
                 '<label class="cc-field" id="ccMAreaField" hidden>Area<select id="ccMArea"></select></label>' +
                 '<label class="cc-field">Not heard for<select id="ccMStale"><option value="0">Any time</option><option value="30">30 days or more</option><option value="60">60 days or more</option><option value="90">90 days or more</option><option value="180">180 days or more</option></select></label>' +
-                '<p class="cc-fit">Heard means its newest advert on the device, or CoreScope hearing it, whichever is later.</p>' +
+                '<label class="cc-check"><input type="checkbox" id="ccMStaleCompanions"> Count companions as stale too</label>' +
+                '<p class="cc-fit">Heard means its newest advert on the device, or CoreScope hearing it, whichever is later. Companions advert only when their owner sends one, so a quiet companion is usually not gone.</p>' +
                 '<label class="cc-check"><input type="checkbox" id="ccMNoPos"> Include contacts with no position when drawing</label>' +
               '</section>' +
               '<section class="cc-card">' +
@@ -375,7 +376,7 @@
     fresh.sort(function (a, b) { return b._heard - a._heard; });
     var connected = !!st.info;
     var free = connected ? Math.max(0, (st.info.maxContacts || 0) - st.deviceContacts.length) : null;
-    var toAdd = connected ? fresh.slice(0, free) : [];
+    var toAdd = connected ? fresh.filter(function (n) { return !st.excluded[n._key]; }).slice(0, free) : [];
     var toUpdate = connected && $('ccUpdateExisting').checked ? already : [];
     return { inArea: inArea, fresh: fresh, already: already, free: free, toAdd: toAdd, toUpdate: toUpdate };
   }
@@ -392,12 +393,17 @@
     else if (sel.fresh.length > sel.free) note.textContent = 'Only ' + sel.free + ' fit: the device has ' + plural(sel.free, 'free slot', 'free slots') + '. The most recently heard are added first.';
     else note.textContent = sel.fresh.length ? plural(sel.fresh.length, 'new contact fits', 'new contacts fit') + ': ' + (sel.free - sel.fresh.length) + ' slots free after this.' : 'Nothing new in this area.';
 
-    var rows = sel.toAdd.slice(0, 50).map(function (n) {
-      return '<li><span>' + escapeHtml(n.name || n._key.slice(0, 8)) + '</span><span class="cc-muted">' + n._role + areaSuffix(nodeAreas(n)) + ' · ' + ago(n._heard) + '</span></li>';
+    // Unticked nodes stay listed, unticked, so they can be ticked back.
+    var adding = {};
+    sel.toAdd.forEach(function (n) { adding[n._key] = true; });
+    var listed = sel.fresh.filter(function (n) { return adding[n._key] || st.excluded[n._key]; });
+    var rows = listed.slice(0, 50).map(function (n) {
+      var name = n.name || n._key.slice(0, 8);
+      return '<li><label class="cc-row-check"><input type="checkbox" data-key="' + n._key + '"' + (st.excluded[n._key] ? '' : ' checked') + ' aria-label="Add ' + escapeAttr(name) + '"><span>' + escapeHtml(name) + '</span></label><span class="cc-muted">' + n._role + areaSuffix(nodeAreas(n)) + ' · ' + ago(n._heard) + '</span></li>';
     }).concat(sel.already.slice(0, 10).map(function (n) {
       return '<li class="cc-dim"><span>' + escapeHtml(n.name || n._key.slice(0, 8)) + ' · on device</span><span>' + (sel.toUpdate.length ? 'update' : 'skipped') + '</span></li>';
     }));
-    var more = sel.toAdd.length - 50;
+    var more = listed.length - 50;
     if (more > 0) rows.push('<li class="cc-dim"><span>and ' + more + ' more</span><span></span></li>');
     $('ccAddList').innerHTML = rows.join('');
 
@@ -410,6 +416,13 @@
       btn.textContent = (sel.toAdd.length ? 'Add ' + plural(sel.toAdd.length, 'contact', 'contacts') : 'Update ' + plural(sel.toUpdate.length, 'contact', 'contacts')) +
         (sel.toAdd.length && sel.toUpdate.length ? ' (+' + sel.toUpdate.length + ' updated)' : '') + ' to ' + (st.info.name || 'the companion');
     }
+  }
+
+  function onListTick(e) {
+    var k = e.target && e.target.getAttribute('data-key');
+    if (!k) return;
+    if (e.target.checked) delete st.excluded[k]; else st.excluded[k] = true;
+    refresh();
   }
 
   function startAdd(items, title) {
@@ -580,13 +593,14 @@
     var type = $('ccMType').value;
     var area = $('ccMArea').value;
     var staleDays = +$('ccMStale').value || 0;
+    var staleCompanions = $('ccMStaleCompanions').checked;
     var noPos = $('ccMNoPos').checked;
     if (!st.shape && !area && !staleDays) return [];
     var now = Date.now() / 1000;
     var out = [];
     st.deviceContacts.forEach(function (c) {
       if (type && CL.typeToRole(c.type) !== type) return;
-      if (staleDays && now - lastHeardOf(c) < staleDays * 86400) return;
+      if (staleDays && (now - lastHeardOf(c) < staleDays * 86400 || (!staleCompanions && CL.typeToRole(c.type) === 'companion'))) return;
       var p = placeOf(c);
       if (st.shape && !(p ? inside(st.shape, p.lat, p.lon) : noPos)) return;
       if (!areaPicked(area, contactAreas(c))) return;
@@ -805,16 +819,12 @@
     $('ccHeard').addEventListener('change', refresh);
     $('ccUpdateExisting').addEventListener('change', refresh);
     $('ccAddBtn').addEventListener('click', onAddClick);
-    ['ccMType', 'ccMStale', 'ccMNoPos'].forEach(function (id) { $(id).addEventListener('change', function () { st.excluded = {}; refresh(); }); });
+    ['ccMType', 'ccMStale', 'ccMStaleCompanions', 'ccMNoPos'].forEach(function (id) { $(id).addEventListener('change', function () { st.excluded = {}; refresh(); }); });
     $('ccArea').addEventListener('change', onAreaPick);
     $('ccMArea').addEventListener('change', onAreaPick);
     $('ccFindStale').addEventListener('click', findStale);
-    $('ccRemoveList').addEventListener('change', function (e) {
-      var k = e.target && e.target.getAttribute('data-key');
-      if (!k) return;
-      if (e.target.checked) delete st.excluded[k]; else st.excluded[k] = true;
-      refresh();
-    });
+    $('ccAddList').addEventListener('change', onListTick);
+    $('ccRemoveList').addEventListener('change', onListTick);
     $('ccRemoveBtn').addEventListener('click', openConfirm);
     $('ccConfirmCancel').addEventListener('click', closeConfirm);
     $('ccConfirmGo').addEventListener('click', doRemove);
