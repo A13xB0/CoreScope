@@ -63,8 +63,16 @@ func TestDecodedCacheDroppedKeysAreUnread(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		inList := false
 		for i, line := range strings.Split(string(b), "\n") {
-			if strings.Contains(line, "decodedCacheDroppedKeys") || strings.Contains(line, "`json:\"") {
+			if strings.HasPrefix(line, "var decodedCacheDroppedKeys") {
+				inList = true
+			}
+			if inList {
+				inList = !strings.HasPrefix(line, "}")
+				continue
+			}
+			if strings.Contains(line, "`json:\"") {
 				continue
 			}
 			for _, k := range decodedCacheDroppedKeys {

@@ -131,17 +131,19 @@ var decodedCacheDroppedKeys = []string{
 	"ctrlPubKey", "ctrlSubtype", "ctrlTag", "ctrlFlags", "ctrlZeroHop", "ctrlLength",
 }
 
-// broadcastPayload returns the packet's decoded payload for the live feed.
+// broadcastPayload returns the packet's whole decoded payload for the live
+// feed. It decodes DecodedJSON afresh rather than copying the cache, which
+// drops unread fields and whose nested maps a shallow copy would share
+// (#1871). Ingest broadcasts a few packets a second, so the decode is cheap.
 func broadcastPayload(tx *StoreTx) map[string]interface{} {
-	payload := tx.ParsedDecoded()
-	if payload == nil {
+	if tx.DecodedJSON == "" {
 		return nil
 	}
-	cp := make(map[string]interface{}, len(payload))
-	for k, v := range payload {
-		cp[k] = v
+	var payload map[string]interface{}
+	if json.Unmarshal([]byte(tx.DecodedJSON), &payload) != nil {
+		return nil
 	}
-	return cp
+	return payload
 }
 
 // ParsedDecoded returns the parsed DecodedJSON map, caching the result.
@@ -150,6 +152,9 @@ func (tx *StoreTx) ParsedDecoded() map[string]interface{} {
 	tx.decodedOnce.Do(func() {
 		if tx.DecodedJSON != "" {
 			json.Unmarshal([]byte(tx.DecodedJSON), &tx.parsedDecoded)
+			for _, k := range decodedCacheDroppedKeys {
+				delete(tx.parsedDecoded, k)
+			}
 		}
 	})
 	return tx.parsedDecoded
