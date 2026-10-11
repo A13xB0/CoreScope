@@ -387,6 +387,9 @@ func main() {
 		ds.dashboards = dash
 		log.Printf("[data] %d dashboards, opening on %q", len(dash.Dashboards), dash.Default)
 		srv.data = ds
+		if store != nil {
+			ds.waitFor = store.StartupLoadDone()
+		}
 		go ds.run(context.Background())
 		if ds.places() {
 			log.Printf("[data] Data tab on: layer %q, %d days", ds.layer, ds.days)

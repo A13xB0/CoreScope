@@ -1370,7 +1370,17 @@
     ensureCubes(d).then(function () {
       if (my !== gen || !root) return;
       renderBar(cur()); if (state.edit) renderRail(cur()); redrawAll();
-    }, function () { if (my === gen) toast('The figures for this period could not be loaded. Try again shortly.'); });
+    }, function (e) {
+      if (my !== gen) return;
+      // 503: the server is still filling the index after a restart (it waits
+      // for the packet store to load first). Say so and look again shortly.
+      if (e && e.message === 'status 503') {
+        toast('The Data tab is still filling its index after a restart. The figures appear in a minute or two.');
+        setTimeout(function () { if (my === gen) render(); }, 20000);
+        return;
+      }
+      toast('The figures for this period could not be loaded. Try again shortly.');
+    });
     redrawAll();
   }
   function redrawAll() { requestAnimationFrame(function () { redrawers.forEach(function (f) { f(); }); }); }

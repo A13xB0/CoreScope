@@ -191,6 +191,19 @@ func (d *dataService) locator() *origin.Locator {
 
 // run fills the index, then keeps it current until ctx ends.
 func (d *dataService) run(ctx context.Context) {
+	if d.waitFor != nil {
+		// Never fill on top of the packet store's startup load: together they
+		// outgrew a 1.5 GB container. Report filling while waiting.
+		d.mu.Lock()
+		d.filling = true
+		d.mu.Unlock()
+		select {
+		case <-d.waitFor:
+		case <-ctx.Done():
+			return
+		}
+		log.Printf("[data] packet store loaded; filling the index")
+	}
 	if err := d.fill(ctx); err != nil {
 		log.Printf("[data] fill failed: %v", err)
 	}
@@ -624,8 +637,14 @@ func (s *Server) handleDataConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) dataOr404(w http.ResponseWriter) *dataService {
-	if s.data == nil || s.data.index() == nil {
+	if s.data == nil {
 		http.Error(w, "the Data tab is not enabled", http.StatusNotFound)
+		return nil
+	}
+	if s.data.index() == nil {
+		// On but not built yet: the fill waits for the packet store's
+		// startup load. Say so, so the page can tell the reader to wait.
+		http.Error(w, "the Data tab is filling its index; try again shortly", http.StatusServiceUnavailable)
 		return nil
 	}
 	return s.data
