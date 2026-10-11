@@ -102,6 +102,24 @@ const state = (page, id) => page.$eval('#' + id, (el) => ({
     assert(s.corner === 'tl' && !s.free, 'storage: corner=' + s.corner + ' free=' + s.free);
   });
 
+  // The live header bar sits at the top-left; a panel in a top corner sits
+  // below it, however tall the header is (it wraps onto two rows when narrow).
+  const underHeader = (page, id) => page.evaluate((pid) => {
+    const p = document.getElementById(pid).getBoundingClientRect();
+    const h = document.getElementById('liveHeader').getBoundingClientRect();
+    return { panelTop: p.top, headerBottom: h.bottom, clear: p.top >= h.bottom || p.left >= h.right || p.right <= h.left };
+  }, id);
+  await step('a panel in the top-left corner sits below the header bar, not over it', async () => {
+    let u = await underHeader(page, 'liveLegend');
+    assert(u.clear, 'legend top ' + u.panelTop + ' is above the header bottom ' + u.headerBottom + ' at 1280px');
+    await page.setViewportSize({ width: 820, height: 800 });
+    await page.waitForTimeout(400);
+    u = await underHeader(page, 'liveLegend');
+    assert(u.clear, 'legend top ' + u.panelTop + ' is above the header bottom ' + u.headerBottom + ' at 820px');
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.waitForTimeout(300);
+  });
+
   await step('a panel dropped top-right stays in that corner as the window narrows', async () => {
     await drag(page, 'liveFeed', 1100, 200);
     await page.waitForTimeout(500); // the corner change is animated
@@ -128,6 +146,8 @@ const state = (page, id) => page.$eval('#' + id, (el) => ({
   }, id);
   await step('a panel in the top-right corner sits beside the map controls, not over them', async () => {
     assert((await state(page, 'liveFeed')).position === 'tr', 'fixture: feed not top-right');
+    const u = await underHeader(page, 'liveFeed');
+    assert(u.clear, 'the feed sits over the header bar: top ' + u.panelTop + ', header bottom ' + u.headerBottom);
     assert(!(await overlapsControls(page, 'liveFeed')), 'the feed covers the map controls at 1280px');
     await page.setViewportSize({ width: 900, height: 800 });
     await page.waitForTimeout(400);
@@ -163,6 +183,22 @@ const state = (page, id) => page.$eval('#' + id, (el) => ({
     await drag(page, 'liveLegend', 640, 420, { shift: true });
     const s = await state(page, 'liveLegend');
     assert(s.dragged === 'true' && s.position === null && s.free, 'not free: ' + JSON.stringify(s));
+  });
+
+  await step('with "Snap panels" off, a dropped panel stays where it was let go, and the choice is kept', async () => {
+    assert(await page.isChecked('#liveSnapToggle'), 'Snap panels is on by default');
+    await page.uncheck('#liveSnapToggle');
+    await drag(page, 'liveFeed', 600, 380);
+    const s = await state(page, 'liveFeed');
+    assert(s.dragged === 'true' && s.position === null && s.free, 'snapped anyway: ' + JSON.stringify(s));
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('#liveFeed .panel-header');
+    await page.waitForTimeout(500);
+    assert(!(await page.isChecked('#liveSnapToggle')), 'the off choice did not survive a reload');
+    assert((await state(page, 'liveFeed')).dragged === 'true', 'the free position did not survive a reload');
+    await page.check('#liveSnapToggle');
+    await drag(page, 'liveFeed', 1100, 700);
+    assert((await state(page, 'liveFeed')).position === 'br', 'turned back on, dropping snaps again');
   });
 
   const folded = (page, id) => page.$eval('#' + id + ' .panel-fold', (b) => b.getAttribute('aria-expanded') === 'false');
