@@ -32,7 +32,8 @@ const BASES = ['first-relay', 'zero-hop', 'unknown'];
 function addOrigins(body, origins) {
   const out = {};
   (body.packets || []).slice(0, 3).forEach((p, i) => {
-    out[p.hash] = { area: i === 2 ? '' : (i === 0 ? 'SCO' : 'IOI'), basis: BASES[i] };
+    // The index names an unplaced start "unknown", not "".
+    out[p.hash] = { area: i === 2 ? 'unknown' : (i === 0 ? 'SCO' : 'IOI'), basis: BASES[i] };
   });
   Object.assign(origins, out);
   return Object.assign({}, body, { origins: out });
@@ -89,7 +90,7 @@ async function openPackets(ctx, withOrigins) {
     const b = await cell(second);
     assert(b.text === 'IOI' && /no relay|heard direct/i.test(b.title), 'second origin ' + JSON.stringify(b));
     const c = await cell(third);
-    assert(/unknown/i.test(c.title) && c.text !== 'SCO' && c.text !== 'IOI', 'unplaced origin ' + JSON.stringify(c));
+    assert(/unknown/i.test(c.title) && c.text === '—', 'unplaced origin shows a dash, not a code: ' + JSON.stringify(c));
   });
 
   await step('a packet newer than the index says it is not placed yet', async () => {
