@@ -4,7 +4,7 @@
  * tidy up the contacts it already has, over USB (Web Serial) or Bluetooth
  * (Web Bluetooth). The radio protocol is companion-link.js; this file is the
  * page: a map to draw an area on (circle, rectangle or free shape), filters,
- * and the add / remove flows with progress, a confirmation and a backup.
+ * and the add / remove flows with progress and a confirmation.
  *
  * Everything happens in the browser: nodes come from /api/nodes, and the
  * server never talks to the radio. Deep link: #/tools/companion-contacts
@@ -134,11 +134,6 @@
                 '<p class="cc-fit" id="ccManageNote">Connect a companion, then draw round the contacts you want to remove, pick an area, or find stale ones.</p>' +
                 '<ul class="cc-list" id="ccRemoveList"></ul>' +
                 '<button type="button" class="btn cc-go cc-danger" id="ccRemoveBtn" disabled>Remove contacts…</button>' +
-                '<div class="cc-row">' +
-                  '<button type="button" class="btn" id="ccBackupBtn" disabled>Download backup</button>' +
-                  '<button type="button" class="btn" id="ccRestoreBtn" disabled>Restore from backup</button>' +
-                  '<input type="file" id="ccRestoreFile" accept="application/json,.json" hidden>' +
-                '</div>' +
               '</section>' +
             '</div>' +
           '</aside>' +
@@ -159,7 +154,6 @@
           '<h3 id="ccConfirmTitle"></h3>' +
           '<p>They are deleted from the device, with any known path to them. They come back if you add them from the map, or if auto-add is on and the device hears their advert again.</p>' +
           '<ul class="cc-list" id="ccConfirmList"></ul>' +
-          '<label class="cc-check cc-backup"><input type="checkbox" id="ccConfirmBackup" checked> <span id="ccConfirmBackupLabel">Download a backup of all contacts first</span></label>' +
           '<div class="cc-row cc-end">' +
             '<button type="button" class="btn" id="ccConfirmCancel">Cancel</button>' +
             '<button type="button" class="btn cc-danger" id="ccConfirmGo"></button>' +
@@ -188,8 +182,6 @@
         'contacts ' + used + ' of ' + max + ' used</span>';
       bar.style.width = max ? Math.min(100, Math.round(used / max * 100)) + '%' : '0';
     }
-    $('ccBackupBtn').disabled = !connected;
-    $('ccRestoreBtn').disabled = !connected;
   }
 
   function connErr(msg) {
@@ -631,24 +623,6 @@
 
   function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
 
-  function download(name, text) {
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
-  }
-
-  function backupName() {
-    var who = (st.info && st.info.name || 'companion').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-|-$/g, '') || 'companion';
-    return 'companion-contacts-' + who + '-' + new Date().toISOString().slice(0, 10) + '.json';
-  }
-
-  function downloadBackup() {
-    download(backupName(), CL.toBackup(st.deviceContacts, { device: st.info && st.info.name }));
-  }
-
   function openConfirm() {
     var chosen = st.lastRemove || [];
     if (!chosen.length) return;
@@ -656,10 +630,7 @@
     $('ccConfirmList').innerHTML = chosen.slice(0, 20).map(function (c) {
       return '<li><span>' + escapeHtml(c.name || c.key.slice(0, 8)) + '</span><span class="cc-muted">' + CL.typeToRole(c.type) + '</span></li>';
     }).join('') + (chosen.length > 20 ? '<li class="cc-dim"><span>and ' + (chosen.length - 20) + ' more</span><span></span></li>' : '');
-    $('ccConfirmBackupLabel').textContent = 'Download a backup of all ' + st.deviceContacts.length + ' contacts first';
-    $('ccConfirmBackup').checked = true;
-    var go = $('ccConfirmGo');
-    go.textContent = ($('ccConfirmBackup').checked ? 'Back up and remove ' : 'Remove ') + chosen.length;
+    $('ccConfirmGo').textContent = 'Remove ' + chosen.length;
     var d = $('ccConfirm');
     if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
     $('ccConfirmCancel').focus();
@@ -672,7 +643,6 @@
 
   function doRemove() {
     var chosen = (st.lastRemove || []).slice();
-    if ($('ccConfirmBackup').checked) downloadBackup();
     closeConfirm();
     var keys = chosen.map(function (c) { return c.key; });
     var names = {};
@@ -683,17 +653,6 @@
       var removed = results.filter(function (r) { return r.status === 'removed'; }).length;
       return plural(removed, 'contact', 'contacts') + ' removed';
     });
-  }
-
-  function restore(file) {
-    var reader = new FileReader();
-    reader.onload = function () {
-      var items;
-      try { items = CL.fromBackup(String(reader.result)); }
-      catch (e) { connErr('That file is not a Companion Contacts backup.'); return; }
-      startAdd(items, 'Restoring ' + plural(items.length, 'contact', 'contacts') + ' to ' + (st.info.name || 'the companion'));
-    };
-    reader.readAsText(file);
   }
 
   // ---- progress -------------------------------------------------------------
@@ -859,12 +818,6 @@
     $('ccRemoveBtn').addEventListener('click', openConfirm);
     $('ccConfirmCancel').addEventListener('click', closeConfirm);
     $('ccConfirmGo').addEventListener('click', doRemove);
-    $('ccConfirmBackup').addEventListener('change', function () {
-      $('ccConfirmGo').textContent = (this.checked ? 'Back up and remove ' : 'Remove ') + (st.lastRemove || []).length;
-    });
-    $('ccBackupBtn').addEventListener('click', downloadBackup);
-    $('ccRestoreBtn').addEventListener('click', function () { $('ccRestoreFile').click(); });
-    $('ccRestoreFile').addEventListener('change', function () { if (this.files[0]) restore(this.files[0]); this.value = ''; });
     $('ccStopBtn').addEventListener('click', function () { st.stop = true; this.textContent = 'Stopping…'; });
     $('ccDoneBtn').addEventListener('click', function () { $('ccProgress').hidden = true; $('ccStopBtn').textContent = 'Stop after this one'; });
 

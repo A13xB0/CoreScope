@@ -107,7 +107,7 @@
   // addUpdateContact lays out CMD_ADD_UPDATE_CONTACT as updateContactFromFrame
   // reads it. A new contact gets OUT_PATH_UNKNOWN, so the first message to it
   // floods; c.outPathLen/outPath/flags carry an existing contact's own. lastmod
-  // is sent only when known (a restore), else the device stamps its own clock.
+  // is sent only when given, else the device stamps its own clock.
   function addUpdateContact(c) {
     var withLastmod = c.lastmod != null;
     var f = new Uint8Array(1 + CONTACT_LEN - (withLastmod ? 0 : 4));
@@ -303,30 +303,6 @@
 
   Client.prototype.close = function () { return this.t.close(); };
 
-  // ---- backup -----------------------------------------------------------
-
-  function toBackup(contacts, meta) {
-    return JSON.stringify({
-      format: 'corescope-companion-contacts', version: 1, savedAt: new Date().toISOString(),
-      device: meta && meta.device || null,
-      contacts: contacts.map(function (c) {
-        return { key: c.key, type: c.type, flags: c.flags, outPathLen: c.outPathLen, outPath: hexOf(c.outPath || new Uint8Array(0)),
-          name: c.name, lastAdvert: c.lastAdvert, lat: c.lat, lon: c.lon, lastmod: c.lastmod };
-      }),
-    }, null, 1);
-  }
-
-  function fromBackup(text) {
-    var d = JSON.parse(text);
-    if (!d || d.format !== 'corescope-companion-contacts' || !Array.isArray(d.contacts)) throw new Error('not a Companion Contacts backup');
-    return d.contacts.filter(function (c) { return /^[0-9a-f]{64}$/.test(c.key || ''); }).map(function (c) {
-      var path = new Uint8Array(PATH);
-      for (var i = 0; i < Math.min(PATH, (c.outPath || '').length / 2); i++) path[i] = parseInt(c.outPath.substr(i * 2, 2), 16);
-      return { key: c.key, type: c.type, flags: c.flags, outPathLen: c.outPathLen, outPath: path, name: c.name,
-        lastAdvert: c.lastAdvert, lat: c.lat, lon: c.lon, lastmod: c.lastmod };
-    });
-  }
-
   // ---- transports ---------------------------------------------------------
 
   function supported() {
@@ -395,7 +371,7 @@
     appStart: appStart, deviceQuery: deviceQuery, getContacts: getContacts,
     addUpdateContact: addUpdateContact, removeContact: removeContact, parse: parse,
     roleToType: roleToType, typeToRole: typeToRole, contactFromNode: contactFromNode,
-    Client: Client, toBackup: toBackup, fromBackup: fromBackup,
+    Client: Client,
     supported: supported, connectSerial: connectSerial, connectBluetooth: connectBluetooth,
     SAVE_DELAY_MS: 5000, // LAZY_CONTACTS_WRITE_DELAY: the device writes contacts this long after a change
   };
