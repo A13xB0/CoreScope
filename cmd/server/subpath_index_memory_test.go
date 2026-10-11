@@ -183,7 +183,7 @@ func TestSubpathRequestAllocations(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	res := s.rankNamedSubpaths(groups, identity)
+	res, _ := s.topNamedSubpaths(groups, identity)
 	runtime.ReadMemStats(&after)
 	runtime.KeepAlive(res)
 	mb := float64(after.TotalAlloc-before.TotalAlloc) / (1 << 20)
@@ -192,7 +192,7 @@ func TestSubpathRequestAllocations(t *testing.T) {
 	if mb > limitMB {
 		t.Fatalf("one subpaths request allocates %.1f MB, limit %d MB", mb, limitMB)
 	}
-	if got := len(res[0]["subpaths"].([]map[string]interface{})); got != 50 {
+	if got := len(res[0]); got != 50 {
 		t.Fatalf("group 2-2 returned %d subpaths, want 50", got)
 	}
 }
