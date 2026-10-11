@@ -97,7 +97,7 @@ func TestObsDedupEmptyObserverNotCounted(t *testing.T) {
 // BenchmarkObsDedup measures a miss (the common case on ingest) at sizes
 // either side of the threshold.
 func BenchmarkObsDedup(b *testing.B) {
-	for _, obsCount := range []int{4, 10, 15, 50, 500} {
+	for _, obsCount := range []int{4, 16, 40, 63, 64, 500} {
 		b.Run(fmt.Sprintf("obs=%d", obsCount), func(b *testing.B) {
 			tx := &StoreTx{ID: 1}
 			for i := 0; i < obsCount; i++ {
