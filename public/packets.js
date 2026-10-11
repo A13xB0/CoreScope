@@ -1638,9 +1638,15 @@
     unknown: 'origin unknown',
   };
 
+  // originArea is the area a packet started in, or '' when nothing placed it
+  // (the index names that "unknown").
+  function originArea(o) {
+    return o?.area && o.area !== 'unknown' ? o.area : '';
+  }
+
   function originTitle(o) {
     if (!o) return 'Not placed yet: the area index refreshes every 2 minutes';
-    if (!o.area) return 'Origin unknown: ' + (ORIGIN_BASES[o.basis] || o.basis || 'nothing placed it');
+    if (!originArea(o)) return 'Origin unknown: ' + (ORIGIN_BASES[o.basis] || o.basis || 'nothing placed it');
     return 'Started in ' + o.area + ' — ' + (ORIGIN_BASES[o.basis] || o.basis);
   }
 
@@ -1648,13 +1654,13 @@
     if (!packetOrigins) return '';
     const o = packetOrigins[hash];
     let text = '<span class="text-muted">…</span>';
-    if (o) text = o.area ? escapeHtml(o.area) : '<span class="text-muted">—</span>';
+    if (o) text = originArea(o) ? escapeHtml(o.area) : '<span class="text-muted">—</span>';
     return '<span title="' + escapeHtml(originTitle(o)) + '">' + text + '</span>';
   }
 
   function originDetailHtml(o) {
     if (!o) return '<span class="text-muted">not placed yet</span>';
-    if (!o.area) return '<span class="text-muted">unknown</span>';
+    if (!originArea(o)) return '<span class="text-muted">unknown</span>';
     const how = ORIGIN_BASES[o.basis] || o.basis || '';
     return escapeHtml(o.area) + (how ? ' <span class="text-muted">· ' + escapeHtml(how) + '</span>' : '');
   }
@@ -3150,7 +3156,7 @@
         try { var pj = typeof p.path_json === 'string' ? JSON.parse(p.path_json) : p.path_json; return Array.isArray(pj) ? pj.length : 0; } catch(e) { return 0; }
       }; break;
       case 'scope': accessor = function(p) { return p.scope_name || ''; }; break;
-      case 'origin': accessor = function(p) { const o = packetOrigins?.[p.hash]; return o?.area || ''; }; break;
+      case 'origin': accessor = function(p) { const o = packetOrigins?.[p.hash]; return originArea(o); }; break;
       case 'region': accessor = function(p) { return (regionMap && regionMap[p.observer_id]) || ''; }; break;
       case 'path': accessor = function(p) {
         try { var pj = typeof p.path_json === 'string' ? JSON.parse(p.path_json) : p.path_json; return Array.isArray(pj) ? pj.join(',') : ''; } catch(e) { return ''; }
