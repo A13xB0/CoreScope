@@ -125,6 +125,28 @@ func (o *StoreObs) ParsedTime() (time.Time, bool) {
 	return o.tsParsed, o.tsParsedOK
 }
 
+// decodedCacheDroppedKeys are payload fields no server code reads: the
+// ciphertext and MAC of encrypted payloads, advert signatures, the ISO copy
+// of a timestamp, raw path data and control-packet details.
+// TestDecodedCacheDroppedKeysAreUnread fails if code starts naming one.
+var decodedCacheDroppedKeys = []string{
+	"encryptedData", "mac", "signature", "signatureValid", "timestampISO", "pathData",
+	"ctrlPubKey", "ctrlSubtype", "ctrlTag", "ctrlFlags", "ctrlZeroHop", "ctrlLength",
+}
+
+// broadcastPayload returns the packet's decoded payload for the live feed.
+func broadcastPayload(tx *StoreTx) map[string]interface{} {
+	payload := tx.ParsedDecoded()
+	if payload == nil {
+		return nil
+	}
+	cp := make(map[string]interface{}, len(payload))
+	for k, v := range payload {
+		cp[k] = v
+	}
+	return cp
+}
+
 // ParsedDecoded returns the parsed DecodedJSON map, caching the result.
 // Thread-safe via sync.Once — the first call parses, subsequent calls return cached.
 func (tx *StoreTx) ParsedDecoded() map[string]interface{} {
@@ -3123,14 +3145,8 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			},
 		}
 		if tx.DecodedJSON != "" {
-			if payload := tx.ParsedDecoded(); payload != nil {
-				// Copy the cached map so broadcast consumers cannot mutate
-				// the shared cache or cause a data race (#1871 review).
-				cp := make(map[string]interface{}, len(payload))
-				for k, v := range payload {
-					cp[k] = v
-				}
-				decoded["payload"] = cp
+			if payload := broadcastPayload(tx); payload != nil {
+				decoded["payload"] = payload
 			}
 		}
 		// For TRACE packets, decode the full packet to include path.hopsCompleted
@@ -3396,14 +3412,8 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			},
 		}
 		if tx.DecodedJSON != "" {
-			if payload := tx.ParsedDecoded(); payload != nil {
-				// Copy the cached map so broadcast consumers cannot mutate
-				// the shared cache or cause a data race (#1871 review).
-				cp := make(map[string]interface{}, len(payload))
-				for k, v := range payload {
-					cp[k] = v
-				}
-				decoded["payload"] = cp
+			if payload := broadcastPayload(tx); payload != nil {
+				decoded["payload"] = payload
 			}
 		}
 		// For TRACE packets, decode the full packet to include path.hopsCompleted
