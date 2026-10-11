@@ -114,13 +114,15 @@ func TestSubpathDetailCountsOccurrences(t *testing.T) {
 	}
 }
 
-// Evicting a transmission with a path must take it out of the totals the
-// percentages divide by.
+// The totals the percentages divide by are counted with the subpaths, so
+// evicted transmissions drop out of them.
 func TestEvictStaleDropsEvictedPathsFromTotals(t *testing.T) {
 	now := time.Now().UTC()
 	store := makeTestStore(10, now.Add(-48*time.Hour), 0)
-	if store.spTotalPaths != 10 {
-		t.Fatalf("fixture: spTotalPaths = %d, want 10", store.spTotalPaths)
+	identity := func(h string) string { return h }
+	groups := []subpathGroup{{MinLen: 2, MaxLen: 8, Limit: 10}}
+	if _, total := store.topNamedSubpaths(groups, identity); total != 10 {
+		t.Fatalf("fixture: totalPaths = %d, want 10", total)
 	}
 	for i := 5; i < 10; i++ {
 		store.packets[i].FirstSeen = now.Add(-time.Hour).Format(time.RFC3339)
@@ -129,7 +131,7 @@ func TestEvictStaleDropsEvictedPathsFromTotals(t *testing.T) {
 	if n := store.EvictStale(); n != 5 {
 		t.Fatalf("evicted %d, want 5", n)
 	}
-	if store.spTotalPaths != 5 {
-		t.Errorf("spTotalPaths = %d after evicting 5 of 10, want 5", store.spTotalPaths)
+	if _, total := store.topNamedSubpaths(groups, identity); total != 5 {
+		t.Errorf("totalPaths = %d after evicting 5 of 10, want 5", total)
 	}
 }
