@@ -97,6 +97,7 @@
       "tests/e2e/test-packets-origin-e2e.js",
       "tests/e2e/test-map-modal-fluid-e2e.js",
       "tests/e2e/test-scope-audit-area-e2e.js",
+      "tests/e2e/test-map-true-position-labels-e2e.js",
       "tests/e2e/test-map-nodes-pagination-e2e.js",
       "tests/e2e/test-nav-drawer-1064-e2e.js",
       "tests/e2e/test-nav-fluid-1055-e2e.js",
