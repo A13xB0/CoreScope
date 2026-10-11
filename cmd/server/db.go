@@ -15,6 +15,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/meshcore-analyzer/dataindex"
 	"github.com/meshcore-analyzer/dbschema"
 	"github.com/meshcore-analyzer/geofilter"
 	"github.com/meshcore-analyzer/packetpath"
@@ -712,6 +713,9 @@ type PacketQuery struct {
 	Channel            string // channel_hash filter (#812). Plain names like "#test"/"public" or "enc_<HEX>" for encrypted
 	Order              string // ASC or DESC
 	ExpandObservations bool   // when true, include observation sub-maps in txToMap output
+	// startedIn, when set, decides Area by where each packet started (the
+	// Data tab's index) instead of by the advert sender's position.
+	startedIn func(hash string) bool
 }
 
 // PacketResult wraps paginated packet list.
@@ -720,6 +724,9 @@ type PacketResult struct {
 	Total   int                      `json:"total"`
 	Limit   int                      `json:"limit"`
 	Offset  int                      `json:"offset"`
+	// Origins says where each listed packet started, when the Data tab
+	// places packets in areas.
+	Origins map[string]dataindex.Origin `json:"origins,omitempty"`
 }
 
 // QueryPackets returns paginated, filtered packets as transmissions (matching Node.js shape).

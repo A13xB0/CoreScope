@@ -94,9 +94,11 @@ func TestPacketsListCarriesOrigins(t *testing.T) {
 			Basis string `json:"basis"`
 		} `json:"origin"`
 	}
-	getJSON(t, r, "/api/packets/00000000000000p1", &detail)
-	if detail.Origin == nil || detail.Origin.Area != "SCO" {
-		t.Errorf("packet detail origin = %+v, want SCO", detail.Origin)
+	// The detail route takes 16 hex digits, so ask for the advert (p1's hash
+	// is not hex).
+	getJSON(t, r, "/api/packets/00000000000000a2", &detail)
+	if detail.Origin == nil || detail.Origin.Area != "IOI" || detail.Origin.Basis != "advert" {
+		t.Errorf("packet detail origin = %+v, want IOI by its advert", detail.Origin)
 	}
 }
 
