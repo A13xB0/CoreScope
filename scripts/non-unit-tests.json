@@ -27,6 +27,7 @@
       "tests/e2e/test-customize-export-e2e.js",
       "tests/e2e/test-customize-theme-e2e.js",
       "tests/e2e/test-drag-manager-e2e.js",
+      "tests/e2e/test-companion-contacts-e2e.js",
       "tests/e2e/test-e2e-1267-mobile-vcr.js",
       "tests/e2e/test-e2e-playwright.js",
       "tests/e2e/test-filter-ux-e2e.js",
