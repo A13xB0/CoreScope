@@ -44,7 +44,19 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
   const seed = { key: seeded.public_key.toLowerCase(), type: 2, name: seeded.name || 'seeded', lat: seeded.lat, lon: seeded.lon, lastAdvert: 1759000000, outPathLen: 1 };
   const far = { key: 'ee'.repeat(32), type: 1, name: 'Far Away', lat: lat + 20, lon: lon + 20, lastAdvert: 1700000000 };
 
+  // Two areas from the server's area list: one round the seeded node, one
+  // round the far contact (config.json-style bounding boxes).
+  const box = (la, lo, d) => ({ latMin: la - d, latMax: la + d, lonMin: lo - d, lonMax: lo + d });
+  const AREAS = [{ key: 'NEAR', label: 'Near' }, { key: 'FAR', label: 'Far' }];
+  const POLYS = [Object.assign({ key: 'NEAR', label: 'Near' }, box(seeded.lat, seeded.lon, 0.5)), Object.assign({ key: 'FAR', label: 'Far' }, box(far.lat, far.lon, 1))];
+  const nearCount = placed.filter((n) => Math.abs(n.lat - seeded.lat) <= 0.5 && Math.abs(n.lon - seeded.lon) <= 0.5).length;
+
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+  await ctx.route(/\/api\/config\/areas(\/polygons|\/geojson)?$/, (route) => {
+    const u = route.request().url();
+    if (u.endsWith('/geojson')) return route.fulfill({ status: 404, body: '' });
+    return route.fulfill({ json: u.endsWith('/polygons') ? POLYS : AREAS });
+  });
   await ctx.addInitScript({ content: FAKE + `
     window.__fake = new FakeCompanion({ name: 'Bench Radio', maxContacts: 100, contacts: ${JSON.stringify([seed, far])} });
     installFakeSerial(window.__fake);` });
@@ -96,6 +108,20 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
     assert(s.already >= 1, 'the seeded contact is not shown as already on the device: ' + JSON.stringify(s));
   });
 
+  await step('picking an area in the area list selects its nodes without drawing', async () => {
+    await page.click('#ccToolClear');
+    for (const r of ['repeater', 'room', 'companion', 'sensor']) {
+      const cb = page.locator(`#ccRoles input[value="${r}"]`);
+      if (!(await cb.isChecked())) await cb.check();
+    }
+    await page.waitForFunction(() => document.querySelectorAll('#ccArea option').length >= 3);
+    await page.selectOption('#ccArea', 'NEAR');
+    const s = await page.evaluate(() => window._companionContacts.state());
+    assert(s.inArea === nearCount, `in area ${s.inArea}, expected the ${nearCount} nodes inside Near`);
+    assert(s.already >= 1, 'the seeded contact sits in Near');
+    await page.selectOption('#ccArea', '');
+  });
+
   let toAdd = 0;
   await step('the whole area: roles filter, counts and the add button agree', async () => {
     await page.evaluate(([la, lo]) => window._companionContacts.selectCircle(la, lo, 2e7), [lat, lon]); // every node, outliers included
@@ -137,6 +163,30 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
     await page.waitForFunction(() => window._companionContacts.state().deviceContacts > 0);
     const s = await page.evaluate(() => window._companionContacts.state());
     assert(s.deviceContacts === 2 + toAdd, 'device contacts ' + s.deviceContacts);
+  });
+
+  await step('Manage: picking an area selects the contacts in it, and each says its area', async () => {
+    await page.selectOption('#ccMArea', 'FAR');
+    const s = await page.evaluate(() => window._companionContacts.state());
+    assert(s.toRemove === 1, 'only the far contact is in Far: ' + s.toRemove);
+    const row = await page.textContent('#ccRemoveList li');
+    assert(/Far Away/.test(row) && /\bFAR\b/.test(row), 'row names the contact and its area: ' + row);
+    await page.selectOption('#ccMArea', 'none');
+    const none = await page.evaluate(() => window._companionContacts.state());
+    assert(none.toRemove >= 1, 'contacts in no area can be picked too');
+    await page.selectOption('#ccMArea', '');
+  });
+
+  await step('Find stale contacts lists the ones nothing has heard for 30 days', async () => {
+    await page.click('#ccFindStale');
+    const s = await page.evaluate(() => window._companionContacts.state());
+    const names = await page.$$eval('#ccRemoveList li', (lis) => lis.map((li) => li.textContent));
+    assert(names.some((t) => /Far Away/.test(t)), 'the far contact (advert in 2023, unknown to CoreScope) is stale: ' + names.join(' | '));
+    assert(!names.some((t) => t.indexOf(seed.name) >= 0), 'the seeded contact was heard by CoreScope recently');
+    assert(names.every((t) => /last heard/.test(t)), 'each row says when it was last heard');
+    assert(s.toRemove === names.length, 'all listed are selected');
+    assert(await page.inputValue('#ccMStale') === '30', 'the stale filter is set');
+    await page.selectOption('#ccMStale', '0');
   });
 
   await step('selecting an area of contacts and removing them asks first, offers a backup, then removes', async () => {
