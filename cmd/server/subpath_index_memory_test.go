@@ -141,8 +141,9 @@ func BenchmarkBuildSubpathIndex(b *testing.B) {
 
 // TestSubpathIndexRetainedHeap bounds the live heap the subpath index keeps for
 // the production-shaped fixture. It kept 250 MB when a separate key → count
-// map duplicated every key of spTxIndex; with counts read as len(txs) it keeps
-// about 197 MB. The bound sits between the two.
+// map duplicated every key of spTxIndex, and about 197 MB with counts read as
+// len(txs). Subpaths are now counted per request (the result is cached), so
+// the store keeps nothing per subpath.
 func TestSubpathIndexRetainedHeap(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a 1.5M-key index")
@@ -153,7 +154,7 @@ func TestSubpathIndexRetainedHeap(t *testing.T) {
 	for _, tx := range txs {
 		txGetParsedPath(tx)
 	}
-	const limitMB = 225
+	const limitMB = 5
 	mb := retainedHeapMB(func() interface{} { return buildSubpathIndexForTest(txs) })
 	t.Logf("subpath index for 41k production-shaped transmissions keeps %.1f MB", mb)
 	if mb > limitMB {
