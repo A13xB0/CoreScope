@@ -223,6 +223,19 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
     assert(await p2.isDisabled('#ccConnectUsb'), 'USB connect should be disabled');
   });
 
+  await step('on a phone the bottom tab bar never covers the last button', async () => {
+    const pc = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const pp = await pc.newPage();
+    await pp.goto(BASE + '/#/tools/companion-contacts?tab=manage', { waitUntil: 'domcontentloaded' });
+    await pp.waitForSelector('#ccRemoveBtn');
+    await pp.waitForSelector('.bottom-nav', { state: 'visible' });
+    await pp.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await pp.waitForTimeout(200);
+    const r = await pp.evaluate(() => ({ btn: document.getElementById('ccRemoveBtn').getBoundingClientRect().bottom, nav: document.querySelector('.bottom-nav').getBoundingClientRect().top }));
+    assert(r.btn <= r.nav, `Remove button bottom ${r.btn} is under the tab bar top ${r.nav}`);
+    await pc.close();
+  });
+
   await browser.close();
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
