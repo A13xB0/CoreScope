@@ -134,17 +134,16 @@ var decodedCacheDroppedKeys = []string{
 	"ctrlPubKey", "ctrlSubtype", "ctrlTag", "ctrlFlags", "ctrlZeroHop", "ctrlLength",
 }
 
-// broadcastPayload returns the packet's decoded payload for the live feed.
-func broadcastPayload(tx *StoreTx) map[string]interface{} {
-	payload := tx.ParsedDecoded()
-	if payload == nil {
+// broadcastPayload returns the packet's whole decoded payload for the live
+// feed: the stored JSON as it is, since the feed only serialises it. Copying
+// the cache would lose the fields it drops, and decoding again would run
+// under the store's write lock; this does neither. nil if the JSON is not
+// valid, as before.
+func broadcastPayload(tx *StoreTx) json.RawMessage {
+	if tx.DecodedJSON == "" || !json.Valid([]byte(tx.DecodedJSON)) {
 		return nil
 	}
-	cp := make(map[string]interface{}, len(payload))
-	for k, v := range payload {
-		cp[k] = v
-	}
-	return cp
+	return json.RawMessage(tx.DecodedJSON)
 }
 
 // ParsedDecoded returns the parsed DecodedJSON map, caching the result.
@@ -153,6 +152,9 @@ func (tx *StoreTx) ParsedDecoded() map[string]interface{} {
 	tx.decodedOnce.Do(func() {
 		if tx.DecodedJSON != "" {
 			json.Unmarshal([]byte(tx.DecodedJSON), &tx.parsedDecoded)
+			for _, k := range decodedCacheDroppedKeys {
+				delete(tx.parsedDecoded, k)
+			}
 		}
 	})
 	return tx.parsedDecoded
