@@ -64,9 +64,10 @@ type StoreTx struct {
 	AdvertRouteEvidence uint8                  // union of known flood/direct-empty-path evidence
 	decodedOnce         sync.Once              // guards parsedDecoded
 	parsedDecoded       map[string]interface{} // cached json.Unmarshal of DecodedJSON
-	// Dedup map: "observerID|pathJSON" → true for O(1) duplicate checks
-	obsKeys     map[string]bool
-	observerSet map[string]bool // unique observer IDs (for UniqueObserverCount)
+	// Dedup maps, built only once a transmission passes obsIndexThreshold
+	// observations (see obs_dedup.go); nil below it.
+	obsKeys     map[obsDedupKey]struct{}
+	observerSet map[string]struct{} // distinct observer IDs (for UniqueObserverCount)
 	// accountedBytes is what trackedBytes was last charged for this tx
 	// (observations excluded). See rechargeTx.
 	accountedBytes int64
@@ -972,8 +973,6 @@ func (s *PacketStore) Load() error {
 				PayloadType: nullIntPtr(payloadType),
 				DecodedJSON: nullStrVal(decodedJSON),
 				ScopeName:   nullStrPtr(scopeName),
-				obsKeys:     make(map[string]bool),
-				observerSet: make(map[string]bool),
 			}
 			s.byHash[hashStr] = tx
 			s.packets = append(s.packets, tx)
@@ -996,8 +995,7 @@ func (s *PacketStore) Load() error {
 			obsPJ := nullStrVal(pathJSON)
 
 			// Dedup: skip if same observer + same path already loaded (O(1) map lookup)
-			dk := obsIDStr + "|" + obsPJ
-			if tx.obsKeys[dk] {
+			if tx.hasObservation(obsIDStr, obsPJ) {
 				continue
 			}
 
@@ -1039,13 +1037,7 @@ func (s *PacketStore) Load() error {
 				}
 			}
 
-			tx.Observations = append(tx.Observations, obs)
-			tx.obsKeys[dk] = true
-			if obs.ObserverID != "" && !tx.observerSet[obs.ObserverID] {
-				tx.observerSet[obs.ObserverID] = true
-				tx.UniqueObserverCount++
-			}
-			tx.ObservationCount++
+			tx.addObservation(obs)
 			if obs.Timestamp > tx.LatestSeen {
 				tx.LatestSeen = obs.Timestamp
 			}
@@ -1316,8 +1308,6 @@ func (s *PacketStore) loadChunk(from, to time.Time) error {
 				PayloadType: nullIntPtr(payloadType),
 				DecodedJSON: nullStrVal(decodedJSON),
 				ScopeName:   nullStrPtr(scopeName),
-				obsKeys:     make(map[string]bool),
-				observerSet: make(map[string]bool),
 			}
 			localByHash[hashStr] = tx
 			localPackets = append(localPackets, tx)
@@ -1333,8 +1323,7 @@ func (s *PacketStore) loadChunk(from, to time.Time) error {
 			obsIDStr := nullStrVal(observerID)
 			obsPJ := nullStrVal(pathJSON)
 
-			dk := obsIDStr + "|" + obsPJ
-			if tx.obsKeys[dk] {
+			if tx.hasObservation(obsIDStr, obsPJ) {
 				continue
 			}
 
@@ -1351,13 +1340,7 @@ func (s *PacketStore) loadChunk(from, to time.Time) error {
 				Timestamp:      normalizeTimestamp(nullStrVal(obsTimestamp)),
 			}
 
-			tx.Observations = append(tx.Observations, obs)
-			tx.obsKeys[dk] = true
-			if obs.ObserverID != "" && !tx.observerSet[obs.ObserverID] {
-				tx.observerSet[obs.ObserverID] = true
-				tx.UniqueObserverCount++
-			}
-			tx.ObservationCount++
+			tx.addObservation(obs)
 			if obs.Timestamp > tx.LatestSeen {
 				tx.LatestSeen = obs.Timestamp
 			}
@@ -2946,8 +2929,6 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				PayloadType: r.payloadType,
 				DecodedJSON: r.decodedJSON,
 				ScopeName:   r.scopeName,
-				obsKeys:     make(map[string]bool),
-				observerSet: make(map[string]bool),
 			}
 			s.byHash[r.hash] = tx
 			s.packets = append(s.packets, tx) // oldest-first; new items go to tail
@@ -2979,12 +2960,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		if r.obsID != nil {
 			oid := *r.obsID
 			// Dedup (O(1) map lookup)
-			dk := r.observerID + "|" + r.pathJSON
-			if tx.obsKeys == nil {
-				tx.obsKeys = make(map[string]bool)
-				tx.observerSet = make(map[string]bool)
-			}
-			if tx.obsKeys[dk] {
+			if tx.hasObservation(r.observerID, r.pathJSON) {
 				continue
 			}
 
@@ -3019,13 +2995,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				}
 				broadcastRP[*r.obsID] = rpForBroadcast
 			}
-			tx.Observations = append(tx.Observations, obs)
-			tx.obsKeys[dk] = true
-			if obs.ObserverID != "" && !tx.observerSet[obs.ObserverID] {
-				tx.observerSet[obs.ObserverID] = true
-				tx.UniqueObserverCount++
-			}
-			tx.ObservationCount++
+			tx.addObservation(obs)
 			if obs.Timestamp > tx.LatestSeen {
 				tx.LatestSeen = obs.Timestamp
 			}
@@ -3309,12 +3279,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		}
 
 		// Dedup by observer + path (O(1) map lookup)
-		dk := r.observerID + "|" + r.pathJSON
-		if tx.obsKeys == nil {
-			tx.obsKeys = make(map[string]bool)
-			tx.observerSet = make(map[string]bool)
-		}
-		if tx.obsKeys[dk] {
+		if tx.hasObservation(r.observerID, r.pathJSON) {
 			continue
 		}
 
@@ -3354,13 +3319,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			obsRPMap[r.obsID] = obsResolvedPath
 		}
 
-		tx.Observations = append(tx.Observations, obs)
-		tx.obsKeys[dk] = true
-		if obs.ObserverID != "" && !tx.observerSet[obs.ObserverID] {
-			tx.observerSet[obs.ObserverID] = true
-			tx.UniqueObserverCount++
-		}
-		tx.ObservationCount++
+		tx.addObservation(obs)
 		newObs = append(newObs, obs)
 		if obs.Timestamp > tx.LatestSeen {
 			tx.LatestSeen = obs.Timestamp
@@ -4804,7 +4763,7 @@ func (s *PacketStore) buildDistanceIndex() {
 //
 // Issue #743: Previous estimates missed major per-packet allocations:
 // - spTxIndex: O(path²) entries per tx (50-150MB at scale)
-// - Per-tx maps: obsKeys, observerSet (~11MB at scale)
+// - Per-tx dedup maps (now only past obsIndexThreshold observations)
 // - byPathHop index entries (20-40MB at scale)
 // Note: ResolvedPath per-obs overhead eliminated by #800 refactor.
 const (
@@ -4814,9 +4773,6 @@ const (
 	indexEntryBytes   = 48  // average cost of one index map entry (key + pointer + bucket overhead)
 	numIndexesPerTx   = 5   // byHash, byTxID, byNode, byPayloadType, nodeHashes entries
 	numIndexesPerObs  = 2   // byObsID, byObserver entries
-
-	// Per-tx map overhead (obsKeys + observerSet): map header + initial buckets
-	perTxMapsBytes = 200
 
 	// Per path hop: byPathHop index entry (pointer + map bucket)
 	perPathHopBytes = 50
@@ -4829,23 +4785,15 @@ const (
 	// production heap profile. Analytics touch every tx, so it is charged
 	// up front rather than when the cache fills.
 	decodedCacheFactor = 4
-
-	// Per obs: the tx.obsKeys dedup entry ("observerID|pathJSON" key string
-	// plus bucket slot); the key is built by concatenation, so its bytes are
-	// a separate allocation from the obs fields.
-	obsKeyEntryBytes = 16 + indexEntryBytes + 1
 )
 
 // estimateStoreTxBytes returns the estimated memory cost of a StoreTx (excluding observations).
-// Includes per-tx maps (obsKeys, observerSet), byPathHop entries, and spTxIndex subpath entries.
+// Includes byPathHop entries and spTxIndex subpath entries.
 func estimateStoreTxBytes(tx *StoreTx) int64 {
 	base := int64(storeTxBaseBytes)
 	base += int64(len(tx.RawHex) + len(tx.Hash) + len(tx.DecodedJSON) + len(tx.PathJSON))
 	base += int64(numIndexesPerTx * indexEntryBytes)
 	base += int64(decodedCacheFactor * len(tx.DecodedJSON))
-
-	// Per-tx maps: obsKeys + observerSet
-	base += perTxMapsBytes
 
 	// Path-dependent costs
 	hops := int64(len(txGetParsedPath(tx)))
@@ -4868,14 +4816,12 @@ func estimateStoreTxBytesTypical(numObs int) int64 {
 	base := int64(storeTxBaseBytes) + 64 + 200 + 40
 	base += int64(numIndexesPerTx * indexEntryBytes)
 	base += decodedCacheFactor * 200
-	base += perTxMapsBytes
 	hops := int64(3)
 	base += hops * perPathHopBytes
 	base += (hops * (hops - 1) / 2) * perSubpathEntryBytes
 	// Add observation costs
 	obsBase := int64(storeObsBaseBytes) + 30 + 30 + 60 + 25 // observer ID + name + path + timestamp
 	obsBase += int64(numIndexesPerObs * indexEntryBytes)
-	obsBase += obsKeyEntryBytes + 30 + 60 // dedup key: observer ID + path
 	// No per-obs ResolvedPath overhead (#800)
 	base += int64(numObs) * obsBase
 	return base
@@ -4888,7 +4834,6 @@ func estimateStoreObsBytes(obs *StoreObs) int64 {
 	base += int64(len(obs.PathJSON) + len(obs.ObserverID) + len(obs.ObserverName) +
 		len(obs.ObserverIATA) + len(obs.Direction) + len(obs.RawHex) + len(obs.Timestamp))
 	base += int64(numIndexesPerObs * indexEntryBytes)
-	base += int64(obsKeyEntryBytes + len(obs.ObserverID) + len(obs.PathJSON))
 	// ResolvedPath field removed (#800) — no per-obs RP overhead
 	return base
 }
