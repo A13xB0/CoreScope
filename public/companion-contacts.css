@@ -76,7 +76,6 @@
 .cc-dialog::backdrop { background: color-mix(in srgb, #020617 70%, transparent); }
 .cc-dialog h3 { margin: 0 0 8px; }
 .cc-dialog p { margin: 0 0 12px; color: var(--text-muted); }
-.cc-backup { margin: 12px 0; padding: 12px; border-radius: 10px; border: 1px solid var(--accent); }
 
 @media (max-width: 640px) {
   .cc-page { padding: 12px; }
