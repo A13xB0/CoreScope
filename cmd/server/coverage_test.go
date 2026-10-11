@@ -2331,10 +2331,6 @@ func TestSubpathPrecomputedIndex(t *testing.T) {
 		t.Fatal("indexes never became ready")
 	}
 
-	if store.spTotalPaths == 0 {
-		t.Fatal("expected spTotalPaths > 0 after Load()")
-	}
-
 	// The rich test DB has paths ["aa","bb"], ["aabb","ccdd"], and
 	// ["eeff","0011","2233"].  That yields 5 unique raw subpaths.
 	expectedRaw := map[string]int{
@@ -2348,9 +2344,6 @@ func TestSubpathPrecomputedIndex(t *testing.T) {
 		if got := len(store.txsWithSubpath(strings.Split(key, ","))); got != want {
 			t.Errorf("txsWithSubpath(%q) = %d, want %d", key, got, want)
 		}
-	}
-	if store.spTotalPaths != 3 {
-		t.Errorf("spTotalPaths = %d, want 3", store.spTotalPaths)
 	}
 
 	// Fast-path (no region) and slow-path (with region) must return the
@@ -2366,9 +2359,9 @@ func TestSubpathPrecomputedIndex(t *testing.T) {
 		}
 	}
 
-	// Verify fast path totalPaths matches index.
-	if tp, ok := fast["totalPaths"].(int); ok && tp != store.spTotalPaths {
-		t.Errorf("fast totalPaths=%d, spTotalPaths=%d", tp, store.spTotalPaths)
+	// Three stored paths have two or more hops.
+	if tp, _ := fast["totalPaths"].(int); tp != 3 {
+		t.Errorf("fast totalPaths = %d, want 3", tp)
 	}
 }
 

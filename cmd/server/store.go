@@ -347,15 +347,16 @@ type PacketStore struct {
 	// (not package-level) so each test gets a fresh state — see #1199 item 5.
 	schemaDegradationLogged sync.Map
 	// Subpaths are counted per request from the stored paths (see
-	// countNamedSubpaths); results are cached for rfCacheTTL. A key →
+	// topNamedSubpaths); results are cached for rfCacheTTL. A key →
 	// transmissions index of every 2-8 hop run held 1M+ keys and ~130MB
 	// for a week of a busy regional network.
-	spTotalPaths int // transmissions with paths >= 2 hops
-	// Background-build ready gates for spTotalPaths and byPathHop
-	// (#1008). Flipped from false→true exactly once by the goroutine
-	// kicked off in Load() (or synchronously by the background chunk
-	// loader). Handlers gate reads via SubpathIndexReady() /
-	// PathHopIndexReady(); while false, they respond 503 + Retry-After.
+	//
+	// Ready gates (#1008), flipped false→true once by the goroutine kicked
+	// off in Load() or synchronously by the chunk loader. subpathReady says
+	// the startup load has filled the store, so subpath analytics do not
+	// count, and cache, an empty one; pathHopReady says byPathHop is
+	// built. Handlers gate on SubpathIndexReady() / PathHopIndexReady();
+	// while false, they respond 503 + Retry-After.
 	subpathReady atomic.Bool
 	pathHopReady atomic.Bool
 	// indexReadyChan is closed exactly once when BOTH subpathReady
@@ -1123,13 +1124,6 @@ func (s *PacketStore) Load() error {
 		s.indexByNode(tx)
 	}
 
-	// Build precomputed subpath index for O(1) analytics queries
-	// — DEFERRED to a background goroutine (#1008). Same rationale
-	// as the distance index (#1011): synchronous build under s.mu
-	// blocks HTTP readiness ~60s at Cascadia scale. The goroutine is
-	// started AFTER s.loaded = true below.
-	// s.buildSubpathIndex()
-
 	// Build path-hop index for O(1) node path lookups
 	// — DEFERRED to a background goroutine (#1008).
 	// s.buildPathHopIndex()
@@ -1181,7 +1175,7 @@ func (s *PacketStore) Load() error {
 // The chunk is assumed to be older than the data already in the store, so
 // localPackets are prepended to s.packets.
 //
-// byPayloadType is updated here incrementally. byPathHop, spTotalPaths and
+// byPayloadType is updated here incrementally. byPathHop and
 // distHops are NOT updated here — the caller (loadBackgroundChunks) rebuilds
 // those once after all chunks are merged.
 
@@ -1713,7 +1707,6 @@ func (s *PacketStore) loadBackgroundChunks() {
 
 	// Rebuild analytics indexes once after all chunks are merged.
 	s.mu.Lock()
-	s.buildSubpathIndex()
 	s.buildPathHopIndex()
 	// Distance index is now lazy (#1011) — built on first
 	// /api/analytics/distance request, not at background-load
@@ -3128,11 +3121,8 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		s.trackedBytes += rechargeTx(tx)
 	}
 
-	// Incrementally update precomputed subpath index with new transmissions
+	// Incrementally update the path-hop index with new transmissions.
 	for _, tx := range broadcastTxs {
-		if hasSubpaths(tx) {
-			s.spTotalPaths++
-		}
 		addTxToPathHopIndex(s.byPathHop, tx)
 	}
 	if len(broadcastTxs) > 0 {
@@ -3504,11 +3494,8 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 	pathHopMutated := false
 	for txID, tx := range updatedTxs {
 		if tx.PathJSON != oldPaths[txID] {
-			// Path changed — remove old subpaths, add new ones.
+			// Path changed — re-index its hops.
 			oldHops := parsePathJSON(oldPaths[txID])
-			if len(oldHops) >= 2 {
-				s.spTotalPaths--
-			}
 			// Remove old path-hop index entries using old hops.
 			// Resolved pubkeys remain indexed independently of the best raw path.
 			if len(oldHops) > 0 {
@@ -3518,10 +3505,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 				tx.parsedPath, tx.pathParsed = saved, savedFlag
 			}
 			// pickBestObservation already set pathParsed=false so
-			// hasSubpaths will re-parse the new path.
-			if hasSubpaths(tx) {
-				s.spTotalPaths++
-			}
+			// addTxToPathHopIndex re-parses the new path.
 			addTxToPathHopIndex(s.byPathHop, tx)
 			// #1164: coalesce — one invalidate after the loop, not per-tx.
 			pathHopMutated = true
@@ -4319,24 +4303,6 @@ func txGetParsedPath(tx *StoreTx) []string {
 
 // subpathMaxLen is the longest run of hops counted as a subpath.
 const subpathMaxLen = 8
-
-// hasSubpaths reports whether tx's path has at least two hops, i.e. whether
-// it counts towards spTotalPaths.
-func hasSubpaths(tx *StoreTx) bool {
-	return len(txGetParsedPath(tx)) >= 2
-}
-
-// buildSubpathIndex counts the transmissions with subpaths into
-// spTotalPaths. The subpaths themselves are counted per request.
-func (s *PacketStore) buildSubpathIndex() {
-	s.spTotalPaths = 0
-	for _, tx := range s.packets {
-		if hasSubpaths(tx) {
-			s.spTotalPaths++
-		}
-	}
-	log.Printf("[store] Counted %d paths with subpaths", s.spTotalPaths)
-}
 
 // subpathTally counts one named subpath while subpaths are counted. It
 // holds no pointers, so the counting map is not scanned by the GC: the run
@@ -5281,11 +5247,6 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 
 		// Remove from resolved pubkey index
 		s.removeFromResolvedPubkeyIndex(tx.ID)
-
-		// Subpaths are counted per request; only the path total is kept.
-		if hasSubpaths(tx) {
-			s.spTotalPaths--
-		}
 	}
 	// Sweep raw AND resolved hop keys once per batch (#1908). The hash-only
 	// membership index cannot recover full pubkey strings. Reuse the evicted

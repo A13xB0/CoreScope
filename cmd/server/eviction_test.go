@@ -82,11 +82,6 @@ func makeTestStore(count int, startTime time.Time, intervalMin int) *PacketStore
 		store.distHops = append(store.distHops, distHopRecord{tx: tx, Hash: hash})
 		store.distPaths = append(store.distPaths, distPathRecord{tx: tx, Hash: hash})
 
-		// Subpath index
-		if hasSubpaths(tx) {
-			store.spTotalPaths++
-		}
-
 		// Track bytes for self-accounting
 		store.trackedBytes += rechargeTx(tx)
 		for _, obs := range tx.Observations {
