@@ -1807,55 +1807,59 @@ func pathLen(pathJSON string) int {
 // between tokens. ok is false for anything else (escapes, other element
 // types, malformed input), which the caller decodes instead.
 func countStringArray(s string) (n int, ok bool) {
-	i := 0
-	ws := func() {
-		for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
-			i++
-		}
-	}
-	ws()
+	i := skipJSONSpace(s, 0)
 	if i >= len(s) || s[i] != '[' {
 		return 0, false
 	}
-	i++
-	ws()
+	i = skipJSONSpace(s, i+1)
 	if i < len(s) && s[i] == ']' {
-		i++
-		ws()
-		return 0, i == len(s)
+		return 0, skipJSONSpace(s, i+1) == len(s)
 	}
 	for {
-		if i >= len(s) || s[i] != '"' {
+		if i, ok = skipPlainJSONString(s, i); !ok {
 			return 0, false
 		}
-		i++
-		for i < len(s) && s[i] != '"' {
-			if s[i] == '\\' || s[i] < 0x20 {
-				return 0, false
-			}
-			i++
-		}
-		if i >= len(s) {
-			return 0, false
-		}
-		i++ // closing quote
 		n++
-		ws()
+		i = skipJSONSpace(s, i)
 		if i >= len(s) {
 			return 0, false
 		}
 		switch s[i] {
 		case ',':
-			i++
-			ws()
+			i = skipJSONSpace(s, i+1)
 		case ']':
-			i++
-			ws()
-			return n, i == len(s)
+			return n, skipJSONSpace(s, i+1) == len(s)
 		default:
 			return 0, false
 		}
 	}
+}
+
+// skipJSONSpace returns the index of the first byte at or after i that is
+// not JSON whitespace.
+func skipJSONSpace(s string, i int) int {
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+		i++
+	}
+	return i
+}
+
+// skipPlainJSONString expects a JSON string starting at s[i] and returns
+// the index just past its closing quote. ok is false if there is no string
+// there, or it has an escape or a control character.
+func skipPlainJSONString(s string, i int) (int, bool) {
+	if i >= len(s) || s[i] != '"' {
+		return i, false
+	}
+	for i++; i < len(s) && s[i] != '"'; i++ {
+		if s[i] == '\\' || s[i] < 0x20 {
+			return i, false
+		}
+	}
+	if i >= len(s) {
+		return i, false
+	}
+	return i + 1, true
 }
 
 // indexResolvedPathHops indexes a transmission under every relay-hop pubkey
