@@ -5330,17 +5330,19 @@ func buildHopContextPubkeys(tx *StoreTx, pm *prefixMap) []string {
 	if tx == nil || pm == nil {
 		return nil
 	}
-	seen := make(map[string]struct{}, 16)
-	out := make([]string, 0, 16)
+	// A handful of keys: de-duplicate by scanning out rather than with a
+	// map, which cost an allocation per call on every analytics pass.
+	out := make([]string, 0, 8)
 	add := func(pk string) {
 		if pk == "" {
 			return
 		}
 		l := strings.ToLower(pk)
-		if _, ok := seen[l]; ok {
-			return
+		for _, have := range out {
+			if have == l {
+				return
+			}
 		}
-		seen[l] = struct{}{}
 		out = append(out, l)
 	}
 
@@ -5362,20 +5364,56 @@ func buildHopContextPubkeys(tx *StoreTx, pm *prefixMap) []string {
 	// prefix. The full prefix-map lookup would also be acceptable, but the
 	// hex+length check is O(len) and avoids one map probe per tx on a hot
 	// path. See #1197 (adversarial r1 #4).
-	if obs := tx.ObserverID; obs != "" && len(obs) >= 4 && isHexLower(strings.ToLower(obs)) {
+	if obs := tx.ObserverID; obs != "" && len(obs) >= 4 && isHexAnyCase(obs) {
 		add(obs)
 	}
 
 	// Unambiguous-prefix anchors: any hop in the path whose prefix has exactly
-	// one candidate is a strong context signal.
+	// one candidate is a strong context signal. Live hops are upper-case;
+	// they are lowered into a stack buffer for the lookup, which does not
+	// allocate.
+	var buf [64]byte
 	for _, hop := range txGetParsedPath(tx) {
-		h := strings.ToLower(hop)
-		if cands, ok := pm.m[h]; ok && len(cands) == 1 {
+		var cands []nodeInfo
+		var ok bool
+		if b, ascii := lowerASCII(buf[:0], hop); ascii && len(hop) <= len(buf) {
+			cands, ok = pm.m[string(b)]
+		} else {
+			cands, ok = pm.m[strings.ToLower(hop)]
+		}
+		if ok && len(cands) == 1 {
 			add(cands[0].PublicKey)
 		}
 	}
 
 	return out
+}
+
+// lowerASCII appends hop lower-cased to dst; ascii is false (and dst
+// unusable) if hop has a non-ASCII byte, where strings.ToLower must be used.
+func lowerASCII(dst []byte, hop string) ([]byte, bool) {
+	for i := 0; i < len(hop); i++ {
+		c := hop[i]
+		if c >= 0x80 {
+			return dst, false
+		}
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		dst = append(dst, c)
+	}
+	return dst, true
+}
+
+// isHexAnyCase reports whether s consists only of hex digits, either case.
+func isHexAnyCase(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F') {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // isHexLower reports whether s consists only of [0-9a-f] (assumes already
