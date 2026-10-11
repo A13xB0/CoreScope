@@ -138,6 +138,19 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
     assert(new RegExp('Add ' + toAdd + ' ').test(label), 'button: ' + label + ' expected ' + toAdd);
   });
 
+  await step('unticking a node in the add list leaves it out', async () => {
+    const first = page.locator('#ccAddList input[type="checkbox"]').first();
+    const key = await first.getAttribute('data-key');
+    assert(key, 'add list rows have tick boxes');
+    await first.uncheck();
+    const s = await page.evaluate(() => window._companionContacts.state());
+    toAdd = Math.min(s.fresh - 1, 98);
+    const label = await page.textContent('#ccAddBtn');
+    assert(new RegExp('Add ' + toAdd + ' ').test(label), 'button after unticking: ' + label + ' expected ' + toAdd);
+    assert(await page.isChecked(`#ccAddList input[data-key="${key}"]`) === false, 'the unticked row stays listed, unticked');
+    page._leftOut = key;
+  });
+
   await step('adding sends each contact, reports progress, and they arrive on the device', async () => {
     await page.click('#ccAddBtn');
     await page.waitForSelector('#ccProgress:not([hidden])');
@@ -146,6 +159,7 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
     assert(n === 2 + toAdd, `device holds ${n}, expected ${2 + toAdd}`);
     const v = await page.evaluate((k) => window.__fake.contactView(k), seed.key);
     assert(v.outPathLen === 1, 'the existing contact\'s path was reset');
+    assert(!(await page.evaluate((k) => window.__fake.contactView(k), page._leftOut)), 'the unticked node was not added');
     await page.click('#ccDoneBtn');
     await page.waitForSelector('#ccProgress', { state: 'hidden' });
   });
@@ -177,15 +191,20 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
     await page.selectOption('#ccMArea', '');
   });
 
-  await step('Find stale contacts lists the ones nothing has heard for 30 days', async () => {
+  await step('Find stale contacts lists the ones nothing has heard for 30 days, companions only when asked', async () => {
     await page.click('#ccFindStale');
+    const without = await page.$$eval('#ccRemoveList li', (lis) => lis.map((li) => li.textContent));
+    assert(!without.some((t) => /Far Away/.test(t)), 'companions advert only when sent, so they are left out by default: ' + without.join(' | '));
+    assert(!(await page.isChecked('#ccMStaleCompanions')), 'Include companions is off by default');
+    await page.check('#ccMStaleCompanions');
     const s = await page.evaluate(() => window._companionContacts.state());
     const names = await page.$$eval('#ccRemoveList li', (lis) => lis.map((li) => li.textContent));
-    assert(names.some((t) => /Far Away/.test(t)), 'the far contact (advert in 2023, unknown to CoreScope) is stale: ' + names.join(' | '));
+    assert(names.some((t) => /Far Away/.test(t)), 'the far companion (advert in 2023, unknown to CoreScope) is stale once companions are included: ' + names.join(' | '));
     assert(!names.some((t) => t.indexOf(seed.name) >= 0), 'the seeded contact was heard by CoreScope recently');
     assert(names.every((t) => /last heard/.test(t)), 'each row says when it was last heard');
     assert(s.toRemove === names.length, 'all listed are selected');
     assert(await page.inputValue('#ccMStale') === '30', 'the stale filter is set');
+    await page.uncheck('#ccMStaleCompanions');
     await page.selectOption('#ccMStale', '0');
   });
 
