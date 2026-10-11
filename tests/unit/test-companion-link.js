@@ -120,7 +120,7 @@ test('client: adds contacts one by one, reporting each result, and stops when to
   const res = await c.addContacts([
     { key: KEY_A, type: 2, name: 'A' }, { key: KEY_B, type: 2, name: 'B' }, { key: KEY_C, type: 3, name: 'C' },
   ], { onProgress: (r) => seen.push(r.key + ':' + r.status) });
-  assert.deepStrictEqual(res.map((r) => r.status), ['added', 'full', 'added']);
+  assert.deepStrictEqual(Array.from(res, (r) => r.status), ['added', 'full', 'added']);
   assert.deepStrictEqual(seen, [KEY_A + ':added', KEY_B + ':full', KEY_C + ':added']);
   assert.ok(fake.contactView(KEY_A) && !fake.contactView(KEY_B) && fake.contactView(KEY_C));
 
@@ -149,7 +149,7 @@ test('client: removes contacts and reports ones the device does not have', async
   const c = new CL.Client(fakeTransport(fake));
   await c.start();
   const res = await c.removeContacts([KEY_A, KEY_C]);
-  assert.deepStrictEqual(res.map((r) => r.status), ['removed', 'missing']);
+  assert.deepStrictEqual(Array.from(res, (r) => r.status), ['removed', 'missing']);
   assert.strictEqual(fake.contacts.length, 1);
 });
 
