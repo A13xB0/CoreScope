@@ -35,7 +35,8 @@ async function openMap(page, { clustering, labels }) {
     localStorage.setItem('meshcore-map-hash-labels', String(l));
     localStorage.removeItem('map-view');
   }, [clustering, labels]);
-  await page.goto(BASE + '/#/map', { waitUntil: 'load' });
+  // map.js reads these settings when it loads, so load the page afresh.
+  await page.goto(BASE + '/?fresh=' + Date.now() + '#/map', { waitUntil: 'load' });
   await page.waitForFunction(() => document.querySelectorAll('.leaflet-marker-icon').length > 5, null, { timeout: 15000 });
   await page.waitForTimeout(800);
 }
@@ -78,12 +79,13 @@ const overlap = (a, b) => a.l < b.r - 0.5 && a.r > b.l + 0.5 && a.t < b.b - 0.5 
     assert((await page.$$('.meshcore-label-marker')).length === 0, 'hash pills still drawn with clustering off');
   });
 
-  let labelsAtStart = 0;
+  let labelsAtStart = 0, repeatersAtStart = 1;
   await step('hash labels sit beside repeaters and never overlap each other or a marker', async () => {
     const labels = await boxes(page, '.mc-hash-label');
     const marks = await boxes(page, '.leaflet-marker-icon.meshcore-marker');
     assert(labels.length > 0, 'no hash labels at all');
     labelsAtStart = labels.length;
+    repeatersAtStart = await page.evaluate(() => window.__meshcoreMapInternals.markerPositions().filter((x) => x.inView && x.repeater).length);
     for (let i = 0; i < labels.length; i++) {
       for (let j = i + 1; j < labels.length; j++) assert(!overlap(labels[i], labels[j]), 'labels overlap: ' + labels[i].text + ' / ' + labels[j].text);
       for (const m of marks) assert(!overlap(labels[i], m), 'label ' + labels[i].text + ' covers a marker');
@@ -96,7 +98,8 @@ const overlap = (a, b) => a.l < b.r - 0.5 && a.r > b.l + 0.5 && a.t < b.b - 0.5 
     await page.waitForTimeout(900);
     const labels = await boxes(page, '.mc-hash-label');
     const inView = await page.evaluate(() => window.__meshcoreMapInternals.markerPositions().filter((x) => x.inView && x.repeater).length);
-    assert(labels.length >= Math.min(labelsAtStart, inView), 'labels ' + labels.length + ' after zooming in (were ' + labelsAtStart + ', repeaters in view ' + inView + ')');
+    const before = labelsAtStart / repeatersAtStart, after = labels.length / Math.max(inView, 1);
+    assert(after > before, 'a larger share of repeaters labelled after zooming in: ' + labels.length + '/' + inView + ' vs ' + labelsAtStart + '/' + repeatersAtStart);
     const moved = (await page.evaluate(() => window.__meshcoreMapInternals.markerPositions())).filter((x) => !x.atNode);
     assert(moved.length === 0, 'markers moved after zoom: ' + moved.length);
     await page.evaluate(() => { const m = window.__meshcoreMapInternals.leafletMap(); m.setZoom(m.getZoom() - 2, { animate: false }); });
@@ -104,8 +107,8 @@ const overlap = (a, b) => a.l < b.r - 0.5 && a.r > b.l + 0.5 && a.t < b.b - 0.5 
   });
 
   await step('the node under the pointer shows its hash', async () => {
-    const pos = await page.evaluate(() => window.__meshcoreMapInternals.markerPositions().find((x) => x.repeater && x.inView));
-    assert(pos, 'a repeater in view');
+    const pos = await page.evaluate(() => ((all) => all.find((x) => x.repeater && x.inView && all.every((o) => o === x || Math.hypot(o.x - x.x, o.y - x.y) > 24)))(window.__meshcoreMapInternals.markerPositions()));
+    assert(pos, 'a repeater in view with no other marker close by');
     await page.mouse.move(pos.x, pos.y);
     await page.waitForSelector('.leaflet-tooltip.mc-hash-tip', { state: 'visible' });
     const t = await page.textContent('.leaflet-tooltip.mc-hash-tip');
@@ -115,7 +118,7 @@ const overlap = (a, b) => a.l < b.r - 0.5 && a.r > b.l + 0.5 && a.t < b.b - 0.5 
   await step('with hash labels off there are no labels, and hover still names the node', async () => {
     await openMap(page, { clustering: false, labels: false });
     assert((await page.$$('.mc-hash-label')).length === 0, 'labels drawn with the toggle off');
-    const pos = await page.evaluate(() => window.__meshcoreMapInternals.markerPositions().find((x) => x.repeater && x.inView));
+    const pos = await page.evaluate(() => ((all) => all.find((x) => x.repeater && x.inView && all.every((o) => o === x || Math.hypot(o.x - x.x, o.y - x.y) > 24)))(window.__meshcoreMapInternals.markerPositions()));
     await page.mouse.move(pos.x, pos.y);
     await page.waitForSelector('.leaflet-tooltip.mc-hash-tip', { state: 'visible' });
   });
