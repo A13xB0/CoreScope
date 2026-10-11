@@ -966,3 +966,96 @@ func (ix *Index) Packets(w Window, now time.Time, from, to int64, filters []Filt
 	}
 	return res
 }
+
+// Origin is where a packet started and how that was decided (origin.Basis*).
+type Origin struct {
+	Area  string `json:"area"`
+	Basis string `json:"basis"`
+}
+
+// hashKey is how the index keys a hash: the number for 16 hex digits, else
+// the lower-cased string.
+func hashKey(h string) (uint64, string) {
+	if len(h) == 16 {
+		if v, err := strconv.ParseUint(h, 16, 64); err == nil {
+			return v, ""
+		}
+	}
+	return 0, strings.ToLower(h)
+}
+
+func (ix *Index) rowKey(x *row) (uint64, string) {
+	if x.hashAlt != 0 {
+		return 0, strings.ToLower(ix.strs[x.hashAlt])
+	}
+	return x.hash, ""
+}
+
+// StartedIn returns a test for the hashes of packets that started in area,
+// as the index holds them now. It is nil when area is not one the index
+// places in, so a caller can tell "nothing started there" from "cannot say".
+func (ix *Index) StartedIn(area string) func(hash string) bool {
+	ix.mu.RLock()
+	if _, ok := ix.areaOrder[area]; !ok {
+		ix.mu.RUnlock()
+		return nil
+	}
+	nums := map[uint64]struct{}{}
+	alts := map[string]struct{}{}
+	if id, ok := ix.ids[area]; ok {
+		for i := range ix.rows {
+			x := &ix.rows[i]
+			if uint32(x.origin) != id {
+				continue
+			}
+			if n, s := ix.rowKey(x); s == "" {
+				nums[n] = struct{}{}
+			} else {
+				alts[s] = struct{}{}
+			}
+		}
+	}
+	ix.mu.RUnlock()
+	return func(hash string) bool {
+		n, s := hashKey(hash)
+		if s == "" {
+			_, ok := nums[n]
+			return ok
+		}
+		_, ok := alts[s]
+		return ok
+	}
+}
+
+// OriginsOf names where each of hashes started, keyed as given. Hashes the
+// index does not hold are left out.
+func (ix *Index) OriginsOf(hashes []string) map[string]Origin {
+	out := make(map[string]Origin, len(hashes))
+	if len(hashes) == 0 {
+		return out
+	}
+	nums := make(map[uint64][]string, len(hashes))
+	alts := map[string][]string{}
+	for _, h := range hashes {
+		if n, s := hashKey(h); s == "" {
+			nums[n] = append(nums[n], h)
+		} else {
+			alts[s] = append(alts[s], h)
+		}
+	}
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	for i := range ix.rows {
+		x := &ix.rows[i]
+		var want []string
+		if n, s := ix.rowKey(x); s == "" {
+			want = nums[n]
+		} else {
+			want = alts[s]
+		}
+		for _, h := range want {
+			out[h] = Origin{Area: ix.strs[x.origin], Basis: ix.strs[x.basis]}
+		}
+	}
+	return out
+}

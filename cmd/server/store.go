@@ -3599,7 +3599,7 @@ func (s *PacketStore) filterPackets(q PacketQuery, nodePK string) []*StoreTx {
 
 	// Pre-compute area node set.
 	var areaNodes map[string]bool
-	if q.Area != "" {
+	if q.Area != "" && q.startedIn == nil {
 		areaNodes = s.resolveAreaNodes(q.Area)
 	}
 
@@ -3668,10 +3668,14 @@ func (s *PacketStore) filterPackets(q PacketQuery, nodePK string) []*StoreTx {
 				return false
 			}
 		}
+		if q.startedIn != nil && !q.startedIn(tx.Hash) {
+			return false
+		}
 		if areaNodes != nil {
 			// Only ADVERT packets carry the originator pubkey (public_key/pubKey).
 			// All other packet types (GRP_TXT, TXT_MSG, REQ, …) have encrypted
-			// senders so pk == "" and are excluded when an area filter is active.
+			// senders so pk == "" and are excluded when an area filter is active,
+			// unless the Data tab places them (startedIn above).
 			d := tx.ParsedDecoded()
 			pk, _ := d["public_key"].(string)
 			if pk == "" {

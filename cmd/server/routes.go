@@ -1187,6 +1187,9 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("order") == "asc" {
 		q.Order = "ASC"
 	}
+	if q.Area != "" {
+		q.startedIn = s.data.startedIn(q.Area)
+	}
 	if v := r.URL.Query().Get("type"); v != "" {
 		t, _ := strconv.Atoi(v)
 		q.Type = &t
@@ -1210,7 +1213,7 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 		}
 		result.Limit = q.Limit
 		result.Offset = q.Offset
-		writeJSON(w, result)
+		writeJSON(w, s.data.withOrigins(result))
 		return
 	}
 
@@ -1228,7 +1231,7 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 
 	result.Limit = q.Limit
 	result.Offset = q.Offset
-	writeJSON(w, result)
+	writeJSON(w, s.data.withOrigins(result))
 }
 
 func (s *Server) handlePacketTimestamps(w http.ResponseWriter, r *http.Request) {
@@ -1422,6 +1425,7 @@ func (s *Server) handlePacketDetail(w http.ResponseWriter, r *http.Request) {
 		Path:             pathHops,
 		ObservationCount: observationCount,
 		Observations:     mapSliceToObservations(observations),
+		Origin:           s.data.originOf(hash),
 	})
 }
 

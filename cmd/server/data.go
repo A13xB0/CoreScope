@@ -711,3 +711,51 @@ func (s *Server) handleDataPackets(w http.ResponseWriter, r *http.Request) {
 	b, err := json.Marshal(d.packets(q.Get("window"), from, to, fs))
 	s.serveDataBuilt(w, b, err)
 }
+
+// placedIndex is the index when packets are placed in areas; nil otherwise.
+func (d *dataService) placedIndex() *dataindex.Index {
+	if d == nil || !d.places() {
+		return nil
+	}
+	return d.index()
+}
+
+// startedIn tests hashes for packets that started in area; nil when the
+// index cannot place in that area.
+func (d *dataService) startedIn(area string) func(hash string) bool {
+	if ix := d.placedIndex(); ix != nil && area != "" {
+		return ix.StartedIn(area)
+	}
+	return nil
+}
+
+// withOrigins returns res with where each listed packet started, or res
+// itself when packets are not placed. res may be shared with a cache, so
+// it is copied, never changed.
+func (d *dataService) withOrigins(res *PacketResult) *PacketResult {
+	ix := d.placedIndex()
+	if ix == nil || res == nil {
+		return res
+	}
+	hashes := make([]string, 0, len(res.Packets))
+	for _, p := range res.Packets {
+		if h, ok := p["hash"].(string); ok && h != "" {
+			hashes = append(hashes, h)
+		}
+	}
+	out := *res
+	out.Origins = ix.OriginsOf(hashes)
+	return &out
+}
+
+// originOf is where one packet started, or nil.
+func (d *dataService) originOf(hash string) *dataindex.Origin {
+	ix := d.placedIndex()
+	if ix == nil || hash == "" {
+		return nil
+	}
+	if o, ok := ix.OriginsOf([]string{hash})[hash]; ok {
+		return &o
+	}
+	return nil
+}
