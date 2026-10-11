@@ -375,6 +375,28 @@
     if (announce) announce.textContent = (PANEL_NAMES[panelId] || 'Panel') + ' moved to ' + CORNER_LABELS[next];
   }
 
+  // snapPanelToCorner anchors a dragged panel in corner. A panel already
+  // anchored there swaps into the corner the dragged one came from; one
+  // placed freely does not hold a corner.
+  function snapPanelToCorner(panelId, corner) {
+    var positions = getPanelPositions();
+    var from = positions[panelId];
+    for (var otherId in positions) {
+      if (otherId === panelId || positions[otherId] !== corner) continue;
+      var other = document.getElementById(otherId);
+      if (other && other.dataset.dragged === 'true') continue;
+      try { localStorage.setItem('panel-corner-' + otherId, from); } catch (_) { /* quota */ }
+      applyPanelPosition(otherId, from);
+    }
+    try { localStorage.setItem('panel-corner-' + panelId, corner); } catch (_) { /* quota */ }
+    if (window.DragManager && DragManager.clearPanel) {
+      DragManager.clearPanel(document.getElementById(panelId), panelId);
+    }
+    applyPanelPosition(panelId, corner);
+    var announce = document.getElementById('panelPositionAnnounce');
+    if (announce) announce.textContent = (PANEL_NAMES[panelId] || 'Panel') + ' moved to ' + CORNER_LABELS[corner];
+  }
+
   function resetPanelPositions() {
     for (var id in PANEL_DEFAULTS) {
       try { localStorage.removeItem('panel-corner-' + id); } catch (_) { /* ignore */ }
@@ -393,7 +415,7 @@
       PANEL_DEFAULTS: PANEL_DEFAULTS, CORNER_CYCLE: CORNER_CYCLE,
       getPanelPositions: getPanelPositions, nextAvailableCorner: nextAvailableCorner,
       applyPanelPosition: applyPanelPosition, onCornerClick: onCornerClick,
-      resetPanelPositions: resetPanelPositions
+      resetPanelPositions: resetPanelPositions, snapPanelToCorner: snapPanelToCorner
     };
   }
 
@@ -2311,9 +2333,12 @@
       // #1619: expose so the feed-detail-card popup (constructed in a
       // different scope) can register itself as draggable.
       window._liveDragMgr = dragMgr;
+      // The three corner panels drop into the nearest corner (Shift on
+      // release places them freely); see snapPanelToCorner.
+      dragMgr.onSnap = function (panel, corner) { snapPanelToCorner(panel.id, corner); };
       var dragPanels = ['liveFeed', 'liveLegend', 'liveNodeDetail'];
       for (var di = 0; di < dragPanels.length; di++) {
-        dragMgr.register(document.getElementById(dragPanels[di]));
+        dragMgr.register(document.getElementById(dragPanels[di]), { snap: true });
       }
       dragMgr.restorePositions();
 

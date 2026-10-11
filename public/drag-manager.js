@@ -2,6 +2,11 @@
  * State machine: IDLE → PENDING → DRAGGING → IDLE
  * Pointer events on .panel-header, transform: translate() during drag,
  * snap-to-edge on release, z-index on focus, viewport % persistence.
+ *
+ * Panels registered with { snap: true } drop into the nearest corner
+ * instead (the quadrant their centre is in): the manager hands the corner
+ * to onSnap(panel, corner), which anchors it there. A hint marks the corner
+ * while dragging. Holding Shift on release keeps free placement.
  */
 (function () {
   'use strict';
@@ -45,21 +50,71 @@
     this.zCounter = 1000;
     this._panels = [];
     this._onKeyDown = this._handleKeyDown.bind(this);
+    this.onSnap = null; // function (panel, corner) — set by the page
+    this._hint = null;
   }
 
-  DragManager.prototype.register = function (panel) {
+  // nearestCorner names the quadrant of the viewport the rect's centre is in.
+  function nearestCorner(rect) {
+    var v = (rect.top + rect.height / 2) < window.innerHeight / 2 ? 't' : 'b';
+    var h = (rect.left + rect.width / 2) < window.innerWidth / 2 ? 'l' : 'r';
+    return v + h;
+  }
+
+  DragManager.prototype._showHint = function (panel, corner) {
+    var hint = this._hint;
+    if (!hint) {
+      hint = document.getElementById('panelSnapHint');
+      if (!hint) {
+        hint = document.createElement('div');
+        hint.id = 'panelSnapHint';
+        hint.className = 'panel-snap-hint';
+        hint.setAttribute('aria-hidden', 'true');
+      }
+      this._hint = hint;
+    }
+    if (hint.parentNode !== panel.parentNode) panel.parentNode.appendChild(hint);
+    hint.style.width = panel.offsetWidth + 'px';
+    hint.style.height = panel.offsetHeight + 'px';
+    hint.dataset.corner = corner;
+    hint.hidden = false;
+  };
+
+  DragManager.prototype._hideHint = function () {
+    if (this._hint) this._hint.hidden = true;
+  };
+
+  DragManager.prototype.register = function (panel, opts) {
     if (!panel) return;
     var header = panel.querySelector('.panel-header');
     if (!header) return;
     this._panels.push(panel);
+    panel._dragSnap = !!(opts && opts.snap);
     var self = this;
+
+    // A drag may start on the panel's title (the fold button). The header
+    // captures the pointer at once, which can retarget the click a plain
+    // press makes, so a press that never leaves the dead zone clicks the
+    // title itself if the browser did not; the click a drag ends with is
+    // swallowed so the panel does not fold as it lands.
+    header.addEventListener('click', function (e) {
+      if (header._dragJustEnded) {
+        header._dragJustEnded = false;
+        e.stopPropagation();
+        e.preventDefault();
+        return;
+      }
+      if (e.target.closest && e.target.closest('.panel-fold')) header._sawFoldClick = true;
+    }, true);
 
     header.addEventListener('pointerdown', function (e) {
       if (!self.enabled) return;
       if (e.button !== 0) return;
-      if (e.target.closest('button')) return;
-      e.preventDefault();
+      var btn = e.target.closest('button');
+      if (btn && !btn.classList.contains('panel-fold')) return;
+      if (!btn) e.preventDefault();
       header.setPointerCapture(e.pointerId);
+      self.pressedTitle = btn;
 
       self.state = 'PENDING';
       self.activePanel = panel;
@@ -88,6 +143,10 @@
       }
 
       panel.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
+      if (panel._dragSnap && self.onSnap) {
+        if (e.shiftKey) self._hideHint();
+        else self._showHint(panel, nearestCorner(panel.getBoundingClientRect()));
+      }
     });
 
     header.addEventListener('pointerup', function (e) {
@@ -95,7 +154,13 @@
       header.releasePointerCapture(e.pointerId);
       if (self.state === 'DRAGGING') {
         panel.classList.remove('is-dragging');
-        self._finalizePosition(panel);
+        header._dragJustEnded = true;
+        setTimeout(function () { header._dragJustEnded = false; }, 0);
+        self._land(panel, e.shiftKey);
+      } else if (self.state === 'PENDING' && self.pressedTitle) {
+        var title = self.pressedTitle;
+        header._sawFoldClick = false;
+        setTimeout(function () { if (!header._sawFoldClick) title.click(); }, 0);
       }
       self._reset();
     });
@@ -104,7 +169,7 @@
       if (self.activePanel !== panel) return;
       panel.classList.remove('is-dragging');
       if (self.state === 'DRAGGING') {
-        self._finalizePosition(panel);
+        self._land(panel, false);
       }
       self._reset();
     });
@@ -132,7 +197,22 @@
     }
   };
 
+  // _land ends a drag: into the nearest corner for a snapping panel, unless
+  // Shift is held, else where it was dropped.
+  DragManager.prototype._land = function (panel, free) {
+    this._hideHint();
+    if (panel._dragSnap && this.onSnap && !free) {
+      var corner = nearestCorner(panel.getBoundingClientRect());
+      clearPanel(panel, panel.id);
+      this.onSnap(panel, corner);
+      return;
+    }
+    this._finalizePosition(panel);
+  };
+
   DragManager.prototype._reset = function () {
+    this._hideHint();
+    this.pressedTitle = null;
     document.removeEventListener('keydown', this._onKeyDown);
     this.state = 'IDLE';
     this.activePanel = null;
