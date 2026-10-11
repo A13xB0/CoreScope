@@ -75,6 +75,30 @@ const overlap = (a, b) => a.l < b.r - 0.5 && a.r > b.l + 0.5 && a.t < b.b - 0.5 
     assert(n === 0, n + ' dashed offset lines');
   });
 
+  // The live page's node markers: the shared role shape, sized by zoom.
+  const liveSize = (zoom, repeater) => {
+    const n = Math.max(10, Math.round((repeater ? 18 : 14) * Math.max(0.4, (zoom - 8) / 6)));
+    return n % 2 ? n + 1 : n;
+  };
+  const markerSizes = (page) => page.evaluate(() => {
+    const m = window.__meshcoreMapInternals.leafletMap();
+    return { zoom: m.getZoom(), sizes: window.__meshcoreMapInternals.markerPositions().filter((x) => x.inView).map((x) => ({ repeater: x.repeater, w: x.w })) };
+  });
+  await step('markers are drawn like the live page: same shapes, sized by zoom', async () => {
+    let s = await markerSizes(page);
+    assert(s.sizes.length > 0, 'markers in view');
+    let wrong = s.sizes.filter((x) => x.w !== liveSize(s.zoom, x.repeater));
+    assert(!wrong.length, wrong.length + ' markers not at the live size for zoom ' + s.zoom + ': ' + JSON.stringify(wrong.slice(0, 3)));
+    assert((await page.$$('.leaflet-marker-icon.live-node-marker')).length > 0, 'markers use the live marker style');
+    await page.evaluate(() => { const m = window.__meshcoreMapInternals.leafletMap(); m.setZoom(m.getZoom() + 4, { animate: false }); });
+    await page.waitForTimeout(900);
+    s = await markerSizes(page);
+    wrong = s.sizes.filter((x) => x.w !== liveSize(s.zoom, x.repeater));
+    assert(!wrong.length, 'after zooming in, ' + wrong.length + ' markers not resized for zoom ' + s.zoom);
+    await page.evaluate(() => { const m = window.__meshcoreMapInternals.leafletMap(); m.setZoom(m.getZoom() - 4, { animate: false }); });
+    await page.waitForTimeout(600);
+  });
+
   await step('repeaters are role markers, not hash pills', async () => {
     assert((await page.$$('.meshcore-label-marker')).length === 0, 'hash pills still drawn with clustering off');
   });

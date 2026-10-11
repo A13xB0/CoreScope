@@ -2861,7 +2861,8 @@
           var r = map.getContainer().getBoundingClientRect();
           return { atNode: !!at && at.equals(m.latLng), repeater: !!(m.node && m.node.role === 'repeater'),
             hash: m.hashText ? m.hashText.replace(/^[^0-9A-F]+/, '') : null, inView: b.contains(m.latLng),
-            x: r.left + p.x, y: r.top + p.y };
+            x: r.left + p.x, y: r.top + p.y,
+            w: m._leafletMarker && m._leafletMarker.getElement() ? Math.round(m._leafletMarker.getElement().getBoundingClientRect().width) : null };
         });
       },
       leafletMap: function () { return map; },
