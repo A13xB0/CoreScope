@@ -92,13 +92,11 @@ type StoreObs struct {
 	// #1481 P0-2: cached parsed timestamp. The legacy handlers parse
 	// Timestamp as RFC3339Nano/RFC3339/"2006-01-02 15:04:05" with a
 	// fallback chain on every read; for /api/observers/{id}/analytics
-	// that fires 60k+ times per request under RLock. ParsedTime returns
-	// the parsed value once, caching for the lifetime of the StoreObs.
-	// Keep time.Time before sync.Once and the bool to avoid padding that
-	// pushes each observation into a larger allocation class on 64-bit Go.
-	tsParsed    time.Time
-	tsParseOnce sync.Once
-	tsParsedOK  bool
+	// that fires 60k+ times per request under RLock. ParsedTime parses
+	// once and keeps the result here in 8 bytes (see tsUnparsed): a
+	// time.Time, sync.Once and bool took 40 and put each observation in
+	// the 192-byte size class instead of 160.
+	tsUnixNano atomic.Int64
 }
 
 // ParsedTime returns the parsed Timestamp, caching the result.
@@ -106,24 +104,48 @@ type StoreObs struct {
 // Returns (zero, false) if Timestamp is empty or unparseable.
 // Thread-safe via sync.Once.
 func (o *StoreObs) ParsedTime() (time.Time, bool) {
-	o.tsParseOnce.Do(func() {
-		if o.Timestamp == "" {
-			return
+	switch n := o.tsUnixNano.Load(); n {
+	case 0:
+	case tsUnparsed:
+		return time.Time{}, false
+	case tsReparse:
+		return parseObsTimestamp(o.Timestamp)
+	default:
+		return time.Unix(0, n).UTC(), true
+	}
+	t, ok := parseObsTimestamp(o.Timestamp)
+	switch {
+	case !ok:
+		o.tsUnixNano.Store(tsUnparsed)
+	case t.Location() != time.UTC || t.Year() < 1678 || t.Year() > 2261 || t.UnixNano() == 0:
+		// Kept only as UTC nanoseconds; a time with another offset (or one
+		// UnixNano cannot hold) is parsed again on each call so its
+		// location is kept.
+		o.tsUnixNano.Store(tsReparse)
+	default:
+		o.tsUnixNano.Store(t.UnixNano())
+		return time.Unix(0, t.UnixNano()).UTC(), true
+	}
+	return t, ok
+}
+
+// tsUnixNano holds 0 before the first ParsedTime, the UTC time in
+// nanoseconds after it, or one of these.
+const (
+	tsUnparsed = math.MinInt64     // empty or not a time
+	tsReparse  = math.MinInt64 + 1 // parsed, but not held as UTC nanoseconds
+)
+
+func parseObsTimestamp(s string) (time.Time, bool) {
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
 		}
-		if t, err := time.Parse(time.RFC3339Nano, o.Timestamp); err == nil {
-			o.tsParsed, o.tsParsedOK = t, true
-			return
-		}
-		if t, err := time.Parse(time.RFC3339, o.Timestamp); err == nil {
-			o.tsParsed, o.tsParsedOK = t, true
-			return
-		}
-		if t, err := time.Parse("2006-01-02 15:04:05", o.Timestamp); err == nil {
-			o.tsParsed, o.tsParsedOK = t, true
-			return
-		}
-	})
-	return o.tsParsed, o.tsParsedOK
+	}
+	return time.Time{}, false
 }
 
 // ParsedDecoded returns the parsed DecodedJSON map, caching the result.
