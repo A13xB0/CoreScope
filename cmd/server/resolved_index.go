@@ -15,6 +15,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"unsafe"
 )
 
 // resolvedPubkeyHash computes a fast 64-bit hash for membership index keying.
@@ -516,36 +517,36 @@ func (s *PacketStore) resolvedPubkeysForEvictionBatch(txIDs []int) map[int][]str
 			continue
 		}
 
+		var txID int
+		var rpJSON sql.RawBytes
 		for rows.Next() {
-			var txID int
-			var rpJSON sql.NullString
 			if err := rows.Scan(&txID, &rpJSON); err != nil {
 				continue
 			}
-			if !rpJSON.Valid || rpJSON.String == "" {
+			if len(rpJSON) == 0 {
 				continue
 			}
-			rp := unmarshalResolvedPath(rpJSON.String)
-			for _, p := range rp {
-				if p != nil && *p != "" {
-					result[txID] = append(result[txID], *p)
+			// De-duplicate as we go: a packet has a handful of keys, so a
+			// scan of its list is cheaper than a map per packet.
+			pks := result[txID]
+			// rpJSON is the driver's buffer, valid until the next row: read
+			// it without copying. Nothing keeps a slice of it (a new pubkey
+			// is cloned; the decoder fallback makes its own strings).
+			for _, pk := range resolvedPubkeysFromJSON(unsafe.String(&rpJSON[0], len(rpJSON))) {
+				dup := false
+				for _, have := range pks {
+					if have == pk {
+						dup = true
+						break
+					}
+				}
+				if !dup {
+					pks = append(pks, pk)
 				}
 			}
+			result[txID] = pks
 		}
 		rows.Close()
-	}
-
-	// Deduplicate per-txID
-	for txID, pks := range result {
-		seen := make(map[string]bool, len(pks))
-		deduped := pks[:0]
-		for _, pk := range pks {
-			if !seen[pk] {
-				seen[pk] = true
-				deduped = append(deduped, pk)
-			}
-		}
-		result[txID] = deduped
 	}
 
 	return result
