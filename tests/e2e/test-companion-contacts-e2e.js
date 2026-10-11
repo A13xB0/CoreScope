@@ -189,17 +189,20 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
     await page.selectOption('#ccMStale', '0');
   });
 
-  await step('selecting an area of contacts and removing them asks first, offers a backup, then removes', async () => {
+  await step('selecting an area of contacts and removing them asks first, then removes (no backup)', async () => {
+    assert(!(await page.$('#ccBackupBtn')) && !(await page.$('#ccRestoreBtn')), 'no backup or restore buttons');
     await page.evaluate(([la, lo]) => window._companionContacts.selectCircle(la, lo, 100000), [far.lat, far.lon]);
     const s = await page.evaluate(() => window._companionContacts.state());
     assert(s.toRemove === 1, 'only the far contact should be selected: ' + s.toRemove);
     await page.click('#ccRemoveBtn');
     await page.waitForSelector('#ccConfirm[open]');
-    const dl = page.waitForEvent('download');
+    assert(!(await page.$('#ccConfirmBackup')), 'the confirm offers no backup');
+    assert(/^Remove 1$/.test((await page.textContent('#ccConfirmGo')).trim()), 'confirm button: ' + (await page.textContent('#ccConfirmGo')));
+    let downloaded = false;
+    page.once('download', () => { downloaded = true; });
     await page.click('#ccConfirmGo');
-    const file = await dl;
-    assert(/companion-contacts.*\.json$/.test(file.suggestedFilename()), 'backup file name ' + file.suggestedFilename());
     await page.waitForFunction(() => !window.__fake.contacts.some((c) => c.key === 'ee'.repeat(32)));
+    assert(!downloaded, 'nothing is downloaded');
   });
 
   await step('#/tools/companion-contacts?tab=manage opens on Manage', async () => {
