@@ -143,7 +143,8 @@ const isFolded = (page, id) => page.evaluate((i) => document.getElementById(i).c
       const x = fb.x + fb.width + 12, y = hb.y + hb.height / 2;
       const start = await page.locator('#liveLegend').boundingBox();
       await page.mouse.move(x, y); await page.mouse.down();
-      await page.mouse.move(x - 120, y - 60, { steps: 8 }); await page.mouse.up();
+      // Into the top-left quadrant: panels drop into the nearest corner.
+      await page.mouse.move(160, 160, { steps: 8 }); await page.mouse.up();
       await page.waitForTimeout(250);
       const end = await page.locator('#liveLegend').boundingBox();
       assert(!await isFolded(page, 'liveLegend'), 'a drag folded the legend');
