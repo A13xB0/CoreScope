@@ -221,3 +221,9 @@ func unmarshalResolvedPath(s string) []*string {
 	}
 	return result
 }
+
+// resolvedPubkeysFromJSON returns the non-empty pubkeys of a resolved_path
+// JSON array: extractResolvedPubkeys(unmarshalResolvedPath(s)).
+func resolvedPubkeysFromJSON(s string) []string {
+	return extractResolvedPubkeys(unmarshalResolvedPath(s))
+}
