@@ -39,6 +39,7 @@
 .cc-side > div[hidden] { display: none; }
 .cc-card { padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); display: flex; flex-direction: column; gap: 12px; }
 .cc-card h3 { margin: 0; font-size: var(--fs-md, 15px); }
+.cc-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .cc-chips { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .cc-chips legend { font-size: var(--fs-sm, 12px); color: var(--text-muted); margin-bottom: 6px; padding: 0; }
 .cc-chip { display: flex; align-items: center; gap: 6px; padding: 6px 10px; min-height: 32px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 999px; font-size: var(--fs-sm, 13px); cursor: pointer; }

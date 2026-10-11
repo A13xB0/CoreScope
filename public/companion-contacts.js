@@ -104,6 +104,7 @@
               '<section class="cc-card">' +
                 '<h3>Which nodes</h3>' +
                 '<fieldset id="ccRoles" class="cc-chips"><legend>Roles</legend>' + roleBoxes + '</fieldset>' +
+                '<label class="cc-field" id="ccAreaField" hidden>Area<select id="ccArea"></select></label>' +
                 '<label class="cc-field">Heard within<select id="ccHeard"><option value="7d">Last 7 days</option><option value="24h">Last 24 hours</option><option value="30d">Last 30 days</option><option value="any">Any time</option></select></label>' +
               '</section>' +
               '<section class="cc-card">' +
@@ -113,7 +114,7 @@
                   '<div><strong id="ccCountNew" class="cc-accent">0</strong><span>new</span></div>' +
                   '<div><strong id="ccCountHave">0</strong><span>already added</span></div>' +
                 '</div>' +
-                '<p class="cc-fit" id="ccFitNote">Draw an area on the map to choose nodes.</p>' +
+                '<p class="cc-fit" id="ccFitNote">Draw an area on the map, or pick one from the list, to choose nodes.</p>' +
                 '<ul class="cc-list" id="ccAddList"></ul>' +
                 '<button type="button" class="btn btn-primary cc-go" id="ccAddBtn" disabled>Connect a companion to add contacts</button>' +
                 '<label class="cc-check"><input type="checkbox" id="ccUpdateExisting"> Also update the ones already on the device (name, position)</label>' +
@@ -121,15 +122,16 @@
             '</div>' +
             '<div id="ccManagePane" role="tabpanel" aria-labelledby="ccTabManage" hidden>' +
               '<section class="cc-card">' +
-                '<h3>Narrow it down</h3>' +
+                '<div class="cc-card-head"><h3>Narrow it down</h3><button type="button" class="btn" id="ccFindStale">Find stale contacts</button></div>' +
                 '<label class="cc-field">Type<select id="ccMType"><option value="">All types</option><option value="repeater">Repeaters</option><option value="companion">Companions</option><option value="room">Room servers</option><option value="sensor">Sensors</option></select></label>' +
-                '<label class="cc-field">Last advert<select id="ccMOld"><option value="0">Any</option><option value="30">Older than 30 days</option><option value="90">Older than 90 days</option></select></label>' +
-                '<label class="cc-check"><input type="checkbox" id="ccMStale"> Not heard by CoreScope in 30 days</label>' +
-                '<label class="cc-check"><input type="checkbox" id="ccMNoPos"> Include contacts with no position</label>' +
+                '<label class="cc-field" id="ccMAreaField" hidden>Area<select id="ccMArea"></select></label>' +
+                '<label class="cc-field">Not heard for<select id="ccMStale"><option value="0">Any time</option><option value="30">30 days or more</option><option value="60">60 days or more</option><option value="90">90 days or more</option><option value="180">180 days or more</option></select></label>' +
+                '<p class="cc-fit">Heard means its newest advert on the device, or CoreScope hearing it, whichever is later.</p>' +
+                '<label class="cc-check"><input type="checkbox" id="ccMNoPos"> Include contacts with no position when drawing</label>' +
               '</section>' +
               '<section class="cc-card">' +
                 '<h3 id="ccRemoveTitle">Nothing selected</h3>' +
-                '<p class="cc-fit" id="ccManageNote">Connect a companion, then draw round the contacts you want to remove.</p>' +
+                '<p class="cc-fit" id="ccManageNote">Connect a companion, then draw round the contacts you want to remove, pick an area, or find stale ones.</p>' +
                 '<ul class="cc-list" id="ccRemoveList"></ul>' +
                 '<button type="button" class="btn cc-go cc-danger" id="ccRemoveBtn" disabled>Remove contacts…</button>' +
                 '<div class="cc-row">' +
@@ -231,6 +233,7 @@
   function reloadDevice() {
     return st.client.listContacts().then(function (list) {
       st.deviceContacts = list;
+      st.areaMemo = {}; // positions may have changed
       refresh();
     });
   }
@@ -245,6 +248,7 @@
     st.map = map;
     st.markers = L.layerGroup().addTo(map);
     st.shapeLayer = L.layerGroup().addTo(map);
+    st.areaLayer = L.layerGroup().addTo(map);
     var el = map.getContainer();
     el.addEventListener('pointerdown', onDown);
     el.addEventListener('pointermove', onMove);
@@ -363,13 +367,16 @@
     var roles = {};
     Array.prototype.forEach.call(document.querySelectorAll('#ccRoles input'), function (cb) { roles[cb.value] = cb.checked; });
     var window_ = HEARD[$('ccHeard').value] || 0;
+    var area = $('ccArea').value;
     var now = Date.now() / 1000;
     var have = deviceKeySet();
     var inArea = [], fresh = [], already = [];
     st.nodes.forEach(function (n) {
       if (!n._placed || !n._role || !roles[n._role]) return;
+      if (!st.shape && !area) return;
       if (window_ && (now - n._heard) > window_) return;
-      if (!inside(st.shape, n.lat, n.lon)) return;
+      if (st.shape && !inside(st.shape, n.lat, n.lon)) return;
+      if (!areaPicked(area, nodeAreas(n))) return;
       inArea.push(n);
       (have[n._key] ? already : fresh).push(n);
     });
@@ -388,13 +395,13 @@
     $('ccCountNew').textContent = sel.fresh.length;
     $('ccCountHave').textContent = sel.already.length;
     var note = $('ccFitNote');
-    if (!st.shape) note.textContent = 'Draw an area on the map to choose nodes.';
+    if (!st.shape && !$('ccArea').value) note.textContent = 'Draw an area on the map, or pick one from the list, to choose nodes.';
     else if (!st.info) note.textContent = 'Connect your companion to see which are already on it and how many fit.';
     else if (sel.fresh.length > sel.free) note.textContent = 'Only ' + sel.free + ' fit: the device has ' + plural(sel.free, 'free slot', 'free slots') + '. The most recently heard are added first.';
     else note.textContent = sel.fresh.length ? plural(sel.fresh.length, 'new contact fits', 'new contacts fit') + ': ' + (sel.free - sel.fresh.length) + ' slots free after this.' : 'Nothing new in this area.';
 
     var rows = sel.toAdd.slice(0, 50).map(function (n) {
-      return '<li><span>' + escapeHtml(n.name || n._key.slice(0, 8)) + '</span><span class="cc-muted">' + n._role + ' · ' + ago(n._heard) + '</span></li>';
+      return '<li><span>' + escapeHtml(n.name || n._key.slice(0, 8)) + '</span><span class="cc-muted">' + n._role + areaSuffix(nodeAreas(n)) + ' · ' + ago(n._heard) + '</span></li>';
     }).concat(sel.already.slice(0, 10).map(function (n) {
       return '<li class="cc-dim"><span>' + escapeHtml(n.name || n._key.slice(0, 8)) + ' · on device</span><span>' + (sel.toUpdate.length ? 'update' : 'skipped') + '</span></li>';
     }));
@@ -435,6 +442,128 @@
     startAdd(items, 'Adding ' + plural(items.length, 'contact', 'contacts') + ' to ' + (st.info.name || 'the companion'));
   }
 
+  // ---- areas ----------------------------------------------------------------
+  // The server's areas (/api/config/areas), placed by geometry where the
+  // server gives some: the areas file's GeoJSON, else config.json's polygon or
+  // box. An area with neither falls back to the nodes the server puts in it.
+
+  function getJSON(url) {
+    return fetch(url).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+  }
+
+  // ringsHit is even-odd over every ring ([lon, lat] points), so holes count.
+  function ringsHit(rings, lat, lon) {
+    var c = false;
+    rings.forEach(function (pts) {
+      for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        var yi = pts[i][1], xi = pts[i][0], yj = pts[j][1], xj = pts[j][0];
+        if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) c = !c;
+      }
+    });
+    return c;
+  }
+
+  function geoArea(g) {
+    var polys = null;
+    if (g && g.type === 'Polygon') polys = [g.coordinates];
+    else if (g && g.type === 'MultiPolygon') polys = g.coordinates;
+    if (!polys) return null;
+    return {
+      test: function (lat, lon) { return polys.some(function (rings) { return ringsHit(rings, lat, lon); }); },
+      outline: function () { return L.geoJSON(g); },
+    };
+  }
+
+  function configArea(a) {
+    if (a && a.polygon && a.polygon.length >= 3) {
+      var ring = a.polygon.map(function (p) { return [p[1], p[0]]; });
+      return { test: function (lat, lon) { return ringsHit([ring], lat, lon); }, outline: function () { return L.polygon(a.polygon); } };
+    }
+    if (a && a.latMin != null && a.latMax != null && a.lonMin != null && a.lonMax != null) {
+      return {
+        test: function (lat, lon) { return lat >= a.latMin && lat <= a.latMax && lon >= a.lonMin && lon <= a.lonMax; },
+        outline: function () { return L.rectangle([[a.latMin, a.lonMin], [a.latMax, a.lonMax]]); },
+      };
+    }
+    return null;
+  }
+
+  function loadAreas() {
+    var my = st;
+    return Promise.all([getJSON('/api/config/areas'), getJSON('/api/config/areas/polygons'), getJSON('/api/config/areas/geojson')]).then(function (r) {
+      if (my !== st || !Array.isArray(r[0]) || !r[0].length) return null;
+      var polys = {}, geo = {};
+      (Array.isArray(r[1]) ? r[1] : []).forEach(function (a) { polys[a.key] = a; });
+      ((r[2] && r[2].features) || []).forEach(function (f) {
+        var k = f.properties && (f.properties.code || f.properties.key);
+        if (k) geo[k] = f.geometry;
+      });
+      st.areas = r[0].map(function (a) {
+        var placed = geoArea(geo[a.key]) || configArea(polys[a.key]) || {};
+        return { key: a.key, label: a.label || a.key, test: placed.test || null, outline: placed.outline || null, keys: null };
+      });
+      return Promise.all(st.areas.filter(function (a) { return !a.test; }).map(function (a) {
+        return getJSON('/api/nodes?area=' + encodeURIComponent(a.key) + '&limit=2000').then(function (res) {
+          a.keys = {};
+          ((res && res.nodes) || []).forEach(function (n) { a.keys[String(n.public_key || '').toLowerCase()] = true; });
+        });
+      }));
+    }).then(function () {
+      if (my !== st) return;
+      st.areaMemo = {};
+      fillAreaSelects();
+      refresh();
+    });
+  }
+
+  function fillAreaSelects() {
+    var has = st.areas.length > 0;
+    var opts = st.areas.map(function (a) { return '<option value="' + escapeAttr(a.key) + '">' + escapeHtml(a.label) + '</option>'; }).join('');
+    $('ccArea').innerHTML = '<option value="">Any area</option>' + opts;
+    $('ccMArea').innerHTML = '<option value="">Any area</option>' + opts + '<option value="none">In no area</option>';
+    $('ccAreaField').hidden = !has;
+    $('ccMAreaField').hidden = !has;
+  }
+
+  // areasOf names the areas a key at a position stands in (the position may
+  // be null), remembered per key until the areas reload.
+  function areasOf(key, place) {
+    if (st.areaMemo[key]) return st.areaMemo[key];
+    var out = st.areas.filter(function (a) {
+      if (a.test) return !!place && a.test(place.lat, place.lon);
+      return !!(a.keys && a.keys[key]);
+    }).map(function (a) { return a.key; });
+    st.areaMemo[key] = out;
+    return out;
+  }
+
+  function areaPicked(pick, list) {
+    if (!pick) return true;
+    if (pick === 'none') return list.length === 0;
+    return list.indexOf(pick) >= 0;
+  }
+
+  function areaSuffix(list) { return list.length ? ' · ' + list.join(', ') : ''; }
+  function nodeAreas(n) { return areasOf(n._key, n._placed ? { lat: n.lat, lon: n.lon } : null); }
+  function contactAreas(c) { return areasOf(c.key, placeOf(c)); }
+
+  // showArea outlines the picked area and brings it into view.
+  function showArea(key) {
+    st.areaLayer.clearLayers();
+    var a = st.areas.filter(function (x) { return x.key === key; })[0];
+    if (!a || !a.outline) return;
+    var layer = a.outline();
+    layer.setStyle({ color: cssColour('--accent', '#3b82f6'), weight: 2, fill: false, dashArray: '6 4' });
+    layer.addTo(st.areaLayer);
+    try { st.map.fitBounds(layer.getBounds(), { padding: [20, 20], animate: false }); } catch (e) { /* empty geometry */ }
+  }
+
+  function onAreaPick() {
+    st.excluded = {};
+    showArea(this.value);
+    refresh();
+  }
+
   // ---- manage ---------------------------------------------------------------
 
   // placeOf positions a device contact: its own advertised position, else the
@@ -446,24 +575,41 @@
     return null;
   }
 
+  // lastHeardOf is the later of the contact's newest advert on the device and
+  // CoreScope last hearing the same key.
+  function lastHeardOf(c) {
+    var n = st.nodeByKey[c.key];
+    return Math.max(c.lastAdvert || 0, n ? n._heard : 0);
+  }
+
+  // manageSelection needs something to go on (a drawn shape, an area or a
+  // stale age): with nothing chosen, nothing is selected.
   function manageSelection() {
     var type = $('ccMType').value;
-    var olderDays = +$('ccMOld').value || 0;
-    var stale = $('ccMStale').checked;
+    var area = $('ccMArea').value;
+    var staleDays = +$('ccMStale').value || 0;
     var noPos = $('ccMNoPos').checked;
+    if (!st.shape && !area && !staleDays) return [];
     var now = Date.now() / 1000;
     var out = [];
     st.deviceContacts.forEach(function (c) {
       if (type && CL.typeToRole(c.type) !== type) return;
-      if (olderDays && c.lastAdvert && (now - c.lastAdvert) < olderDays * 86400) return;
-      var n = st.nodeByKey[c.key];
-      if (stale && n && (now - n._heard) < 30 * 86400) return;
+      if (staleDays && now - lastHeardOf(c) < staleDays * 86400) return;
       var p = placeOf(c);
-      var hit = p ? inside(st.shape, p.lat, p.lon) : noPos;
-      if (!hit) return;
+      if (st.shape && !(p ? inside(st.shape, p.lat, p.lon) : noPos)) return;
+      if (!areaPicked(area, contactAreas(c))) return;
       out.push(c);
     });
+    out.sort(function (a, b) { return lastHeardOf(a) - lastHeardOf(b); });
     return out;
+  }
+
+  function findStale() {
+    if (!(+$('ccMStale').value)) $('ccMStale').value = '30';
+    $('ccMArea').value = '';
+    showArea('');
+    setTool(null);
+    setShape(null);
   }
 
   function renderManage() {
@@ -473,10 +619,10 @@
     $('ccRemoveTitle').textContent = chosen.length ? plural(chosen.length, 'contact', 'contacts') + ' selected to remove' : 'Nothing selected';
     var placedOwn = 0, placedCS = 0, none = 0;
     st.deviceContacts.forEach(function (c) { var p = placeOf(c); if (!p) none++; else if (p.from === 'contact') placedOwn++; else placedCS++; });
-    $('ccManageNote').textContent = !st.info ? 'Connect a companion, then draw round the contacts you want to remove.'
+    $('ccManageNote').textContent = !st.info ? 'Connect a companion, then draw round the contacts you want to remove, pick an area, or find stale ones.'
       : st.deviceContacts.length + ' on the device. Positions: ' + placedOwn + ' from the contact, ' + placedCS + ' from CoreScope' + (none ? ', ' + none + ' with none (tick "Include contacts with no position" to pick those)' : '') + '.';
     $('ccRemoveList').innerHTML = sel.slice(0, 200).map(function (c) {
-      return '<li><label class="cc-row-check"><input type="checkbox" data-key="' + c.key + '"' + (st.excluded[c.key] ? '' : ' checked') + ' aria-label="Remove ' + escapeAttr(c.name || c.key.slice(0, 8)) + '"><span>' + escapeHtml(c.name || c.key.slice(0, 8)) + '</span></label><span class="cc-muted">' + CL.typeToRole(c.type) + ' · advert ' + ago(c.lastAdvert) + '</span></li>';
+      return '<li><label class="cc-row-check"><input type="checkbox" data-key="' + c.key + '"' + (st.excluded[c.key] ? '' : ' checked') + ' aria-label="Remove ' + escapeAttr(c.name || c.key.slice(0, 8)) + '"><span>' + escapeHtml(c.name || c.key.slice(0, 8)) + '</span></label><span class="cc-muted">' + CL.typeToRole(c.type) + areaSuffix(contactAreas(c)) + ' · last heard ' + ago(lastHeardOf(c)) + '</span></li>';
     }).join('');
     var btn = $('ccRemoveBtn');
     btn.disabled = !chosen.length;
@@ -678,7 +824,7 @@
   // ---- page -----------------------------------------------------------------
 
   function init(container) {
-    st = { tab: tabFromHash(), nodes: [], nodeByKey: {}, deviceContacts: [], excluded: {}, client: null, info: null, shape: null, tool: null, polyPts: [] };
+    st = { tab: tabFromHash(), nodes: [], nodeByKey: {}, deviceContacts: [], excluded: {}, client: null, info: null, shape: null, tool: null, polyPts: [], areas: [], areaMemo: {} };
     render(container);
     var sup = CL.supported();
     $('ccConnectUsb').disabled = !sup.serial;
@@ -700,7 +846,10 @@
     $('ccHeard').addEventListener('change', refresh);
     $('ccUpdateExisting').addEventListener('change', refresh);
     $('ccAddBtn').addEventListener('click', onAddClick);
-    ['ccMType', 'ccMOld', 'ccMStale', 'ccMNoPos'].forEach(function (id) { $(id).addEventListener('change', refresh); });
+    ['ccMType', 'ccMStale', 'ccMNoPos'].forEach(function (id) { $(id).addEventListener('change', function () { st.excluded = {}; refresh(); }); });
+    $('ccArea').addEventListener('change', onAreaPick);
+    $('ccMArea').addEventListener('change', onAreaPick);
+    $('ccFindStale').addEventListener('click', findStale);
     $('ccRemoveList').addEventListener('change', function (e) {
       var k = e.target && e.target.getAttribute('data-key');
       if (!k) return;
@@ -721,7 +870,7 @@
 
     initMap();
     refresh();
-    loadNodes();
+    loadNodes().then(loadAreas);
 
     // Test hooks (no behaviour of their own).
     window._companionContacts = {
