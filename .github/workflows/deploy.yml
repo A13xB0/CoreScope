@@ -585,6 +585,7 @@ jobs:
           suite 3 test-nav-priority-1311-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 2 test-nav-priority-1391-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 1 test-issue-1413-nav-overlap-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
+          suite 1 test-companion-contacts-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 2 test-issue-1400-nav-vertical-clip.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 2 test-nav-more-floor-1139-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 3 test-bottom-nav-1061-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
