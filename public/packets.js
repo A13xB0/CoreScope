@@ -638,6 +638,9 @@
 (function () {
   let packets = [];
   let hashIndex = new Map(); // hash → packet group for O(1) dedup
+  // Where each packet started (hash → {area, basis}), when the server places
+  // packets in areas (the Data tab's index); null when it does not.
+  let packetOrigins = null;
 
   // #1799 PR #1804 r1 item 9 (adv6): payload-labels.js is loaded
   // synchronously before this script in index.html. A missing module
@@ -1627,6 +1630,46 @@
     return params;
   }
 
+  const ORIGIN_BASES = {
+    advert: 'advert position',
+    node: 'sender\'s node position',
+    'first-relay': 'first relay',
+    'zero-hop': 'heard with no relay',
+    unknown: 'origin unknown',
+  };
+
+  function originTitle(o) {
+    if (!o) return 'Not placed yet: the area index refreshes every 2 minutes';
+    if (!o.area) return 'Origin unknown: ' + (ORIGIN_BASES[o.basis] || o.basis || 'nothing placed it');
+    return 'Started in ' + o.area + ' — ' + (ORIGIN_BASES[o.basis] || o.basis);
+  }
+
+  function originCellHtml(hash) {
+    if (!packetOrigins) return '';
+    const o = packetOrigins[hash];
+    let text = '<span class="text-muted">…</span>';
+    if (o) text = o.area ? escapeHtml(o.area) : '<span class="text-muted">—</span>';
+    return '<span title="' + escapeHtml(originTitle(o)) + '">' + text + '</span>';
+  }
+
+  function originDetailHtml(o) {
+    if (!o) return '<span class="text-muted">not placed yet</span>';
+    if (!o.area) return '<span class="text-muted">unknown</span>';
+    const how = ORIGIN_BASES[o.basis] || o.basis || '';
+    return escapeHtml(o.area) + (how ? ' <span class="text-muted">· ' + escapeHtml(how) + '</span>' : '');
+  }
+
+  // applyOrigins keeps the origins a list response carried and shows the
+  // column only when the server places packets.
+  function applyOrigins(data) {
+    packetOrigins = data?.origins ? Object.assign({}, data.origins) : null;
+    const table = document.getElementById('pktTable');
+    if (table) table.classList.toggle('pkt-no-origin', !packetOrigins);
+    const item = document.querySelector('#colToggleMenu [data-col="origin"]');
+    if (item?.closest('label')) item.closest('label').hidden = !packetOrigins;
+    if (_colFit) _colFit.refit();
+  }
+
   async function loadPackets() {
     try {
       const selectedWindow = Number(document.getElementById('fTimeWindow')?.value);
@@ -1641,6 +1684,7 @@
       });
 
       const data = await api('/packets?' + params.toString());
+      applyOrigins(data);
       packets = data.packets || [];
       hashIndex = new Map();
       for (const p of packets) { if (p.hash) hashIndex.set(p.hash, p); }
@@ -1830,11 +1874,11 @@
         </div>
       </div>
       <div class="path-symbols-legend-wrapper">${(window.HopDisplay && HopDisplay.renderPathSymbolsLegend) ? HopDisplay.renderPathSymbolsLegend() : ''}</div>
-      <div class="table-fluid-wrap"><table class="data-table${showFullNames ? ' pkt-full-names' : ''}" id="pktTable">
+      <div class="table-fluid-wrap"><table class="data-table${packetOrigins ? '' : ' pkt-no-origin'}${showFullNames ? ' pkt-full-names' : ''}" id="pktTable">
         <thead><tr>
           <th scope="col" class="col-expand" data-priority="1"></th><th scope="col" class="col-region" data-sort-key="region" data-priority="3">Region</th><th scope="col" class="col-time" data-sort-key="time" data-type="date" data-priority="1">Time</th><th scope="col" class="col-hash" data-sort-key="hash" data-priority="3">Hash</th><th scope="col" class="col-size" data-sort-key="size" data-type="numeric" data-priority="4">Size</th>
           <th scope="col" class="col-hashsize" data-sort-key="hb" data-type="numeric" data-priority="5">HB</th>
-          <th scope="col" class="col-type" data-sort-key="type" data-priority="1">Type</th><th scope="col" class="col-scope" data-sort-key="scope" data-priority="4">Scope</th><th scope="col" class="col-observer" data-sort-key="observer" data-priority="3">Observer</th><th scope="col" class="col-path" data-sort-key="path" data-priority="5">Path</th><th scope="col" class="col-rpt" data-sort-key="rpt" data-type="numeric" data-priority="3">Rpt</th><th scope="col" class="col-details" data-priority="1">Details</th>
+          <th scope="col" class="col-type" data-sort-key="type" data-priority="1">Type</th><th scope="col" class="col-scope" data-sort-key="scope" data-priority="4">Scope</th><th scope="col" class="col-origin" data-sort-key="origin" data-priority="4">Origin</th><th scope="col" class="col-observer" data-sort-key="observer" data-priority="3">Observer</th><th scope="col" class="col-path" data-sort-key="path" data-priority="5">Path</th><th scope="col" class="col-rpt" data-sort-key="rpt" data-type="numeric" data-priority="3">Rpt</th><th scope="col" class="col-details" data-priority="1">Details</th>
         </tr></thead>
         <tbody id="pktBody"></tbody>
       </table></div>
@@ -2255,6 +2299,7 @@
       { key: 'size', label: 'Size' },
       { key: 'type', label: 'Type' },
       { key: 'scope', label: 'Scope' },
+      { key: 'origin', label: 'Origin' },
       { key: 'observer', label: 'Observer' },
       { key: 'path', label: 'Path' },
       { key: 'rpt', label: 'Rpt' },
@@ -2264,7 +2309,7 @@
     // #1249: observer column must stay visible at narrow widths so the IATA
     // badge (#1188) renders on mobile. Without observer in scope the user
     // can't see who heard the packet at all.
-    const defaultHidden = isNarrow ? ['region', 'hash', 'path', 'rpt', 'size', 'scope'] : ['region'];
+    const defaultHidden = isNarrow ? ['region', 'hash', 'path', 'rpt', 'size', 'scope', 'origin'] : ['region'];
     let visibleCols;
     let knownCols;
     try {
@@ -2296,7 +2341,7 @@
       if (_colFit) _colFit.refit();
     }
     colMenu.innerHTML = COL_DEFS.map(c =>
-      `<label><input type="checkbox" data-col="${c.key}" ${visibleCols.includes(c.key) ? 'checked' : ''}> ${c.label}</label>`
+      `<label${c.key === 'origin' && !packetOrigins ? ' hidden' : ''}><input type="checkbox" data-col="${c.key}" ${visibleCols.includes(c.key) ? 'checked' : ''}> ${c.label}</label>`
     ).join('');
     colMenu.addEventListener('change', (e) => {
       const cb = e.target;
@@ -2553,6 +2598,7 @@
           <td class="col-hashsize mono"${_grpHashSizeTitle}>${groupHashBytes}</td>
           <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(groupTypeName || '')}">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>${transportBadge(p.route_type)}` : '—'}</td>
           <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(p.scope_name || '')}">${scopeCellHtml(p.scope_name)}</td>
+          <td class="col-origin">${originCellHtml(p.hash)}</td>
           <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(headerObserverId) || '')}">${isSingle ? obsCellName(headerObserverId, 16) + obsIataBadge(p) : obsCellName(headerObserverId, 10) + groupedObserverIataBadgesHtml(p)}</td>
           <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
           <td class="col-rpt">${p.observation_count > 1 ? '<span class="badge badge-obs" title="Seen ' + p.observation_count + ' times"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-eye"/></svg> ' + p.observation_count + '</span>' : (isSingle ? '' : p.count)}</td>
@@ -2588,6 +2634,7 @@
               <td class="col-hashsize mono"${_cHashSizeTitle}>${childHashBytes}</td>
               <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(typeName || '')}"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(c.route_type)}</td>
               <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(c.scope_name || '')}">${scopeCellHtml(c.scope_name)}</td>
+              <td class="col-origin">${originCellHtml(c.hash || p.hash)}</td>
               <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(c.observer_id) || '')}">${obsCellName(c.observer_id, 16)}${obsIataBadge(c)}</td>
               <td class="col-path"><span class="path-hops">${childPathStr}</span></td>
               <td class="col-rpt"></td>
@@ -2625,6 +2672,7 @@
         <td class="col-hashsize mono"${_flatHashSizeTitle}>${hashBytes}</td>
         <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(typeName || '')}"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(p.route_type)}</td>
         <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(p.scope_name || '')}">${scopeCellHtml(p.scope_name)}</td>
+        <td class="col-origin">${originCellHtml(p.hash)}</td>
         <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(p.observer_id) || '')}">${obsCellName(p.observer_id, 16)}${obsIataBadge(p)}</td>
         <td class="col-path"><span class="path-hops">${pathStr}</span></td>
         <td class="col-rpt"></td>
@@ -3102,6 +3150,7 @@
         try { var pj = typeof p.path_json === 'string' ? JSON.parse(p.path_json) : p.path_json; return Array.isArray(pj) ? pj.length : 0; } catch(e) { return 0; }
       }; break;
       case 'scope': accessor = function(p) { return p.scope_name || ''; }; break;
+      case 'origin': accessor = function(p) { const o = packetOrigins?.[p.hash]; return o?.area || ''; }; break;
       case 'region': accessor = function(p) { return (regionMap && regionMap[p.observer_id]) || ''; }; break;
       case 'path': accessor = function(p) {
         try { var pj = typeof p.path_json === 'string' ? JSON.parse(p.path_json) : p.path_json; return Array.isArray(pj) ? pj.join(',') : ''; } catch(e) { return ''; }
@@ -3767,6 +3816,7 @@
         ${locationHtml ? `<dt>Location</dt><dd>${locationHtml}</dd>` : ''}
         <dt>SNR / RSSI</dt><dd>${snr != null ? snr + ' dB' : '—'} / ${rssi != null ? rssi + ' dBm' : '—'}</dd>
         <dt>Route Type</dt><dd>${routeTypeName(pkt.route_type)}</dd>
+        ${data.origin || packetOrigins ? `<dt>Origin</dt><dd>${originDetailHtml(data.origin || packetOrigins[pkt.hash])}</dd>` : ''}
         ${pkt.scope_name != null ? `<dt>Scope</dt><dd>${pkt.scope_name !== '' ? escapeHtml(pkt.scope_name) : '<span style="color:var(--text-muted)">unknown scope</span>'}</dd>` : ''}
         ${hashSize ? `<dt>Hash Size</dt><dd>${hashSize} byte${hashSize !== 1 ? 's' : ''}</dd>` : ''}
         <dt>Propagation</dt><dd>${propagationHtml}</dd>

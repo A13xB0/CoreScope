@@ -3296,6 +3296,8 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .hide-col-size .col-size,
 .hide-col-type .col-type,
 .hide-col-scope .col-scope,
+.hide-col-origin .col-origin,
+.pkt-no-origin .col-origin,
 .hide-col-observer .col-observer,
 .hide-col-path .col-path,
 .hide-col-rpt .col-rpt,
