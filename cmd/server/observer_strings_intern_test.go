@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unsafe"
@@ -86,4 +89,66 @@ func TestObserverStringsShared_LoadChunk(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertObserverStringsShared(t, store, 50)
+}
+
+// Many goroutines interning the same values all get the one shared copy.
+func TestInternStrConcurrent(t *testing.T) {
+	keys := make([]string, 50)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("intern-concurrent-%062d", i)
+	}
+	var wg sync.WaitGroup
+	got := make([][]string, 16)
+	for g := range got {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for _, k := range keys {
+				got[g] = append(got[g], internStr(strings.Clone(k)))
+			}
+		}(g)
+	}
+	wg.Wait()
+	for i := range keys {
+		want := unsafe.StringData(got[0][i])
+		for g := range got {
+			if got[g][i] != keys[i] || unsafe.StringData(got[g][i]) != want {
+				t.Fatalf("goroutine %d got a different copy of %q", g, keys[i])
+			}
+		}
+	}
+}
+
+// BenchmarkInternStr measures a hit (the steady state: a few hundred
+// observers) alone and from every core. Loaders and ingest intern in
+// parallel, so hits must not contend.
+//
+//	go test -run '^$' -bench BenchmarkInternStr -cpu 1,12 ./cmd/server
+func BenchmarkInternStr(b *testing.B) {
+	keys := make([]string, 300)
+	for i := range keys {
+		keys[i] = internStr(fmt.Sprintf("bench-observer-%049d", i))
+	}
+	b.Run("serial", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = internStr(keys[i%len(keys)])
+		}
+	})
+	b.Run("parallel", func(b *testing.B) {
+		b.RunParallel(func(pb *testing.PB) {
+			i := 0
+			for pb.Next() {
+				_ = internStr(keys[i%len(keys)])
+				i++
+			}
+		})
+	})
+}
+
+// A hit, the steady state, allocates nothing.
+func TestInternStrHitDoesNotAllocate(t *testing.T) {
+	k := internStr("hit-probe-0123456789abcdef0123456789abcdef0123456789abcdef01234567")
+	if n := testing.AllocsPerRun(1000, func() { _ = internStr(k) }); n != 0 {
+		t.Fatalf("internStr allocates %.0f times on a hit", n)
+	}
 }
