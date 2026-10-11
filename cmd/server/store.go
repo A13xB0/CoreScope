@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"hash/maphash"
 	"log"
 	"math"
 	"runtime"
@@ -4227,67 +4228,152 @@ func (s *PacketStore) buildSubpathIndex() {
 	log.Printf("[store] Counted %d paths with subpaths", s.spTotalPaths)
 }
 
-// rankNamedSubpaths returns, per group, the top g.Limit subpaths of the
-// stored paths by resolved name, in the rankSubpaths result shape. Callers
-// hold s.mu.RLock.
-func (s *PacketStore) rankNamedSubpaths(groups []subpathGroup, resolveHop func(string) string) []map[string]interface{} {
-	perGroup, totalPaths := s.countNamedSubpaths(groups, resolveHop)
-	results := make([]map[string]interface{}, len(groups))
-	for i, g := range groups {
-		results[i] = s.rankSubpaths(perGroup[i], totalPaths, g.Limit)
-	}
-	return results
+// subpathTally counts one named subpath while subpaths are counted. It
+// holds no pointers, so the counting map is not scanned by the GC: the run
+// it names is found again through the first transmission that had it.
+type subpathTally struct {
+	count int32
+	tx    int32  // index in s.packets of the first transmission with the run
+	start uint16 // the run's first hop in that transmission's path
+	n     uint16 // the run's length in hops
 }
 
-// countNamedSubpaths counts every run of 2 to subpathMaxLen hops in the
-// stored paths, once per occurrence, by resolved name. A run counts in every
-// group whose length range holds it; each entry keeps the first raw hops it
-// saw, as a slice of the transmission's parsed path, so only the ranked few
-// are joined into strings. Callers hold s.mu.RLock.
+// rankNamedSubpaths returns, per group, the top g.Limit subpaths of the
+// stored paths by resolved name, in the rankSubpaths result shape. It counts
+// every run of 2 to subpathMaxLen hops, once per occurrence; a run counts in
+// every group whose length range holds it. Callers hold s.mu.RLock.
 //
-// Keys are built in a reused buffer and looked up as string(buf), which does
-// not allocate, so only new keys cost an allocation.
-func (s *PacketStore) countNamedSubpaths(groups []subpathGroup, resolveHop func(string) string) ([]map[string]*subpathAccum, int) {
-	perGroup := make([]map[string]*subpathAccum, len(groups))
-	for i := range perGroup {
-		perGroup[i] = make(map[string]*subpathAccum)
+// Runs are tallied under a 64-bit hash of their resolved name, built in a
+// reused buffer, so counting allocates only the maps; names and raw hops are
+// built for the ranked entries alone. Two names sharing a hash would merge,
+// about a 1 in 10^7 chance for a few million names.
+func (s *PacketStore) rankNamedSubpaths(groups []subpathGroup, resolveHop func(string) string) []map[string]interface{} {
+	seed := maphash.MakeSeed()
+	minL, maxL := subpathMaxLen+1, 0
+	for _, g := range groups {
+		minL, maxL = min(minL, max(2, g.MinLen)), max(maxL, min(subpathMaxLen, g.MaxLen))
 	}
-	total := 0
+	// One map for every group: a name's length is fixed, so each group takes
+	// the tallies whose length falls in its range when it is ranked.
+	tallies := make(map[uint64]subpathTally)
+	totalPaths := 0
 	var named []string
 	var key []byte
-	for _, tx := range s.packets {
+	for ti, tx := range s.packets {
 		hops := txGetParsedPath(tx)
 		if len(hops) < 2 {
 			continue
 		}
-		total++
+		totalPaths++
 		named = named[:0]
 		for _, h := range hops {
 			named = append(named, resolveHop(strings.ToLower(h)))
 		}
-		for l := 2; l <= min(subpathMaxLen, len(hops)); l++ {
+		for l := minL; l <= min(maxL, len(hops)); l++ {
 			for start := 0; start+l <= len(hops); start++ {
-				key = key[:0]
-				for i, n := range named[start : start+l] {
-					if i > 0 {
-						key = append(key, " → "...)
-					}
-					key = append(key, n...)
+				key = appendNamedSubpath(key[:0], named[start:start+l])
+				h := maphash.Bytes(seed, key)
+				t, ok := tallies[h]
+				if !ok {
+					t = subpathTally{tx: int32(ti), start: uint16(start), n: uint16(l)}
 				}
-				for gi, g := range groups {
-					if l < g.MinLen || l > g.MaxLen {
-						continue
-					}
-					if e := perGroup[gi][string(key)]; e != nil {
-						e.count++
-						continue
-					}
-					perGroup[gi][string(key)] = &subpathAccum{count: 1, rawHops: hops[start : start+l]}
-				}
+				t.count++
+				tallies[h] = t
 			}
 		}
 	}
-	return perGroup, total
+
+	results := make([]map[string]interface{}, len(groups))
+	for i, g := range groups {
+		top := topSubpathTallies(tallies, g, g.Limit)
+		subpaths := make([]map[string]interface{}, 0, len(top))
+		for _, t := range top {
+			hops := txGetParsedPath(s.packets[t.tx])[t.start : t.start+t.n]
+			named = named[:0]
+			raw := make([]string, len(hops))
+			for j, h := range hops {
+				raw[j] = strings.ToLower(h)
+				named = append(named, resolveHop(raw[j]))
+			}
+			pct := 0.0
+			if totalPaths > 0 {
+				pct = math.Round(float64(t.count)/float64(totalPaths)*1000) / 10
+			}
+			subpaths = append(subpaths, map[string]interface{}{
+				"path":    string(appendNamedSubpath(nil, named)),
+				"rawHops": raw,
+				"count":   int(t.count),
+				"hops":    len(hops),
+				"pct":     pct,
+			})
+		}
+		results[i] = map[string]interface{}{
+			"subpaths":   subpaths,
+			"totalPaths": totalPaths,
+		}
+	}
+	return results
+}
+
+// appendNamedSubpath appends the resolved hop names joined by " → ".
+func appendNamedSubpath(buf []byte, named []string) []byte {
+	for i, n := range named {
+		if i > 0 {
+			buf = append(buf, " → "...)
+		}
+		buf = append(buf, n...)
+	}
+	return buf
+}
+
+// topSubpathTallies returns the limit highest counts among the tallies in
+// g's length range, highest first, keeping
+// a min-heap of limit entries instead of sorting every tally.
+func topSubpathTallies(m map[uint64]subpathTally, g subpathGroup, limit int) []subpathTally {
+	if limit <= 0 {
+		return nil
+	}
+	h := make([]subpathTally, 0, limit)
+	less := func(i, j int) bool { return h[i].count < h[j].count }
+	down := func(i int) {
+		for {
+			c := 2*i + 1
+			if c >= len(h) {
+				return
+			}
+			if c+1 < len(h) && less(c+1, c) {
+				c++
+			}
+			if !less(c, i) {
+				return
+			}
+			h[i], h[c] = h[c], h[i]
+			i = c
+		}
+	}
+	for _, t := range m {
+		if int(t.n) < g.MinLen || int(t.n) > g.MaxLen {
+			continue
+		}
+		if len(h) < limit {
+			h = append(h, t)
+			for i := len(h) - 1; i > 0; {
+				p := (i - 1) / 2
+				if !less(i, p) {
+					break
+				}
+				h[i], h[p] = h[p], h[i]
+				i = p
+			}
+			continue
+		}
+		if t.count > h[0].count {
+			h[0] = t
+			down(0)
+		}
+	}
+	sort.Slice(h, func(i, j int) bool { return h[i].count > h[j].count })
+	return h
 }
 
 // buildPathHopIndex rebuilds byPathHop: raw wire hops from every packet's
@@ -10502,17 +10588,6 @@ func (s *PacketStore) txsWithSubpath(rawHops []string) []*StoreTx {
 type subpathAccum struct {
 	count int
 	raw   string // first raw-hop key seen (used for rawHops in the API response)
-	// rawHops, when raw is empty, holds the first raw hops seen; rankSubpaths
-	// lower-cases and joins them only for the entries it returns.
-	rawHops []string
-}
-
-// rawKey returns the entry's lower-case, comma-joined raw hops.
-func (a *subpathAccum) rawKey() string {
-	if a.raw == "" && a.rawHops != nil {
-		return strings.ToLower(strings.Join(a.rawHops, ","))
-	}
-	return a.raw
 }
 
 func (s *PacketStore) computeAnalyticsSubpaths(region string, minLen, maxLen, limit int) map[string]interface{} {
@@ -10604,11 +10679,11 @@ func (s *PacketStore) rankSubpaths(counts map[string]*subpathAccum, totalPaths, 
 	type subpathEntry struct {
 		path  string
 		count int
-		acc   *subpathAccum
+		raw   string
 	}
 	ranked := make([]subpathEntry, 0, len(counts))
 	for path, data := range counts {
-		ranked = append(ranked, subpathEntry{path, data.count, data})
+		ranked = append(ranked, subpathEntry{path, data.count, data.raw})
 	}
 	sort.Slice(ranked, func(i, j int) bool { return ranked[i].count > ranked[j].count })
 	if len(ranked) > limit {
@@ -10623,7 +10698,7 @@ func (s *PacketStore) rankSubpaths(counts map[string]*subpathAccum, totalPaths, 
 		}
 		subpaths = append(subpaths, map[string]interface{}{
 			"path":    e.path,
-			"rawHops": strings.Split(e.acc.rawKey(), ","),
+			"rawHops": strings.Split(e.raw, ","),
 			"count":   e.count,
 			"hops":    len(strings.Split(e.path, " → ")),
 			"pct":     pct,
