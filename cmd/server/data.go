@@ -13,6 +13,7 @@ package main
 // where they stand now.
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -381,12 +382,19 @@ type dataAdvert struct {
 }
 
 // readPackets reads transmissions matching where, with every observation.
+//
+// It reads every packet of the window, so the JSON columns are scanned as
+// sql.RawBytes and decoded from the driver's buffer (valid until the next
+// row) rather than copied into a string and again into a []byte, the scan
+// targets are declared once, and only the payload types that use it select
+// decoded_json at all.
 func (d *dataService) readPackets(ctx context.Context, where string, args ...any) ([]origin.Packet, error) {
 	scope := "NULL"
 	if d.db.hasScopeName {
 		scope = "t.scope_name"
 	}
-	rows, err := d.db.conn.QueryContext(ctx, `SELECT t.id, t.hash, t.first_seen, COALESCE(t.payload_type, -1), COALESCE(t.route_type, -1), `+scope+`, COALESCE(t.decoded_json, '')
+	rows, err := d.db.conn.QueryContext(ctx, `SELECT t.id, t.hash, t.first_seen, COALESCE(t.payload_type, -1), COALESCE(t.route_type, -1), `+scope+`,
+		CASE WHEN t.payload_type IN (4, 5, 6) THEN COALESCE(t.decoded_json, '') ELSE '' END
 		FROM transmissions t WHERE `+where+` ORDER BY t.id`, args...)
 	if err != nil {
 		return nil, err
@@ -394,11 +402,12 @@ func (d *dataService) readPackets(ctx context.Context, where string, args ...any
 	byID := map[int64]int{}
 	var out []origin.Packet
 	var lo, hi int64 = math.MaxInt64, 0
+	var id int64
+	var first string
+	var decoded sql.RawBytes
+	var sc sql.NullString
 	for rows.Next() {
-		var id int64
 		var p origin.Packet
-		var first, decoded string
-		var sc sql.NullString
 		if err := rows.Scan(&id, &p.Hash, &first, &p.Type, &p.Route, &sc, &decoded); err != nil {
 			rows.Close()
 			return nil, err
@@ -407,9 +416,9 @@ func (d *dataService) readPackets(ctx context.Context, where string, args ...any
 			p.At = t.Unix()
 		}
 		p.Scope, p.Scoped = sc.String, sc.Valid
-		if decoded != "" && (p.Type == 4 || p.Type == 5 || p.Type == 6) {
+		if len(decoded) > 0 && (p.Type == 4 || p.Type == 5 || p.Type == 6) {
 			var a dataAdvert
-			if json.Unmarshal([]byte(decoded), &a) == nil {
+			if json.Unmarshal(decoded, &a) == nil {
 				if p.Type == 4 && a.PubKey != "" {
 					p.Advert = &origin.Advert{PublicKey: a.PubKey}
 					if a.Flags.HasLocation {
@@ -453,10 +462,13 @@ func (d *dataService) readPackets(ctx context.Context, where string, args ...any
 		return nil, err
 	}
 	defer orows.Close()
+	var tid int64
+	var dir, path, res sql.RawBytes
+	// Hops and relay keys repeat across the window's observations: each
+	// distinct value is held once for this read.
+	seen := make(map[string]string, 1024)
 	for orows.Next() {
-		var tid int64
 		var o origin.Observation
-		var dir, path, res string
 		if err := orows.Scan(&tid, &o.ObserverID, &dir, &path, &res); err != nil {
 			return nil, err
 		}
@@ -464,24 +476,98 @@ func (d *dataService) readPackets(ctx context.Context, where string, args ...any
 		if !ok {
 			continue
 		}
-		o.Relayed = strings.EqualFold(dir, "tx")
-		if path != "" && path != "[]" {
-			_ = json.Unmarshal([]byte(path), &o.Path)
+		o.Relayed = bytes.EqualFold(dir, dataDirTx)
+		if len(path) > 0 && string(path) != "[]" {
+			if hops, ok := scanJSONStrings(path, seen); ok {
+				o.Path = hops
+			} else {
+				_ = json.Unmarshal(path, &o.Path)
+			}
 		}
-		if res != "" {
-			var rp []*string
-			if json.Unmarshal([]byte(res), &rp) == nil {
-				o.Resolved = make([]string, len(rp))
-				for k, v := range rp {
-					if v != nil {
-						o.Resolved[k] = *v
-					}
+		if len(res) > 0 {
+			// A null hop decodes to "", which is what it stood for.
+			if rs, ok := scanJSONStrings(res, seen); ok {
+				o.Resolved = rs
+			} else {
+				var rs []string
+				if json.Unmarshal(res, &rs) == nil {
+					o.Resolved = rs
 				}
 			}
 		}
 		out[i].Observations = append(out[i].Observations, o)
 	}
 	return out, orows.Err()
+}
+
+var dataDirTx = []byte("tx")
+
+// scanJSONStrings reads b as a JSON array of escape-free ASCII strings and
+// nulls (null reads as ""), as json.Unmarshal into a []string would, taking
+// each value from seen so a repeated one is not allocated again. ok is
+// false for anything else, which the caller decodes.
+func scanJSONStrings(b []byte, seen map[string]string) (out []string, ok bool) {
+	i := 0
+	ws := func() {
+		for i < len(b) && (b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r') {
+			i++
+		}
+	}
+	ws()
+	if i >= len(b) || b[i] != '[' {
+		return nil, false
+	}
+	i++
+	ws()
+	out = make([]string, 0, 8)
+	if i < len(b) && b[i] == ']' {
+		i++
+		ws()
+		return out, i == len(b)
+	}
+	for {
+		switch {
+		case i < len(b) && b[i] == '"':
+			i++
+			start := i
+			for i < len(b) && b[i] != '"' {
+				if b[i] == '\\' || b[i] < 0x20 || b[i] >= 0x80 {
+					return nil, false
+				}
+				i++
+			}
+			if i >= len(b) {
+				return nil, false
+			}
+			v, have := seen[string(b[start:i])]
+			if !have {
+				v = string(b[start:i])
+				seen[v] = v
+			}
+			out = append(out, v)
+			i++
+		case bytes.HasPrefix(b[i:], []byte("null")):
+			out = append(out, "")
+			i += 4
+		default:
+			return nil, false
+		}
+		ws()
+		if i >= len(b) {
+			return nil, false
+		}
+		switch b[i] {
+		case ',':
+			i++
+			ws()
+		case ']':
+			i++
+			ws()
+			return out, i == len(b)
+		default:
+			return nil, false
+		}
+	}
 }
 
 // windows are the periods the index reaches.
