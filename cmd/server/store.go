@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/heap"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -4358,13 +4359,36 @@ type subpathTally struct {
 // built for the ranked entries alone. Two names sharing a hash would merge,
 // about a 1 in 10^7 chance for a few million names.
 func (s *PacketStore) topNamedSubpaths(groups []subpathGroup, resolveHop func(string) string) ([]map[string]*subpathAccum, int) {
+	tallies, totalPaths := s.tallyNamedSubpaths(groups, resolveHop)
+	perGroup := make([]map[string]*subpathAccum, len(groups))
+	var named []string
+	for i, g := range groups {
+		top := topSubpathTallies(tallies, g, g.Limit)
+		perGroup[i] = make(map[string]*subpathAccum, len(top))
+		for _, t := range top {
+			hops := txGetParsedPath(s.packets[t.tx])[t.start : t.start+t.n]
+			named = named[:0]
+			raw := make([]string, len(hops))
+			for j, h := range hops {
+				raw[j] = strings.ToLower(h)
+				named = append(named, resolveHop(raw[j]))
+			}
+			perGroup[i][string(appendNamedSubpath(nil, named))] = &subpathAccum{count: int(t.count), raw: strings.Join(raw, ",")}
+		}
+	}
+	return perGroup, totalPaths
+}
+
+// tallyNamedSubpaths counts the runs of hops whose lengths any group asks
+// for, keyed by a hash of their resolved name (see topNamedSubpaths), and
+// returns the tallies with the number of paths of at least two hops. A name's
+// length is fixed, so one map serves every group.
+func (s *PacketStore) tallyNamedSubpaths(groups []subpathGroup, resolveHop func(string) string) (map[uint64]subpathTally, int) {
 	seed := maphash.MakeSeed()
 	minL, maxL := subpathMaxLen+1, 0
 	for _, g := range groups {
 		minL, maxL = min(minL, max(2, g.MinLen)), max(maxL, min(subpathMaxLen, g.MaxLen))
 	}
-	// One map for every group: a name's length is fixed, so each group takes
-	// the tallies whose length falls in its range when it is ranked.
 	tallies := make(map[uint64]subpathTally)
 	totalPaths := 0
 	var named []string
@@ -4392,23 +4416,7 @@ func (s *PacketStore) topNamedSubpaths(groups []subpathGroup, resolveHop func(st
 			}
 		}
 	}
-
-	perGroup := make([]map[string]*subpathAccum, len(groups))
-	for i, g := range groups {
-		top := topSubpathTallies(tallies, g, g.Limit)
-		perGroup[i] = make(map[string]*subpathAccum, len(top))
-		for _, t := range top {
-			hops := txGetParsedPath(s.packets[t.tx])[t.start : t.start+t.n]
-			named = named[:0]
-			raw := make([]string, len(hops))
-			for j, h := range hops {
-				raw[j] = strings.ToLower(h)
-				named = append(named, resolveHop(raw[j]))
-			}
-			perGroup[i][string(appendNamedSubpath(nil, named))] = &subpathAccum{count: int(t.count), raw: strings.Join(raw, ",")}
-		}
-	}
-	return perGroup, totalPaths
+	return tallies, totalPaths
 }
 
 // appendNamedSubpath appends the resolved hop names joined by " → ".
@@ -4423,53 +4431,41 @@ func appendNamedSubpath(buf []byte, named []string) []byte {
 }
 
 // topSubpathTallies returns the limit highest counts among the tallies in
-// g's length range, highest first, keeping
-// a min-heap of limit entries instead of sorting every tally.
+// g's length range, highest first, keeping a min-heap of limit entries
+// instead of sorting every tally.
 func topSubpathTallies(m map[uint64]subpathTally, g subpathGroup, limit int) []subpathTally {
 	if limit <= 0 {
 		return nil
 	}
-	h := make([]subpathTally, 0, limit)
-	less := func(i, j int) bool { return h[i].count < h[j].count }
-	down := func(i int) {
-		for {
-			c := 2*i + 1
-			if c >= len(h) {
-				return
-			}
-			if c+1 < len(h) && less(c+1, c) {
-				c++
-			}
-			if !less(c, i) {
-				return
-			}
-			h[i], h[c] = h[c], h[i]
-			i = c
-		}
-	}
+	h := make(tallyHeap, 0, limit)
 	for _, t := range m {
 		if int(t.n) < g.MinLen || int(t.n) > g.MaxLen {
 			continue
 		}
-		if len(h) < limit {
-			h = append(h, t)
-			for i := len(h) - 1; i > 0; {
-				p := (i - 1) / 2
-				if !less(i, p) {
-					break
-				}
-				h[i], h[p] = h[p], h[i]
-				i = p
-			}
-			continue
-		}
-		if t.count > h[0].count {
+		switch {
+		case len(h) < limit:
+			heap.Push(&h, t)
+		case t.count > h[0].count:
 			h[0] = t
-			down(0)
+			heap.Fix(&h, 0)
 		}
 	}
 	sort.Slice(h, func(i, j int) bool { return h[i].count > h[j].count })
 	return h
+}
+
+// tallyHeap is a min-heap of tallies by count (container/heap).
+type tallyHeap []subpathTally
+
+func (h tallyHeap) Len() int           { return len(h) }
+func (h tallyHeap) Less(i, j int) bool { return h[i].count < h[j].count }
+func (h tallyHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *tallyHeap) Push(x any)        { *h = append(*h, x.(subpathTally)) }
+func (h *tallyHeap) Pop() any {
+	old := *h
+	t := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return t
 }
 
 // buildPathHopIndex rebuilds byPathHop: raw wire hops from every packet's
