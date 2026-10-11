@@ -11,13 +11,14 @@ import (
 // only to collect its non-empty pubkeys. Decoding into []*string allocated
 // a string and a pointer per hop plus two slices: about 210MB over one
 // startup on a busy week. resolvedPubkeysFromJSON reads the usual array in
-// place: one string per pubkey and the result.
+// place, and a pubkey it has seen before costs nothing: only the result is
+// allocated.
 func TestResolvedPubkeysFromJSONAllocations(t *testing.T) {
 	pk := strings.Repeat("ab", 32)
 	rp := `["` + pk + `",null,"` + strings.Repeat("cd", 32) + `",null,"` + strings.Repeat("ef", 32) + `"]`
-	// three pubkeys + the result slice
-	if n := testing.AllocsPerRun(100, func() { _ = resolvedPubkeysFromJSON(rp) }); n > 4 {
-		t.Fatalf("resolvedPubkeysFromJSON allocates %.0f times for 3 pubkeys, want at most 4", n)
+	_ = resolvedPubkeysFromJSON(rp) // first sight keeps one copy of each
+	if n := testing.AllocsPerRun(100, func() { _ = resolvedPubkeysFromJSON(rp) }); n > 1 {
+		t.Fatalf("resolvedPubkeysFromJSON allocates %.0f times for 3 known pubkeys, want at most 1 (the result)", n)
 	}
 }
 
