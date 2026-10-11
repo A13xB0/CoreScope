@@ -17,6 +17,7 @@
 .cc-cap { flex: 1 1 140px; max-width: 280px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
 .cc-cap div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 .cc-conn-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.cc-conn-actions [hidden], .cc-row [hidden] { display: none; }
 .cc-note { flex-basis: 100%; margin: 0; font-size: var(--fs-sm, 13px); color: var(--text-muted); }
 #ccConnError { color: var(--palette-red-500, #ef4444); }
 
@@ -88,3 +89,11 @@
   .cc-go { min-height: 48px; }
   .cc-dialog { margin: auto 0 0; width: 100%; max-width: none; border-radius: 16px 16px 0 0; }
 }
+
+/* Plain buttons on this page (the app styles .btn-primary only). */
+.cc-page .btn:not(.btn-primary):not(.cc-danger) { font: inherit; padding: 8px 14px; min-height: 40px; border-radius: 8px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); cursor: pointer; }
+.cc-page .btn:not(.btn-primary):not(.cc-danger):hover:not(:disabled) { border-color: var(--accent); }
+.cc-page .btn:disabled { opacity: .55; cursor: not-allowed; }
+.cc-page .cc-danger { font: inherit; padding: 8px 14px; min-height: 40px; border-radius: 8px; border: 0; cursor: pointer; }
+.cc-dialog .btn { font: inherit; padding: 10px 16px; min-height: 44px; border-radius: 10px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); cursor: pointer; }
+.cc-dialog .cc-danger { border: 0; background: var(--palette-red-600, #dc2626); color: #fff; }

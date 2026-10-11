@@ -28,10 +28,13 @@
     if (s.indexOf('companion') >= 0 || s.indexOf('chat') >= 0) return 'companion';
     return null;
   }
-  function roleColour(role) {
-    var v = getComputedStyle(document.documentElement).getPropertyValue('--role-' + role).trim();
-    return v || '#888';
+  // cssColour resolves a theme variable to a value: the map draws on a
+  // canvas, which cannot resolve var().
+  function cssColour(name, fallback) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
   }
+  function roleColour(role) { return cssColour('--role-' + role, '#888'); }
   function heardAt(n) {
     var t = Date.parse(n.last_heard || n.last_seen || '');
     return isNaN(t) ? 0 : t / 1000;
@@ -319,7 +322,7 @@
   function drawShape(shape) {
     st.shapeLayer.clearLayers();
     if (!shape) return;
-    var colour = st.tab === 'manage' ? 'var(--palette-red-500, #ef4444)' : 'var(--accent, #3b82f6)';
+    var colour = st.tab === 'manage' ? cssColour('--palette-red-500', '#ef4444') : cssColour('--accent', '#3b82f6');
     var o = { color: colour, weight: 2, fillOpacity: 0.12, dashArray: st.tab === 'manage' ? '6 4' : null };
     if (shape.kind === 'circle') L.circle(shape.center, Object.assign({ radius: shape.radiusM }, o)).addTo(st.shapeLayer);
     else if (shape.kind === 'rect') L.rectangle(shape.bounds, o).addTo(st.shapeLayer);
@@ -614,7 +617,7 @@
         if (!p) return;
         var role = CL.typeToRole(c.type);
         L.circleMarker([p.lat, p.lon], {
-          radius: 5, weight: chosen[c.key] ? 3 : 1.5, color: chosen[c.key] ? 'var(--palette-red-400, #f87171)' : '#fff',
+          radius: 5, weight: chosen[c.key] ? 3 : 1.5, color: chosen[c.key] ? cssColour('--palette-red-400', '#f87171') : '#fff',
           fillColor: roleColour(role), fillOpacity: 0.95,
         }).bindTooltip(escapeHtml(c.name || c.key.slice(0, 8))).addTo(st.markers);
         n++;
