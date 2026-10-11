@@ -1871,6 +1871,12 @@ func (s *PacketStore) indexByNode(tx *StoreTx) bool {
 	return foundNew
 }
 
+// newNodeSets returns an empty nodeHashes.
+func newNodeSets() map[string]map[string]bool { return make(map[string]map[string]bool) }
+
+// nodeHasTx reports whether tx is listed under pubkey.
+func (s *PacketStore) nodeHasTx(pubkey string, tx *StoreTx) bool { return s.nodeHashes[pubkey][tx.Hash] }
+
 // addToByNode adds tx to byNode[pubkey] with dedup via nodeHashes.
 // Returns true if this is a genuinely new node (pubkey not seen before).
 func (s *PacketStore) addToByNode(tx *StoreTx, pubkey string) bool {
