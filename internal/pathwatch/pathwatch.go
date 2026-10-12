@@ -42,7 +42,9 @@ type Options struct {
 	WindowDays int     // days shown [30]
 	BaseDays   int     // days a share's usual is taken from [14]
 	MinPassed  int     // packets passing A a day needs before its share means anything [10]
-	MinReached int     // crossings needed before routes are compared [10]
+	MinReached int     // crossings needed in the week before a day for routes to be compared [10]
+	MinCount   int     // packets a repeater's change must rest on [10]
+	MinRoute   int     // crossings a day needs before its main route is compared [30]
 	DropFrom   float64 // a repeater carrying at least this share... [0.2]
 	DropTo     float64 // ...that falls under this has dropped out [0.05]
 	RiseFrom   float64 // a repeater carrying under this share... [0.05]
@@ -68,6 +70,8 @@ func (o Options) withDefaults() Options {
 	di(&o.BaseDays, 14)
 	di(&o.MinPassed, 10)
 	di(&o.MinReached, 10)
+	di(&o.MinCount, 10)
+	di(&o.MinRoute, 30)
 	df(&o.DropFrom, 0.2)
 	df(&o.DropTo, 0.05)
 	df(&o.RiseFrom, 0.05)
@@ -86,9 +90,10 @@ const (
 	KindNewRepeater   = "new-repeater"   // started carrying, and is new
 	KindSharing       = "sharing"        // started carrying, and is not new
 	KindRouteChanged  = "route-changed"  // the main route moved
+	KindRouteShare    = "route-share"    // the main route stayed but carries a different share
 )
 
-var kindRank = map[string]int{KindRepeaterQuiet: 0, KindRerouted: 1, KindNewRepeater: 2, KindSharing: 3, KindRouteChanged: 4}
+var kindRank = map[string]int{KindRepeaterQuiet: 0, KindRerouted: 1, KindNewRepeater: 2, KindSharing: 3, KindRouteChanged: 4, KindRouteShare: 5}
 
 // Day is one 24-hour bucket.
 type Day struct {
@@ -313,10 +318,13 @@ func w7changes(b []bucket, i int, start func(int) time.Time, share func(int) flo
 		}
 	}
 	sort.Strings(keys)
+	// What the day's crossings would have been at the week's share: a day
+	// with few crossings because the path broke still counts its expected.
+	expected := math.Max(float64(len(day)), shareWas*float64(b[i].passed))
 	for _, pk := range keys {
 		w, n := was[pk], now[pk]
 		switch {
-		case w >= o.DropFrom && n < o.DropTo:
+		case w >= o.DropFrom && n < o.DropTo && w*expected >= float64(o.MinCount):
 			kind := KindRerouted
 			if act != nil {
 				var usual []float64
@@ -328,7 +336,7 @@ func w7changes(b []bucket, i int, start func(int) time.Time, share func(int) flo
 				}
 			}
 			out = append(out, Change{Day: from, Kind: kind, Node: pk, Was: w, Now: n, ShareWas: shareWas, ShareNow: shareNow})
-		case w < o.RiseFrom && n >= o.RiseTo && len(day) >= o.MinReached:
+		case w < o.RiseFrom && n >= o.RiseTo && n*float64(len(day)) >= float64(o.MinCount):
 			kind := KindSharing
 			if act != nil {
 				if first, ok := act.FirstHeard(pk); ok && to.Sub(first) <= time.Duration(o.NewDays)*24*time.Hour {
@@ -338,11 +346,14 @@ func w7changes(b []bucket, i int, start func(int) time.Time, share func(int) flo
 			out = append(out, Change{Day: from, Kind: kind, Node: pk, Was: w, Now: n, ShareWas: shareWas, ShareNow: shareNow})
 		}
 	}
-	if len(out) == 0 && len(day) >= o.MinReached {
+	if len(out) == 0 && len(day) >= o.MinRoute && len(base) >= o.MinRoute {
 		mw, sw := mainRoute(base)
 		mn, sn := mainRoute(day)
-		if mw != mn || math.Abs(sw-sn) >= o.MainMove {
+		switch {
+		case mw != mn:
 			out = append(out, Change{Day: from, Kind: KindRouteChanged, Was: sw, Now: sn, From: splitRoute(mw), To: splitRoute(mn), ShareWas: shareWas, ShareNow: shareNow})
+		case math.Abs(sw-sn) >= o.MainMove:
+			out = append(out, Change{Day: from, Kind: KindRouteShare, Was: sw, Now: sn, From: splitRoute(mw), To: splitRoute(mn), ShareWas: shareWas, ShareNow: shareNow})
 		}
 	}
 	return out

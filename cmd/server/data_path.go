@@ -56,7 +56,7 @@ type DataPathRoute struct {
 // DataPathChange is a change of route, said in words.
 type DataPathChange struct {
 	Day      string         `json:"day"`
-	Kind     string         `json:"kind"` // repeater-quiet, rerouted, new-repeater, sharing, route-changed
+	Kind     string         `json:"kind"` // repeater-quiet, rerouted, new-repeater, sharing, route-changed, route-share
 	Node     *DataPathNode  `json:"node,omitempty"`
 	Was      float64        `json:"was"`
 	Now      float64        `json:"now"`
@@ -470,6 +470,12 @@ func changeText(c DataPathChange) string {
 		return fmt.Sprintf("%s now carries %s, up from %s. It was first heard recently: a new repeater sharing the load.%s", name, pct(c.Now), pct(c.Was), through)
 	case pathwatch.KindSharing:
 		return fmt.Sprintf("%s now carries %s, up from %s, sharing the load.%s", name, pct(c.Now), pct(c.Was), through)
+	case pathwatch.KindRouteShare:
+		way := "down"
+		if c.Now > c.Was {
+			way = "up"
+		}
+		return fmt.Sprintf("The main route (%s) carried %s of what got through, %s from %s.%s", viaText(c.To), pct(c.Now), way, pct(c.Was), through)
 	case pathwatch.KindRouteChanged:
 		return fmt.Sprintf("The main route moved from %s to %s.%s", viaText(c.From), viaText(c.To), through)
 	}

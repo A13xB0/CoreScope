@@ -805,7 +805,7 @@
   var repeaters = null, repeaterLoad = null, pathNames = {}, pathCache = {};
   var FLAGS = {
     'repeater-quiet': ['Repeater quiet', 'bad'], rerouted: ['Rerouted', ''], 'new-repeater': ['New repeater', 'good'],
-    sharing: ['Sharing the load', 'good'], 'route-changed': ['Route changed', 'warn']
+    sharing: ['Sharing the load', 'good'], 'route-changed': ['Route changed', 'warn'], 'route-share': ['Main route share', 'warn']
   };
   function loadRepeaters() {
     if (repeaters) return Promise.resolve(repeaters);
