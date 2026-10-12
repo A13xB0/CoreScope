@@ -224,6 +224,11 @@
     var body = document.getElementById('hBody');
     if (!body) return;
     var net = st.networkUsual ? Math.round(st.networkNow / st.networkUsual * 100) : null;
+    // Repeaters silent for over a week are long gone or moved: kept apart,
+    // folded away, so the current ones stay readable.
+    var weekAgo = Date.parse(st.hour) - 7 * 86400e3;
+    var current = st.open.filter(function (i) { return Date.parse(i.start) >= weekAgo; });
+    var long = st.open.filter(function (i) { return Date.parse(i.start) < weekAgo; });
     var quietObs = st.observers.filter(function (o) { return o.quiet; });
     var worse = st.routes.filter(function (r) { return judgeAny(r).text === 'Worse'; });
     document.getElementById('hSub').textContent = st.judged + ' repeaters judged' + (st.tiers ? ' (' + st.tiers.core + ' core and ' + st.tiers.local + ' local)' : '') + ' · last complete hour ' + when(st.hour) +
@@ -231,16 +236,19 @@
     var html = (st.feed && st.feed.down ? '<div class="h-card h-feed" id="hFeed" role="alert"><b>The packet feed has stopped</b> since ' + esc(when(st.feed.since)) +
       '. Every observer went quiet at once, so the problem is the feed, not the mesh, and nothing is judged until it is back.</div>' : '') +
       '<div class="h-stats">' +
-      stat('hQuiet', st.open.length, st.open.length === 1 ? 'repeater gone quiet' : 'repeaters gone quiet', st.open.length > 0) +
+      stat('hQuiet', current.length, current.length === 1 ? 'repeater gone quiet' : 'repeaters gone quiet', current.length > 0) +
       stat('hNet', net == null ? '—' : net + '%', 'all traffic, last ' + st.slotHours + ' h vs usual', net != null && net < 50) +
       stat('hObs', quietObs.length, quietObs.length === 1 ? 'observer quiet' : 'observers quiet', quietObs.length > 0) +
       stat('hRoutes', worse.length, worse.length === 1 ? 'route worse than usual' : 'routes worse than usual', worse.length > 0) +
       '</div>';
     html += '<div class="h-grid">' +
       '<section class="h-card"><h3>Gone quiet</h3><div class="h-list" id="hOpen">' +
-        (st.open.length ? st.open.map(function (i) { return incidentCard(i, true); }).join('') :
-          '<p class="h-empty">Nothing has gone quiet. Every judged repeater is passing traffic and sending adverts as usual.</p>') +
-      '</div><h3 class="h-gap">Back recently</h3><div class="h-list" id="hBack">' +
+        (current.length ? current.map(function (i) { return incidentCard(i, true); }).join('') :
+          '<p class="h-empty">Nothing has gone quiet this week. Every judged repeater is passing traffic and sending adverts as usual.</p>') +
+      '</div>' +
+      (long.length ? '<details class="h-long" id="hLong"><summary>Silent for over a week (' + long.length + ')</summary><div class="h-list">' +
+        long.map(function (i) { return incidentCard(i, true); }).join('') + '</div></details>' : '') +
+      '<h3 class="h-gap">Back recently</h3><div class="h-list" id="hBack">' +
         (st.recent.length ? st.recent.slice(0, 8).map(function (i) { return incidentCard(i, false); }).join('') : '<p class="h-empty">None in the window.</p>') +
       '</div></section>' +
       '<section class="h-card"><h3>Where</h3><div class="h-map" id="hMap"></div><p class="h-sub">Red: gone quiet. Grey: back recently.</p></section>' +

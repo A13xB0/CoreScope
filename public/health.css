@@ -77,3 +77,6 @@
 @media (max-width: 640px) {
   .h-events li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
+.h-long { margin-top: 12px; }
+.h-long summary { cursor: pointer; color: var(--text-muted); font-size: var(--fs-sm, 13px); padding: 6px 0; }
+.h-long .h-list { margin-top: 8px; }
