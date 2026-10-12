@@ -749,3 +749,35 @@ func TestANewRepeaterIsJudgedOnTheDaysItHasBeenOnAir(t *testing.T) {
 		t.Fatalf("open %+v, want new flagged", st.Open)
 	}
 }
+
+// Flagged as not relaying while its adverts still came, a repeater whose
+// adverts then stop too has gone quiet altogether, and says so.
+func TestNotRelayingTurnsQuietWhenTheAdvertsStopToo(t *testing.T) {
+	f := newFeed(t)
+	stop, mute := int64(10*day), int64(10*day+8)
+	for h := int64(0); h < 11*day; h++ {
+		rate := 30
+		if h >= stop {
+			rate = 0
+		}
+		adv := []string{"nb1", "nb2"}
+		if h < mute {
+			adv = append(adv, "deaf")
+		}
+		f.hour(h, "obs1", map[string]int{"deaf": rate, "nb1": 30, "nb2": 30}, adv, 60)
+		f.hour(h, "obs2", map[string]int{"deaf": rate / 3, "nb1": 10, "nb2": 10}, adv, 60)
+		for i := 0; i < 20; i++ {
+			f.tx++
+			path := []string{"nb1", "deaf", "nb2"}
+			if h >= stop {
+				path = []string{"nb1", "nb2"}
+			}
+			f.w.AddObservation(f.tx, f.start+h, "obs1", path)
+		}
+		f.w.Evaluate(f.start + h)
+	}
+	st := f.w.Status()
+	if len(st.Open) != 1 || st.Open[0].Kind != KindQuiet || st.Open[0].Start != f.start+stop {
+		t.Fatalf("open %+v, want deaf quiet since hour %d", st.Open, stop)
+	}
+}
