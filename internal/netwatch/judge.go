@@ -22,6 +22,7 @@ const (
 	surpriseChance      = 1e-4
 	notRelayingChance   = 1e-6
 	notRelayingMinUsual = 30
+	notRelayingHours    = 3
 )
 
 // judgeable says whether a slot that usually holds this many packets could

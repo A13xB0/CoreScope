@@ -164,6 +164,7 @@ type node struct {
 	adverts ring
 	byObs   map[string]ring
 	open    *Incident
+	gray    int // consecutive hours it has looked like it stopped relaying
 }
 
 type corridorState struct {
@@ -785,6 +786,8 @@ func (w *Watch) Evaluate(t int64) {
 			}
 			continue
 		}
+		gray := nd.gray
+		nd.gray = 0 // kept only by an hour that still looks like it
 		// Cheap screen first: most repeaters are nowhere near quiet.
 		if w.feed.Down || usual == 0 || float64(now) > 0.5*float64(usual) || !w.judged(pk) {
 			continue
@@ -803,9 +806,13 @@ func (w *Watch) Evaluate(t int64) {
 		switch {
 		case known && silent:
 			inc.Kind, inc.Start = KindQuiet, last+1
-		case known && p < notRelayingChance && m.usual >= notRelayingMinUsual && m.observers >= 2 &&
+		case known && p < notRelayingChance && usual >= notRelayingMinUsual && m.observers >= 2 &&
 			w.advertsDuring(nd, t, gap) && w.neighboursCarryOn(pk, t, quietObs):
-			inc.Kind, inc.Start = KindNotRelaying, w.quietSince(nd.relays, t, usual)
+			// One sign only, so it must hold for notRelayingHours in a row.
+			if nd.gray = gray + 1; nd.gray < notRelayingHours {
+				continue
+			}
+			inc.Kind, inc.Start = KindNotRelaying, w.quietSince(nd.relays, t-int64(nd.gray)+1, usual)
 		default:
 			continue
 		}
