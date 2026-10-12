@@ -432,12 +432,19 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 					if w.once(h, seenKey{a: "\x00reach-den", b: key, tx: tx}) {
 						cd.reach.den.add(w, h, 1)
 					}
-					w.countVia(cd.reach.denVia, h, tx, "\x00cvia-den"+key, origin, path)
-					if w.pathReaches(path, zones[1]) {
+					// Only the path up to where it first enters the far zone
+					// says anything about the crossing; it floods on past it.
+					at := w.pathEnters(path, zones[1])
+					seg := path
+					if at >= 0 {
+						seg = path[:at+1]
+					}
+					w.countVia(cd.reach.denVia, h, tx, "\x00cvia-den"+key, origin, seg)
+					if at >= 0 {
 						if w.once(h, seenKey{a: "\x00reach-num", b: key, tx: tx}) {
 							cd.reach.num.add(w, h, 1)
 						}
-						w.countVia(cd.reach.via, h, tx, "\x00cvia-num"+key, origin, path)
+						w.countVia(cd.reach.via, h, tx, "\x00cvia-num"+key, origin, seg)
 					}
 				}
 			}
@@ -458,32 +465,51 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 		if w.once(h, seenKey{a: "\x00rreach-den", b: key, tx: tx}) {
 			r.reach.den.add(w, h, 1)
 		}
-		w.countVia(r.reach.denVia, h, tx, "\x00rvia-den"+key, origin, path)
-		reached := passes(path, r.From, r.To)
-		if origin == r.From {
-			for _, pk := range path {
-				reached = reached || pk == r.To
-			}
-		}
+		// The stretch from From to To is what the route is about.
+		seg, reached := routeStretch(path, origin, r.From, r.To)
+		w.countVia(r.reach.denVia, h, tx, "\x00rvia-den"+key, origin, seg)
 		if reached {
 			if w.once(h, seenKey{a: "\x00rreach-num", b: key, tx: tx}) {
 				r.reach.num.add(w, h, 1)
 			}
-			w.countVia(r.reach.via, h, tx, "\x00rvia-num"+key, origin, path)
+			w.countVia(r.reach.via, h, tx, "\x00rvia-num"+key, origin, seg)
 		}
 	}
 }
 
-func (w *Watch) pathReaches(path []string, z Zone) bool {
-	for _, pk := range path {
+func (w *Watch) pathReaches(path []string, z Zone) bool { return w.pathEnters(path, z) >= 0 }
+
+// pathEnters is the index of the first repeater on path inside z, or -1.
+func (w *Watch) pathEnters(path []string, z Zone) int {
+	for i, pk := range path {
 		if pk == "" {
 			continue
 		}
 		if lat, lon, ok := w.loc.Position(pk); ok && z.contains(lat, lon) {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
+}
+
+// routeStretch is the part of path from from (or its start, when the packet
+// came from from) up to to, and whether it got there.
+func routeStretch(path []string, origin, from, to string) ([]string, bool) {
+	start := -1
+	if origin == from {
+		start = 0
+	}
+	for i, pk := range path {
+		if start < 0 && pk == from {
+			start = i
+		} else if start >= 0 && pk == to {
+			return path[start : i+1], true
+		}
+	}
+	if start < 0 {
+		return nil, false
+	}
+	return path[start:], false
 }
 
 func (w *Watch) addObservation(tx, h int64, obs string, path []string) {
