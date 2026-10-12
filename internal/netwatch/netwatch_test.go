@@ -881,3 +881,96 @@ func TestACorridorWithATargetSaysHowFastItIsBurning(t *testing.T) {
 		t.Fatalf("reach %+v, want burning fast against 0.7", r)
 	}
 }
+
+// A repeater whose signal at an observer has fallen steadily over the last
+// days is reported, before it fails; a steady one is not.
+func TestSignalDriftIsReported(t *testing.T) {
+	w := New(Options{Days: 14, WindowHours: 20 * day}, nil)
+	for h := int64(0); h < 20*day; h++ {
+		w.Evaluate(1008 + h)
+		for i := 0; i < 3; i++ {
+			snr := 6.0
+			if d := h / day; d >= 16 {
+				snr = 6 - 3*float64(d-15) // 3, 0, -3, -6
+			}
+			w.AddSignal(1008+h, "obs1", "fading", snr)
+			w.AddSignal(1008+h, "obs1", "steady", 4)
+		}
+	}
+	w.Evaluate(1008 + 20*day)
+	st := w.Status()
+	if len(st.Drift) != 1 || st.Drift[0].Node != "fading" || st.Drift[0].Observer != "obs1" || st.Drift[0].Before < 5.5 || st.Drift[0].Now > -2 {
+		t.Fatalf("drift %+v, want fading at obs1 from about 6 dB to about -3 dB", st.Drift)
+	}
+}
+
+// Adverts carry the time they were sent, so the watch knows how often a
+// repeater adverts and what share of them reach any observer.
+func TestAdvertTimestampsGiveDelivery(t *testing.T) {
+	w := New(Options{Days: 7, WindowHours: 12 * day}, nil)
+	var id int64
+	for h := int64(0); h < 12*day; h++ {
+		for half := int64(0); half < 2; half++ { // every 30 minutes
+			sent := (1008+h)*3600 + half*1800
+			if h >= 11*day && half == 1 {
+				continue // on the last day only half are heard
+			}
+			id++
+			w.AddAdvertObservation(id, 1008+h, "o", "r1", []string{"x"})
+			w.AddAdvertSent("r1", sent)
+		}
+		w.Evaluate(1008 + h)
+	}
+	s := w.NodeSeries("r1", 1008+12*day-1)
+	if s.AdvertEveryMin != 30 {
+		t.Errorf("advert interval %d min, want 30", s.AdvertEveryMin)
+	}
+	if n := len(s.AdvertDelivery); n == 0 || s.AdvertDelivery[n-1] < 0.45 || s.AdvertDelivery[n-1] > 0.55 || s.AdvertDelivery[n-2] < 0.95 {
+		t.Errorf("delivery %v, want about 1 then 0.5 on the last day", s.AdvertDelivery)
+	}
+}
+
+// What happened, in order: incidents opening and closing, steps, reroutes.
+// An incident also lists the corridors and routes it explains.
+func TestTimelineAndWhatAnIncidentAffects(t *testing.T) {
+	pos := grid{"n1": {57.5, -4.2}, "mid": {57.4, -4.0}, "keir": {57.17, -2.3}, "goyle": {56.93, -2.52}, "s1": {55.9, -3.2}}
+	w := New(Options{Days: 14, WindowHours: 20 * day, Corridors: reachZones}, pos)
+	var id int64
+	for h := int64(0); h < 20*day; h++ {
+		if h < 18*day {
+			reachFeed(w, &id, 1008+h, "n1", 10, 0.9, "keir", "")
+			for i := 0; i < 30; i++ { // keir's own traffic, so it is judged
+				id++
+				w.AddObservation(id, 1008+h, "o", []string{"keir", "s1"})
+			}
+			if h%2 == 0 {
+				id++
+				w.AddAdvertObservation(id, 1008+h, "o", "keir", []string{"s1"})
+			}
+		} else {
+			reachFeed(w, &id, 1008+h, "n1", 10, 0.3, "goyle", "")
+		}
+		w.Evaluate(1008 + h)
+	}
+	st := w.Status()
+	if len(st.Open) != 1 || st.Open[0].Node != "keir" {
+		t.Fatalf("open %+v", st.Open)
+	}
+	if a := st.Open[0].Affects; len(a) != 1 || a[0] != "H and C: Highlands → Central belt" {
+		t.Errorf("keir affects %v", a)
+	}
+	kinds := map[string]bool{}
+	for _, e := range st.Events {
+		kinds[e.Kind] = true
+	}
+	for _, k := range []string{"quiet", "step", "reroute"} {
+		if !kinds[k] {
+			t.Errorf("timeline %+v has no %s", st.Events, k)
+		}
+	}
+	for i := 1; i < len(st.Events); i++ {
+		if st.Events[i].Hour > st.Events[i-1].Hour {
+			t.Fatalf("timeline not newest first: %+v", st.Events)
+		}
+	}
+}
