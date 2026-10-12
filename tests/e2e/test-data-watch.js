@@ -185,6 +185,16 @@ const stored = (w) => JSON.parse(w.localStorage.getItem('corescope-data-dashboar
     assert.strictEqual(X.validateDashboard(good), '');
   });
 
+  await test('a watch can keep its flag for two weeks, and asks for it', async () => {
+    const two = JSON.parse(JSON.stringify(LINKS));
+    two.id = 'two'; two.panels[0].query = { flagDays: 14 };
+    LIBRARY.dashboards.push(two);
+    try {
+      const { posted } = await setup('#/data?dash=two');
+      assert.strictEqual(posted[0].flagDays, 14, JSON.stringify(posted[0]));
+    } finally { LIBRARY.dashboards.pop(); }
+  });
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
 })();

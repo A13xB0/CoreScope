@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -93,9 +94,10 @@ type DataPathPair struct {
 
 // DataPathsRequest is the body of POST /api/data/paths.
 type DataPathsRequest struct {
-	Window string         `json:"window"`
-	Basis  string         `json:"basis"`
-	Pairs  []DataPathPair `json:"pairs"`
+	Window   string         `json:"window"`
+	Basis    string         `json:"basis"`
+	FlagDays int            `json:"flagDays,omitempty"` // how long a change stays a flag (default 7, at most 21)
+	Pairs    []DataPathPair `json:"pairs"`
 }
 
 // DataPathsResponse answers it, in the same order.
@@ -113,19 +115,31 @@ type pathCache struct {
 	m  map[string]pathCached
 }
 
-var pathCaches sync.Map // *PacketStore -> *pathCache
+var pathCaches sync.Map // *pathIndex -> *pathCache
 
 func (s *Server) pathCacheFor() *pathCache {
-	c, _ := pathCaches.LoadOrStore(s.store, &pathCache{m: map[string]pathCached{}})
+	c, _ := pathCaches.LoadOrStore(s.paths, &pathCache{m: map[string]pathCached{}})
 	return c.(*pathCache)
 }
 
 func (s *Server) pathOr404(w http.ResponseWriter) bool {
-	if !s.cfg.DataEnabled() || s.store == nil {
+	if !s.cfg.DataEnabled() || s.paths == nil {
 		http.Error(w, "path watch is part of the Data tab (data.enabled in config.json)", http.StatusNotFound)
 		return false
 	}
+	if !s.paths.isReady() {
+		http.Error(w, "path watch is still reading its history; try again in a minute", http.StatusServiceUnavailable)
+		return false
+	}
 	return true
+}
+
+func pathFlagDays(v string) (int, bool) {
+	if v == "" {
+		return 7, true
+	}
+	n, err := strconv.Atoi(v)
+	return n, err == nil && n >= 1 && n <= 21
 }
 
 func pathWindowDays(window string) (int, bool) {
@@ -161,12 +175,13 @@ func (s *Server) handleDataPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	days, ok := pathWindowDays(q.Get("window"))
+	flag, okFlag := pathFlagDays(q.Get("flagDays"))
 	basis := q.Get("basis")
-	if !ok || (basis != "" && basis != "all" && basis != "adverts") {
-		http.Error(w, "window must be 24h, 7d or 30d and basis all or adverts", http.StatusBadRequest)
+	if !ok || !okFlag || (basis != "" && basis != "all" && basis != "adverts") {
+		http.Error(w, "window must be 24h, 7d or 30d, flagDays 1 to 21 and basis all or adverts", http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, s.pathWatch(from, to, q.Get("window"), days, basis == "adverts"))
+	writeJSON(w, s.pathWatch(from, to, q.Get("window"), days, flag, basis == "adverts"))
 }
 
 // handleDataPaths is POST /api/data/paths: several pairs in one go, for a
@@ -181,6 +196,12 @@ func (s *Server) handleDataPaths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	days, ok := pathWindowDays(req.Window)
+	if req.FlagDays == 0 {
+		req.FlagDays = 7
+	}
+	if req.FlagDays < 1 || req.FlagDays > 21 {
+		ok = false
+	}
 	if !ok || (req.Basis != "" && req.Basis != "all" && req.Basis != "adverts") || len(req.Pairs) == 0 || len(req.Pairs) > pathMaxPairs {
 		http.Error(w, fmt.Sprintf("window must be 24h, 7d or 30d, basis all or adverts, and 1 to %d pairs", pathMaxPairs), http.StatusBadRequest)
 		return
@@ -192,14 +213,14 @@ func (s *Server) handleDataPaths(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		out.Paths = append(out.Paths, s.pathWatch(from, to, req.Window, days, req.Basis == "adverts"))
+		out.Paths = append(out.Paths, s.pathWatch(from, to, req.Window, days, req.FlagDays, req.Basis == "adverts"))
 	}
 	writeJSON(w, out)
 }
 
 // pathWatch answers one pair, from the cache when it is fresh.
-func (s *Server) pathWatch(from, to, window string, days int, adverts bool) DataPathResponse {
-	key := fmt.Sprint(from, to, days, adverts)
+func (s *Server) pathWatch(from, to, window string, days, flagDays int, adverts bool) DataPathResponse {
+	key := fmt.Sprint(from, to, days, flagDays, adverts)
 	c := s.pathCacheFor()
 	c.mu.Lock()
 	if hit, ok := c.m[key]; ok && time.Since(hit.at) < pathCacheFor {
@@ -209,10 +230,15 @@ func (s *Server) pathWatch(from, to, window string, days int, adverts bool) Data
 	c.mu.Unlock()
 
 	now := time.Now().UTC()
-	since := now.Add(-time.Duration(days+pathBaseDays+1) * 24 * time.Hour)
-	passed, reached := s.store.pathPackets(from, to, since, adverts)
-	act := &storeActivity{s: s.store, db: s.db, relays: map[string][]time.Time{}}
-	res := pathwatch.Analyse(pathwatch.Input{Now: now, Passed: passed, Reached: reached}, act, pathwatch.Options{WindowDays: days, BaseDays: pathBaseDays})
+	back := max(days+pathBaseDays, flagDays+14) + 1
+	since := now.Add(-time.Duration(back) * 24 * time.Hour)
+	passed, crossings := s.paths.packets(from, to, since, adverts)
+	reached := make([]pathwatch.Crossing, len(crossings))
+	for i, c := range crossings {
+		reached[i] = pathwatch.Crossing{At: c.at, Route: c.route}
+	}
+	act := &indexActivity{idx: s.paths, db: s.db, relays: map[string][]time.Time{}}
+	res := pathwatch.Analyse(pathwatch.Input{Now: now, Passed: passed, Reached: reached}, act, pathwatch.Options{WindowDays: days, BaseDays: pathBaseDays, FlagDays: flagDays})
 	resp := s.pathResponse(from, to, window, adverts, res)
 
 	c.mu.Lock()
@@ -239,98 +265,17 @@ func parseTxTime(v string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// pathPackets returns when each packet that passed from (or was an advert
-// from it) since since was first heard, and the ones whose resolved path then
-// reached to, with the repeaters between the two.
-func (s *PacketStore) pathPackets(from, to string, since time.Time, advertsOnly bool) ([]time.Time, []pathwatch.Crossing) {
-	var passed []time.Time
-	snaps := map[int][]rpObs{}
-	at := map[int]time.Time{}
-	s.mu.RLock()
-	inTo := make(map[int]bool, len(s.byPathHop[to]))
-	for _, tx := range s.byPathHop[to] {
-		inTo[tx.ID] = true
-	}
-	seen := map[int]bool{}
-	consider := func(tx *StoreTx) {
-		if seen[tx.ID] {
-			return
-		}
-		seen[tx.ID] = true
-		if advertsOnly && (tx.PayloadType == nil || *tx.PayloadType != advertPayload) {
-			return
-		}
-		t, ok := parseTxTime(tx.FirstSeen)
-		if !ok || t.Before(since) {
-			return
-		}
-		passed = append(passed, t)
-		if inTo[tx.ID] {
-			snaps[tx.ID] = snapshotRPObs(tx)
-			at[tx.ID] = t
-		}
-	}
-	for _, tx := range s.byPathHop[from] {
-		consider(tx)
-	}
-	for _, tx := range s.byNode[from] { // its own adverts
-		if tx.PayloadType != nil && *tx.PayloadType == advertPayload && strings.Contains(strings.ToLower(tx.DecodedJSON), from) {
-			consider(tx)
-		}
-	}
-	s.mu.RUnlock()
-
-	paths := s.loadCanonicalResolvedPaths(snaps)
-	var reached []pathwatch.Crossing
-	for id, rp := range paths {
-		path := make([]string, len(rp))
-		for i, p := range rp {
-			if p != nil {
-				path[i] = strings.ToLower(*p)
-			}
-		}
-		ia := -1 // an advert from `from` starts before its path
-		for i, pk := range path {
-			if pk == from {
-				ia = i
-				break
-			}
-		}
-		for ib := ia + 1; ib < len(path); ib++ {
-			if path[ib] != to {
-				continue
-			}
-			route := []string{}
-			for _, pk := range path[ia+1 : ib] {
-				if pk != "" {
-					route = append(route, pk)
-				}
-			}
-			reached = append(reached, pathwatch.Crossing{At: at[id], Route: route})
-			break
-		}
-	}
-	return passed, reached
-}
-
-// storeActivity tells pathwatch what a repeater does beyond the path.
-type storeActivity struct {
-	s      *PacketStore
+// indexActivity tells pathwatch what a repeater does beyond the path.
+type indexActivity struct {
+	idx    *pathIndex
 	db     *DB
 	relays map[string][]time.Time // sorted, per repeater, read once per request
 }
 
-func (a *storeActivity) Relays(pk string, from, to time.Time) int {
+func (a *indexActivity) Relays(pk string, from, to time.Time) int {
 	ts, ok := a.relays[pk]
 	if !ok {
-		a.s.mu.RLock()
-		for _, tx := range a.s.byPathHop[pk] {
-			if t, ok := parseTxTime(tx.FirstSeen); ok {
-				ts = append(ts, t)
-			}
-		}
-		a.s.mu.RUnlock()
-		sort.Slice(ts, func(i, j int) bool { return ts[i].Before(ts[j]) })
+		ts = a.idx.relays(pk)
 		a.relays[pk] = ts
 	}
 	lo := sort.Search(len(ts), func(i int) bool { return !ts[i].Before(from) })
@@ -338,7 +283,7 @@ func (a *storeActivity) Relays(pk string, from, to time.Time) int {
 	return hi - lo
 }
 
-func (a *storeActivity) FirstHeard(pk string) (time.Time, bool) {
+func (a *indexActivity) FirstHeard(pk string) (time.Time, bool) {
 	if a.db == nil || a.db.conn == nil {
 		return time.Time{}, false
 	}

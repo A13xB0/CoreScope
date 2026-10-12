@@ -35,6 +35,7 @@ type Server struct {
 	hub       *Hub
 	store     *PacketStore     // in-memory packet store (nil = fallback to DB)
 	data      *dataService     // the Data tab's index (nil = tab off)
+	paths     *pathIndex       // path watch history (nil = Data tab off)
 	netwatch  *netWatchService // Health page; nil when netWatch is off
 	configDir string           // directory containing config.json (for write-back via PUT /api/config/geo-filter)
 	startedAt time.Time

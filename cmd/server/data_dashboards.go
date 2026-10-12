@@ -49,6 +49,8 @@ type DashboardQuery struct {
 	To   string `json:"to,omitempty"`
 	// Basis is "adverts" to count only adverts on a watch (steadier), else all.
 	Basis string `json:"basis,omitempty"`
+	// FlagDays is how long a route change stays a watch's flag (default 7).
+	FlagDays int `json:"flagDays,omitempty"`
 }
 
 // DashboardWatch is one pair a watch list follows.
@@ -177,6 +179,9 @@ func validatePanel(p DashboardPanel) error {
 	}
 	if q.Basis != "" && q.Basis != "all" && q.Basis != "adverts" {
 		return fmt.Errorf("panel %q: basis must be all or adverts", p.ID)
+	}
+	if q.FlagDays < 0 || q.FlagDays > 21 {
+		return fmt.Errorf("panel %q: flagDays must be 1 to 21", p.ID)
 	}
 	switch p.Type {
 	case "watch":
