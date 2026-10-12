@@ -267,3 +267,38 @@ func TestProbeShowsWhichHopDroppedOff(t *testing.T) {
 		t.Errorf("no route should say so: %+v", p)
 	}
 }
+
+// A configured route counts the packets that pass its first repeater and then
+// its last, and says how the last day and the last slot compare with usual.
+func TestConfiguredRoutesShowBetterOrWorse(t *testing.T) {
+	w := New(Options{Routes: []Route{{Name: "North link", From: "a", To: "d"}, {Name: "Back the other way", From: "d", To: "a"}}}, nil)
+	var id int64
+	for h := int64(0); h < 9*day; h++ {
+		n := 30
+		if h >= 8*day {
+			n = 12 // the last day is worse
+		}
+		for i := 0; i < n; i++ {
+			id++
+			w.AddObservation(id, 1008+h, "o", []string{"a", "b", "d"})
+			w.AddObservation(id, 1008+h, "o2", []string{"a", "b", "d"}) // heard twice, counted once
+		}
+		id++
+		w.AddObservation(id, 1008+h, "o", []string{"a", "b"}) // never reaches d
+		w.Evaluate(1008 + h)
+	}
+	st := w.Status()
+	if len(st.Routes) != 2 {
+		t.Fatalf("routes %+v", st.Routes)
+	}
+	r := st.Routes[0]
+	if r.Name != "North link" || r.LastDay != 12*24 || r.UsualDay != 30*24 {
+		t.Errorf("route %+v, want last day %d usual %d", r, 12*24, 30*24)
+	}
+	if r.Now != 12*6 || r.Usual != 30*6 {
+		t.Errorf("slot now %d usual %d", r.Now, r.Usual)
+	}
+	if back := st.Routes[1]; back.LastDay != 0 || back.UsualDay != 0 {
+		t.Errorf("reverse route counted packets going the other way: %+v", back)
+	}
+}
