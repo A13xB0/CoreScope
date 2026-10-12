@@ -36,6 +36,9 @@ type Options struct {
 	// Area, when set, limits judging to repeaters placed inside it (by the
 	// Locator); repeaters outside it are still counted but never flagged.
 	Area *Zone
+	// Tiers, when set, also judges core repeaters over a few hours and
+	// local ones on how long they have gone unheard.
+	Tiers *Tiers
 }
 
 // Route is a named pair of repeaters whose traffic the watch follows: packets
@@ -680,6 +683,12 @@ type Incident struct {
 	Usual        int    `json:"usual"`        // relays usually in the slot
 	Now          int    `json:"now"`          // relays in the slot when flagged
 	AdvertEveryH int    `json:"advertEveryH"` // its usual advert gap, hours (90th percentile)
+	// Tier is core or local when tiers are on; WindowH the hours Usual and
+	// Now cover (Slot when 0); HeardEveryH a local repeater's usual longest
+	// silence.
+	Tier        string `json:"tier,omitempty"`
+	WindowH     int    `json:"windowH,omitempty"`
+	HeardEveryH int    `json:"heardEveryH,omitempty"`
 	// Chance is how likely the quiet slot was by chance, judged through
 	// Observers observers that were up both now and in the usual.
 	Chance    float64 `json:"chance"`
@@ -707,8 +716,11 @@ func median(a []int) int {
 
 // slot is the count over the Slot hours ending at t, and the median of the
 // same hours on each of the previous Days days.
-func (w *Watch) slot(r ring, t int64) (now, usual int) {
-	s := int64(w.opt.Slot)
+func (w *Watch) slot(r ring, t int64) (now, usual int) { return w.slotN(r, t, w.opt.Slot) }
+
+// slotN is slot over hours hours rather than Slot.
+func (w *Watch) slotN(r ring, t int64, hours int) (now, usual int) {
+	s := int64(hours)
 	now = r.sum(w, t-s+1, t)
 	prev := make([]int, 0, w.opt.Days)
 	for d := int64(1); d <= int64(w.baseDays(t)); d++ {
@@ -842,20 +854,30 @@ func (w *Watch) Evaluate(t int64) {
 	for pk, nd := range w.nodes {
 		now, usual := w.slot(nd.relays, t)
 		if nd.open != nil {
-			// Still relaying nothing and now its adverts have stopped too: it
-			// has gone quiet altogether (since its relays stopped).
-			if nd.open.Kind == KindNotRelaying {
-				if silent, _, _, known := w.advertSilence(nd, t); known && silent {
+			// Still relaying nothing (or slowed, or unheard) and now its
+			// adverts have stopped too: it has gone quiet altogether.
+			if k := nd.open.Kind; k == KindNotRelaying || k == KindSlowed || k == KindUnheard {
+				if silent, _, last, known := w.advertSilence(nd, t); known && silent {
 					nd.open.Kind = KindQuiet
+					nd.open.Start = min(nd.open.Start, last+1)
 				}
 			}
 			// Back once it relays half of what was usual when it was flagged,
-			// counted as it was then or like for like. Adverts are not
-			// required: a repeater far from every observer may have them heard
-			// only now and then.
-			back := float64(now) >= w.opt.BackRatio*float64(nd.open.Usual)
+			// over the same hours, counted as it was then or like for like; a
+			// local repeater once it is heard at all. Adverts are not required:
+			// a repeater far from every observer may have them heard only now
+			// and then.
+			win := nd.open.WindowH
+			if win == 0 {
+				win = w.opt.Slot
+			}
+			wnow, _ := w.slotN(nd.relays, t, win)
+			back := float64(wnow) >= w.opt.BackRatio*float64(nd.open.Usual)
+			if nd.open.Tier == TierLocal {
+				back = nd.relays.at(w, t) > 0 || (nd.open.Kind == KindUnheard && nd.adverts.at(w, t) > 0)
+			}
 			if !back && nd.open.matchedUsual > 0 {
-				m := w.matched(nd.byObs, t, quietObs, pk)
+				m := w.matchedN(nd.byObs, t, quietObs, pk, win)
 				back = float64(m.now) >= w.opt.BackRatio*float64(nd.open.matchedUsual)
 			}
 			if back {
@@ -868,6 +890,18 @@ func (w *Watch) Evaluate(t int64) {
 		}
 		gray := nd.gray
 		nd.gray = 0 // kept only by an hour that still looks like it
+		if w.opt.Tiers != nil && !w.feed.Down && w.judged(pk) {
+			if inc := w.judgeTier(pk, nd, t, quietObs); inc != nil {
+				if n, ok := w.nightly(nd, t); !ok || !n.inItsNight(inc.Start, t) {
+					if silent, _, last, known := w.advertSilence(nd, t); known && silent {
+						inc.Kind, inc.Start = KindQuiet, min(inc.Start, last+1)
+					}
+					inc.Repeats = w.repeats(pk)
+					nd.open = inc
+					continue
+				}
+			}
+		}
 		// Cheap screen first: most repeaters are nowhere near quiet.
 		if w.feed.Down || usual == 0 || float64(now) > 0.5*float64(usual) || !w.judged(pk) {
 			continue
@@ -892,7 +926,7 @@ func (w *Watch) Evaluate(t int64) {
 			if nd.gray = gray + 1; nd.gray < notRelayingHours {
 				continue
 			}
-			inc.Kind, inc.Start = KindNotRelaying, w.quietSince(nd.relays, t-int64(nd.gray)+1, usual)
+			inc.Kind, inc.Start = KindNotRelaying, w.quietSince(nd.relays, t-int64(nd.gray)+1, usual, w.opt.Slot)
 		default:
 			continue
 		}
@@ -1018,6 +1052,7 @@ type Status struct {
 	Corridors []CorridorStatus `json:"corridors"`
 	Routes    []RouteStatus    `json:"routes"`
 	Feed      FeedStatus       `json:"feed"`
+	Tiers     *TierCounts      `json:"tiers,omitempty"`
 	Nightly   []Nightly        `json:"nightly"`
 	Drift     []Drift          `json:"drift"`
 	Events    []Event          `json:"events"` // newest first
@@ -1053,6 +1088,10 @@ func (w *Watch) Status() Status {
 	sort.Slice(st.Observers, func(i, j int) bool { return st.Observers[i].ID < st.Observers[j].ID })
 	st.Network.Now, st.Network.Usual = w.slot(w.total, t)
 	st.Feed = w.feed
+	if w.opt.Tiers != nil {
+		c := w.tierCounts(t)
+		st.Tiers = &c
+	}
 	st.Nightly = w.nightlyList(t)
 	for _, c := range w.corridors {
 		st.Corridors = append(st.Corridors, w.corridorStatus(c, t))
