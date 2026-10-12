@@ -180,6 +180,14 @@ func routeDescriptions() map[string]routeMeta {
 			QueryParams: []paramMeta{{Name: "window", Description: "24h, 7d or 30d, as far as data.days reaches", Type: "string", Required: true}}},
 		"GET /api/data/cube": {Summary: "Data tab cube", Description: "Packets per time bucket along origin, heard, type, scope, how, route, through and channel: rows of [bucket, origin, heard, type, scope, how, route, through, channel, packets], each an index into the lists beside it. Cached 60 s. 404 when the tab is off.", Tag: "data",
 			QueryParams: []paramMeta{{Name: "window", Description: "24h, 7d or 30d, as far as data.days reaches", Type: "string", Required: true}}},
+		"GET /api/data/path": {Summary: "Path watch between two repeaters", Description: "Packets that passed the first repeater and those that then reached the second, per 24 hours (the last 24 hours last), the share that got through against the range it usually falls in, hops and routes between the two, and route changes in words (a repeater that dropped out and went quiet or was rerouted around, one that started carrying, the main route moving). Read from the packet store's path index; cached 5 minutes per pair. 404 when the Data tab is off.", Tag: "data",
+			QueryParams: []paramMeta{
+				{Name: "from", Description: "Public key of the first repeater", Type: "string", Required: true},
+				{Name: "to", Description: "Public key of the second repeater", Type: "string", Required: true},
+				{Name: "window", Description: "7d (default) or 30d of days shown; 24h shows a week", Type: "string"},
+				{Name: "basis", Description: "all (default) or adverts, which counts only adverts and is steadier", Type: "string"},
+			}},
+		"POST /api/data/paths":     {Summary: "Path watches, several at once", Description: "The same as GET /api/data/path for up to 24 pairs, in order: body {window, basis, pairs: [{from, to}]}. For a watch list panel. 404 when the Data tab is off.", Tag: "data"},
 		"GET /api/data/dashboards": {Summary: "Data tab dashboards", Description: "The built-in dashboards followed by the operator's (data.dashboardsFile), validated, with the one to open first and the home area. Each is a schema-1 document of panels: a query over the cube, a panel type and a place on a 12-column grid. 404 when the tab is off.", Tag: "data"},
 		"GET /api/data/packets": {Summary: "Packets behind a Data tab figure", Description: "The packet rows (one per receiving area) passing every filter, newest first, at most 2,000 with the full total. Two run at a time. 404 when the tab is off.", Tag: "data",
 			QueryParams: []paramMeta{

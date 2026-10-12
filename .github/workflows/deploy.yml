@@ -217,6 +217,12 @@ jobs:
           go test ./...
           echo "--- Decrypt CLI tests passed ---"
 
+      - name: Test path watch module
+        run: |
+          set -e -o pipefail
+          cd internal/pathwatch && go test -race ./...
+          echo "--- pathwatch tests passed ---"
+
       - name: Test user-management modules (users, mailer)
         run: |
           set -e -o pipefail
