@@ -156,9 +156,6 @@ func (s *netWatchService) run(ctx context.Context) {
 		} else if !s.isReady() {
 			log.Printf("[netwatch] filled in %s", time.Since(start).Round(time.Millisecond))
 		}
-		s.mu.Lock()
-		s.ready = true
-		s.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return
@@ -286,6 +283,9 @@ func (s *netWatchService) catchUp(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 	s.watch.Prune()
+	s.mu.Lock()
+	s.ready = true // the whole window is read and judged; not before
+	s.mu.Unlock()
 	return nil
 }
 
@@ -513,7 +513,7 @@ func (s *Server) handleNetWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := nw.watch.Status()
-	resp := NetWatchResponse{Ready: nw.isReady() || st.Hour > 0, Hour: hourISO(st.Hour), SlotHours: 6, Days: netWatchBaseDays, Judged: st.Judged,
+	resp := NetWatchResponse{Ready: nw.isReady(), Hour: hourISO(st.Hour), SlotHours: 6, Days: netWatchBaseDays, Judged: st.Judged,
 		Open: []NetWatchIncident{}, Recent: []NetWatchIncident{}, Observers: []NetWatchObserver{},
 		NetworkNow: st.Network.Now, NetworkUsual: st.Network.Usual, Corridors: []NetWatchCorridorStatus{}, Routes: []NetWatchRouteStatus{}}
 	for _, i := range st.Open {

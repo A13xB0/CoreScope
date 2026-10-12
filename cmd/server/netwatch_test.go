@@ -120,6 +120,9 @@ func TestNetWatchFlagsARepeaterThatWentQuiet(t *testing.T) {
 	if code := getNW(t, r, "/api/netwatch", &st); code != 200 {
 		t.Fatalf("status %d", code)
 	}
+	if !st.Ready {
+		t.Error("ready should be true once the window is read")
+	}
 	if len(st.Open) != 1 || st.Open[0].Node != nwKeir || st.Open[0].Name != "Keir Hill" {
 		t.Fatalf("open = %+v, want Keir Hill", st.Open)
 	}
