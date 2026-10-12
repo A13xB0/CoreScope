@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
@@ -57,19 +58,23 @@ func pathWatchRouter(t *testing.T, enabled bool) *mux.Router {
 			}
 		}
 	}
+	return pathRouterFor(t, db, enabled)
+}
+
+// pathRouterFor serves the path watch over db, its index filled.
+func pathRouterFor(t *testing.T, db *DB, enabled bool) *mux.Router {
+	t.Helper()
 	cfg := &Config{Port: 3000}
 	if enabled {
-		cfg.Data = &DataConfig{Enabled: true, Days: 30}
+		cfg.Data = &DataConfig{Enabled: true, Days: 7, PathDays: 30}
 	}
 	srv := NewServer(db, cfg, NewHub())
-	store := NewPacketStore(db, nil)
-	if err := store.Load(); err != nil {
-		t.Fatal(err)
+	if enabled {
+		srv.paths = newPathIndex(db, cfg.PathDays())
+		if err := srv.paths.fill(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !store.WaitIndexesReady(5 * time.Second) {
-		t.Fatal("indexes not ready")
-	}
-	srv.store = store
 	r := mux.NewRouter()
 	r.HandleFunc("/api/data/path", srv.handleDataPath).Methods("GET")
 	r.HandleFunc("/api/data/paths", srv.handleDataPaths).Methods("POST")
@@ -180,5 +185,76 @@ func TestThePathDashboardIsBuiltIn(t *testing.T) {
 		if len(path.Variables) != 2 || path.Variables[0].Kind != "repeater" || path.Panels[0].Type != "watch" || path.Panels[0].Query.From != "$from" {
 			t.Errorf("places=%v: %+v", places, path)
 		}
+	}
+}
+
+// A packet counts as getting through when any observer saw it pass the first
+// repeater and then the second, not only the observer with the longest path.
+func TestDataPathCountsEveryObservation(t *testing.T) {
+	db := setupTestDB(t)
+	now := time.Now().UTC()
+	for _, k := range []string{pwGoyle, pwInsh, pwOther, pwWard} {
+		mustExec(t, db, `INSERT INTO nodes (public_key, name, role, first_seen) VALUES (?, 'n', 'repeater', '2026-01-01')`, k)
+	}
+	id := 0
+	for d := 9; d >= 0; d-- {
+		for k := 0; k < 12; k++ {
+			id++
+			at := now.Add(-time.Duration(d+1)*24*time.Hour + time.Duration(k)*time.Hour + time.Minute)
+			mustExec(t, db, `INSERT INTO transmissions (id, raw_hex, hash, first_seen, payload_type) VALUES (?, 'AA', ?, ?, 5)`, id, fmt.Sprintf("e%06d", id), at.Format("2006-01-02T15:04:05.000Z"))
+			long, _ := json.Marshal([]string{pwGoyle, pwOther, pwWard, pwOther})
+			short, _ := json.Marshal([]string{pwGoyle, pwInsh})
+			mustExec(t, db, `INSERT INTO observations (transmission_id, observer_idx, path_json, timestamp, resolved_path) VALUES (?, 1, '["A1","E5","C3","E5"]', ?, ?)`, id, at.Unix(), string(long))
+			mustExec(t, db, `INSERT INTO observations (transmission_id, observer_idx, path_json, timestamp, resolved_path) VALUES (?, 2, '["A1","D4"]', ?, ?)`, id, at.Unix(), string(short))
+		}
+	}
+	r := pathRouterFor(t, db, true)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/data/path?from="+pwGoyle+"&to="+pwInsh, nil))
+	var p DataPathResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err, w.Body.String())
+	}
+	if p.Share != 1 {
+		t.Errorf("share %v, want every packet counted (the shorter observation reached Insheswood)", p.Share)
+	}
+}
+
+// History reaches back past what the packet store holds: a change ten days
+// ago is still the flag when flags last a fortnight.
+func TestDataPathRemembersAFortnight(t *testing.T) {
+	db := setupTestDB(t)
+	now := time.Now().UTC()
+	for _, n := range [][2]string{{pwGoyle, "Goyle Hill"}, {pwKeir, "Keir Hill"}, {pwWard, "Ward Hill"}, {pwInsh, "Insheswood"}} {
+		mustExec(t, db, `INSERT INTO nodes (public_key, name, role, first_seen) VALUES (?, ?, 'repeater', '2026-01-01')`, n[0], n[1])
+	}
+	id := 0
+	for d := 25; d >= 0; d-- {
+		for k := 0; k < 20; k++ {
+			id++
+			at := now.Add(-time.Duration(d+1)*24*time.Hour + time.Duration(k)*time.Hour + time.Minute)
+			via := pwKeir
+			if d <= 10 {
+				via = pwWard
+			}
+			pj, _ := json.Marshal([]string{pwGoyle, via, pwInsh})
+			mustExec(t, db, `INSERT INTO transmissions (id, raw_hex, hash, first_seen, payload_type) VALUES (?, 'AA', ?, ?, 5)`, id, fmt.Sprintf("f%06d", id), at.Format("2006-01-02T15:04:05.000Z"))
+			mustExec(t, db, `INSERT INTO observations (transmission_id, observer_idx, path_json, timestamp, resolved_path) VALUES (?, 1, '["A1","B2","D4"]', ?, ?)`, id, at.Unix(), string(pj))
+		}
+	}
+	r := pathRouterFor(t, db, true)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/data/path?from="+pwGoyle+"&to="+pwInsh+"&flagDays=14", nil))
+	var p DataPathResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err, w.Body.String())
+	}
+	if p.Flag == nil || p.Flag.Node == nil || p.Flag.Node.Name != "Keir Hill" {
+		t.Fatalf("flag %+v, want Keir Hill dropping out ten days ago", p.Flag)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/data/path?from="+pwGoyle+"&to="+pwInsh+"&flagDays=99", nil))
+	if w.Code != 400 {
+		t.Errorf("flagDays=99: status %d, want 400", w.Code)
 	}
 }
