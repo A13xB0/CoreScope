@@ -160,12 +160,18 @@
 
   function incidentCard(i, open) {
     var hours = Math.round(((open ? Date.now() : Date.parse(i.end)) - Date.parse(i.start)) / 3600e3);
-    var deaf = i.kind === 'not-relaying';
+    var deaf = i.kind === 'not-relaying' || i.kind === 'slowed';
+    var chip = { quiet: ['Quiet', 'is-bad'], 'not-relaying': ['Not relaying', 'is-warn'], slowed: ['Slowed', 'is-warn'], unheard: ['Unheard', 'is-bad'] }[i.kind] || ['Quiet', 'is-bad'];
     var lines = [];
     if (open) {
-      lines.push((deaf ? 'Stopped relaying since ' : 'Quiet since ') + when(i.start) + ' · flagged ' + when(i.flagged));
-      lines.push('Usually ' + i.usual + ' relays in 6 h, ' + i.now + ' now' + (deaf ? ', though its adverts still arrive' : ', and its adverts stopped') +
-        (i.chance ? '. By chance ' + oneIn(i.chance) + (i.observers ? ', judged through ' + i.observers + ' observer' + (i.observers === 1 ? '' : 's') + ' up then and now' : '') : ''));
+      var since = { 'not-relaying': 'Stopped relaying since ', slowed: 'Slowed since ', unheard: 'Not heard since ' }[i.kind] || 'Quiet since ';
+      lines.push(since + when(i.start) + ' · flagged ' + when(i.flagged));
+      if (i.kind === 'unheard') {
+        lines.push('Usually heard at least every ' + i.heardEveryH + ' h; nothing for ' + i.windowH + ' h, while ' + i.observers + ' observer' + (i.observers === 1 ? '' : 's') + ' that usually hear it kept listening');
+      } else {
+        lines.push('Usually ' + i.usual + ' relays in ' + (i.windowH || 6) + ' h, ' + i.now + ' now' + (deaf ? ', though its adverts still arrive' : ', and its adverts stopped') +
+          (i.chance ? '. By chance ' + oneIn(i.chance) + (i.observers ? ', judged through ' + i.observers + ' observer' + (i.observers === 1 ? '' : 's') + ' up then and now' : '') : ''));
+      }
       if (i.repeats > 1) lines.push('The ' + ordinal(i.repeats) + ' time in the window');
       if (i.affects && i.affects.length) lines.push('Explains: ' + i.affects.join('; '));
     } else {
@@ -173,7 +179,8 @@
     }
     return '<div class="h-inc' + (open ? ' is-open' : '') + '" data-node="' + esc(i.node) + '">' +
       '<div class="h-inc-text"><div><a href="#/nodes/' + encodeURIComponent(i.node) + '">' + esc(i.name) + '</a> ' +
-        (open ? '<span class="h-chip ' + (deaf ? 'is-warn' : 'is-bad') + '">' + (deaf ? 'Not relaying' : 'Quiet') + '</span>' : '') + '</div>' +
+        (open ? '<span class="h-chip ' + chip[1] + '">' + chip[0] + '</span>' : '') +
+        (i.tier ? '<span class="h-chip" title="' + (i.tier === 'core' ? 'Core: usually a packet through it every few minutes, so judged over the last couple of hours' : 'Local: heard now and then, so judged on how long it has gone unheard') + '">' + (i.tier === 'core' ? 'Core' : 'Local') + '</span>' : '') + '</div>' +
         lines.map(function (l) { return '<span>' + esc(l) + '</span>'; }).join('') +
         (open ? '<span class="h-deliv"></span>' : '') + '</div>' +
       '<div class="h-inc-chart" data-chart="' + esc(i.node) + '"></div></div>';
@@ -219,7 +226,7 @@
     var net = st.networkUsual ? Math.round(st.networkNow / st.networkUsual * 100) : null;
     var quietObs = st.observers.filter(function (o) { return o.quiet; });
     var worse = st.routes.filter(function (r) { return judgeAny(r).text === 'Worse'; });
-    document.getElementById('hSub').textContent = st.judged + ' repeaters judged · last complete hour ' + when(st.hour) +
+    document.getElementById('hSub').textContent = st.judged + ' repeaters judged' + (st.tiers ? ' (' + st.tiers.core + ' core and ' + st.tiers.local + ' local)' : '') + ' · last complete hour ' + when(st.hour) +
       ' · each one compared with the same ' + st.slotHours + ' hours on the previous ' + st.days + ' days';
     var html = (st.feed && st.feed.down ? '<div class="h-card h-feed" id="hFeed" role="alert"><b>The packet feed has stopped</b> since ' + esc(when(st.feed.since)) +
       '. Every observer went quiet at once, so the problem is the feed, not the mesh, and nothing is judged until it is back.</div>' : '') +

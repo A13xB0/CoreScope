@@ -140,7 +140,7 @@ async function openPage(browser, { on, feedDown }) {
   await step('core and local repeaters say which they are and how they were judged', async () => {
     const cards = await page.$$eval('#hOpen .h-inc', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')));
     assert(/Core/.test(cards[0]) && /in 2 h/.test(cards[0]), 'core: ' + cards[0]);
-    assert(/Glen Local/.test(cards[1]) && /Local/.test(cards[1]) && /Not heard/.test(cards[1]) && /usually heard at least every 2 h/.test(cards[1]), 'local: ' + cards[1]);
+    assert(/Glen Local/.test(cards[1]) && /Local/.test(cards[1]) && /Not heard/.test(cards[1]) && /usually heard at least every 2 h/i.test(cards[1]), 'local: ' + cards[1]);
   });
 
   await step('a corridor that dropped says since when, the range it usually falls in, and its likely cause', async () => {
