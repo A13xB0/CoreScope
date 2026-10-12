@@ -48,7 +48,10 @@ type NetWatchConfig struct {
 type NetWatchTiers struct {
 	CoreEveryMinutes  int `json:"coreEveryMinutes,omitempty"`  // core: usually a packet at least this often (default 10)
 	CoreHours         int `json:"coreHours,omitempty"`         // core: judged over the last this many hours (default 2)
-	LocalSilenceHours int `json:"localSilenceHours,omitempty"` // local: unheard this long, or its usual longest gap if more (default 3)
+	LocalSilenceHours int `json:"localSilenceHours,omitempty"` // local: unheard at least this long (default 3)
+	// LocalGapFactor: and for longer than this many times its longest
+	// silence in the week before (default 1).
+	LocalGapFactor float64 `json:"localGapFactor,omitempty"`
 }
 
 // NetWatchNotify is where incident notifications go: a webhook taking
@@ -160,7 +163,7 @@ func newNetWatchService(db *DB, cfg *Config) *netWatchService {
 		opt.Routes = append(opt.Routes, netwatch.Route{Name: r.Name, From: strings.ToLower(r.From), To: strings.ToLower(r.To), Basis: netwatch.Basis(strings.ToLower(r.Basis)), Target: r.Target})
 	}
 	if t := c.Tiers; t != nil {
-		opt.Tiers = &netwatch.Tiers{CoreEveryMin: t.CoreEveryMinutes, CoreHours: t.CoreHours, LocalSilence: t.LocalSilenceHours}
+		opt.Tiers = &netwatch.Tiers{CoreEveryMin: t.CoreEveryMinutes, CoreHours: t.CoreHours, LocalSilence: t.LocalSilenceHours, LocalGapFactor: t.LocalGapFactor}
 	}
 	s.watch = netwatch.New(opt, s)
 	if c.Notify != nil && c.Notify.Webhook != "" {
