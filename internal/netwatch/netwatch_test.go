@@ -390,3 +390,37 @@ func TestOnlyRepeatersInsideTheAreaAreJudged(t *testing.T) {
 	}
 	// Repeaters with no position are judged: many publish none.
 }
+
+// When the observer that usually hears a route or a hop goes offline, the
+// route and the hop drop too; they say the observer is down instead of
+// calling the mesh worse.
+func TestRoutesAndHopsBlameAnOfflineObserver(t *testing.T) {
+	w := New(Options{Routes: []Route{{Name: "Gateway to Ayr", From: "g", To: "ayr"}}}, nil)
+	var id int64
+	for h := int64(0); h < 10*day; h++ {
+		for i := 0; i < 30; i++ {
+			id++
+			if h < 9*day { // the Ayr observer hears it all, then goes offline
+				w.AddObservation(id, 1008+h, "ayr-obs", []string{"g", "m", "ayr"})
+			}
+		}
+		for i := 0; i < 40; i++ { // the rest of the network carries on
+			id++
+			w.AddObservation(id, 1008+h, "other", []string{"x"})
+		}
+		w.Evaluate(1008 + h)
+	}
+	st := w.Status()
+	if r := st.Routes[0]; len(r.ObserversDown) != 1 || r.ObserversDown[0] != "ayr-obs" {
+		t.Errorf("route %+v should name ayr-obs as down", r)
+	}
+	p := w.Probe("g", "ayr", 1008+10*day-1)
+	if len(p.Hops) != 2 {
+		t.Fatalf("hops %+v", p.Hops)
+	}
+	for _, h := range p.Hops {
+		if h.Quiet || len(h.ObserversDown) != 1 {
+			t.Errorf("hop %s→%s quiet=%v down=%v: the observer is to blame, not the hop", h.From, h.To, h.Quiet, h.ObserversDown)
+		}
+	}
+}
