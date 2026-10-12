@@ -169,12 +169,14 @@ func TestTooLittleTrafficSaysSo(t *testing.T) {
 // carried a quarter of 16 crossings a day is 4 packets, and a day without
 // it is chance.
 func TestThinPathsRaiseNoChanges(t *testing.T) {
-	in := feed(100, func(int) float64 { return 0.16 }, func(i int) []string {
-		if (i*7)%4 == 0 {
-			return []string{"x"}
-		}
-		return []string{"y"}
-	})
+	// Four repeaters share 16 crossings a day; each day one of them carries
+	// none of them, which is chance at these numbers.
+	nodes := []string{"w", "x", "y", "z"}
+	in := feed(100, func(int) float64 { return 0.16 }, func(int) []string { return nil })
+	for k := range in.Reached {
+		i := int(now.Sub(in.Reached[k].At) / (24 * time.Hour))
+		in.Reached[k].Route = []string{nodes[(i+1+k%3)%4]}
+	}
 	r := Analyse(in, activity{}, Options{})
 	if len(r.Changes) != 0 {
 		t.Fatalf("changes on a thin path: %+v", r.Changes)
