@@ -67,13 +67,13 @@
     if (p <= 1e-3) return 'less than 1 in a thousand';
     return '1 in ' + Math.round(1 / p);
   }
-  function every(min) { return min >= 60 ? (Math.round(min / 6) / 10) + ' h' : min + ' min'; }
+  function every(min) { return min >= 360 ? Math.round(min / 60) + ' h' : min >= 60 ? (Math.round(min / 6) / 10) + ' h' : min + ' min'; }
   function dB(v) { return (v < 0 ? '−' : '') + Math.abs(Math.round(v)) + ' dB'; }
   // reachMore is what a reach adds below its headline: the date of a recent
   // step, the likely cause, and a target's burn.
   function reachMore(r) {
     var out = '';
-    if (r.since) out += '<div class="h-note">' + (r.last < r.usual ? 'Down' : 'Up') + ' since ' + esc(day(r.since)) + '; usual is the level before that.</div>';
+    if (r.since && r.verdict !== 'new') out += '<div class="h-note">' + (r.last < r.usual ? 'Down' : 'Up') + ' since ' + esc(day(r.since)) + '; usual is the level before that.</div>';
     if (r.cause) out += '<div class="h-note">Likely cause: <a href="#/nodes/' + encodeURIComponent(r.cause.node) + '">' + esc(r.cause.name) + '</a> (' + pc(r.cause.explains) + ' of the drop)</div>';
     if (r.target) {
       var b = { fast: ['Burning fast', 'is-bad'], slow: ['Burning slowly', 'is-warn'], ok: ['On target', 'is-good'] }[r.burn] || ['Target', ''];
@@ -164,7 +164,7 @@
     var lines = [];
     if (open) {
       lines.push((deaf ? 'Stopped relaying since ' : 'Quiet since ') + when(i.start) + ' · flagged ' + when(i.flagged));
-      lines.push('Usually ' + i.usual + ' relays in 6 h, ' + i.now + ' now' + (deaf ? ', though its adverts still arrive' : ', adverts every ' + i.advertEveryH + ' h') +
+      lines.push('Usually ' + i.usual + ' relays in 6 h, ' + i.now + ' now' + (deaf ? ', though its adverts still arrive' : ', and its adverts stopped') +
         (i.chance ? '. By chance ' + oneIn(i.chance) + (i.observers ? ', judged through ' + i.observers + ' observer' + (i.observers === 1 ? '' : 's') + ' up then and now' : '') : ''));
       if (i.repeats > 1) lines.push('The ' + ordinal(i.repeats) + ' time in the window');
       if (i.affects && i.affects.length) lines.push('Explains: ' + i.affects.join('; '));
