@@ -1120,6 +1120,9 @@ func TestALocalRepeaterUnheardForHoursIsFlagged(t *testing.T) {
 		if h%2 == 0 {
 			adv = []string{"other"}
 		}
+		if h < stop && h%12 == 0 {
+			adv = append(adv, "hourly", "fively") // each adverts now and then
+		}
 		f.hour(h, "obs1", rel, adv, 60)
 		f.w.Evaluate(f.start + h)
 		if h == stop+3 {
@@ -1140,7 +1143,11 @@ func TestALocalRepeaterIsNotFlaggedForItsObserver(t *testing.T) {
 	stop := int64(10 * day)
 	for h := int64(0); h < 10*day+8; h++ {
 		if h < stop {
-			f.hour(h, "obs1", map[string]int{"hourly": 1}, nil, 60)
+			var adv []string
+			if h%12 == 0 {
+				adv = []string{"hourly"}
+			}
+			f.hour(h, "obs1", map[string]int{"hourly": 1}, adv, 60)
 		}
 		f.hour(h, "obs2", nil, nil, 60)
 		f.w.Evaluate(f.start + h)
@@ -1154,12 +1161,16 @@ func TestALocalRepeaterIsNotFlaggedForItsObserver(t *testing.T) {
 func TestStatusCountsTheTiers(t *testing.T) {
 	f := tierWatch()
 	for h := int64(0); h < 9*day; h++ {
-		f.hour(h, "obs1", map[string]int{"core1": 20, "core2": 12, "local1": 1}, nil, 0)
+		var adv []string
+		if h%6 == 0 {
+			adv = []string{"core1", "core2", "local1"}
+		}
+		f.hour(h, "obs1", map[string]int{"core1": 20, "core2": 12, "local1": 1}, adv, 0)
 		f.w.Evaluate(f.start + h)
 	}
 	st := f.w.Status()
-	if st.Tiers.Core != 3 || st.Tiers.Local != 1 { // and zzobs1, which relays all of them
-		t.Fatalf("tiers %+v, want 3 core and 1 local", st.Tiers)
+	if st.Tiers.Core != 2 || st.Tiers.Local != 1 { // zzobs1 relays but never adverts
+		t.Fatalf("tiers %+v, want 2 core and 1 local", st.Tiers)
 	}
 }
 
@@ -1175,7 +1186,7 @@ func TestOnlyRepeatersThatAdvertAreTiered(t *testing.T) {
 		f.hour(h, "obs1", map[string]int{"real": 1, "ghost": 1}, adv, 0)
 		f.w.Evaluate(f.start + h)
 	}
-	if c := f.w.Status().Tiers; c.Local != 1 { // real; zzobs1 is core
+	if c := f.w.Status().Tiers; c.Local != 1 || c.Core != 0 {
 		t.Fatalf("tiers %+v, want only the adverting repeater local", c)
 	}
 }
