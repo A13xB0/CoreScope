@@ -13,6 +13,7 @@
 package netwatch
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 )
@@ -143,6 +144,15 @@ type corridorState struct {
 	Corridor
 	count    ring
 	carriers map[int64]map[string]int // day -> carrier -> packets
+	dir      [2]*corridorDir          // A to B, B to A
+}
+
+// corridorDir is one direction of a corridor: packets whose path reaches the
+// zone it starts from before the other.
+type corridorDir struct {
+	count    ring
+	carriers map[int64]map[string]int
+	byObs    map[string]ring
 }
 
 type routeState struct {
@@ -179,7 +189,11 @@ func New(opt Options, loc Locator) *Watch {
 	w := &Watch{opt: opt, loc: loc, nodes: map[string]*node{}, observers: map[string]ring{},
 		links: map[[2]string]ring{}, total: make(ring, opt.WindowHours), seen: map[int64]map[seenKey]struct{}{}}
 	for _, c := range opt.Corridors {
-		w.corridors = append(w.corridors, &corridorState{Corridor: c, count: make(ring, opt.WindowHours), carriers: map[int64]map[string]int{}})
+		cs := &corridorState{Corridor: c, count: make(ring, opt.WindowHours), carriers: map[int64]map[string]int{}}
+		for i := range cs.dir {
+			cs.dir[i] = &corridorDir{count: make(ring, opt.WindowHours), carriers: map[int64]map[string]int{}, byObs: map[string]ring{}}
+		}
+		w.corridors = append(w.corridors, cs)
 	}
 	for _, r := range opt.Routes {
 		w.routes = append(w.routes, &routeState{Route: r, count: make(ring, opt.WindowHours), byObs: map[string]ring{}})
@@ -227,6 +241,17 @@ func (w *Watch) advance(h int64) {
 		for d := range c.carriers {
 			if d < (h-n)/24 {
 				delete(c.carriers, d)
+			}
+		}
+		for _, cd := range c.dir {
+			clear(cd.count)
+			for _, r := range cd.byObs {
+				clear(r)
+			}
+			for d := range cd.carriers {
+				if d < (h-n)/24 {
+					delete(cd.carriers, d)
+				}
 			}
 		}
 	}
@@ -310,7 +335,7 @@ func (w *Watch) AddObservation(tx, h int64, obs string, path []string) {
 		}
 	}
 	if w.loc != nil && len(w.corridors) > 0 {
-		w.countCorridors(tx, h, path)
+		w.countCorridors(tx, h, obs, path)
 	}
 	for ri, r := range w.routes {
 		if !passes(path, r.From, r.To) {
@@ -343,7 +368,7 @@ func passes(path []string, from, to string) bool {
 	return false
 }
 
-func (w *Watch) countCorridors(tx, h int64, path []string) {
+func (w *Watch) countCorridors(tx, h int64, obs string, path []string) {
 	type placed struct {
 		pk       string
 		lat, lon float64
@@ -357,26 +382,52 @@ func (w *Watch) countCorridors(tx, h int64, path []string) {
 			ps = append(ps, placed{pk, lat, lon})
 		}
 	}
-	for ci, c := range w.corridors {
-		inA, inB := false, false
-		for _, p := range ps {
-			inA = inA || c.A.contains(p.lat, p.lon)
-			inB = inB || c.B.contains(p.lat, p.lon)
-		}
-		if !inA || !inB || !w.once(h, seenKey{a: "\x00cor", b: c.Name, tx: tx + int64(ci)<<48}) {
-			continue
-		}
-		c.count.add(w, h, 1)
-		d := h / 24
-		m := c.carriers[d]
-		if m == nil {
-			m = map[string]int{}
-			c.carriers[d] = m
+	bump := func(m map[int64]map[string]int, d int64, c *corridorState) {
+		day := m[d]
+		if day == nil {
+			day = map[string]int{}
+			m[d] = day
 		}
 		for _, p := range ps {
 			if !c.A.contains(p.lat, p.lon) && !c.B.contains(p.lat, p.lon) {
-				m[p.pk]++
+				day[p.pk]++
 			}
+		}
+	}
+	for ci, c := range w.corridors {
+		firstA, firstB := -1, -1
+		for i, p := range ps {
+			if firstA < 0 && c.A.contains(p.lat, p.lon) {
+				firstA = i
+			}
+			if firstB < 0 && c.B.contains(p.lat, p.lon) {
+				firstB = i
+			}
+		}
+		if firstA < 0 || firstB < 0 {
+			continue
+		}
+		key := tx + int64(ci)<<48
+		if w.once(h, seenKey{a: "\x00cor", b: c.Name, tx: key}) {
+			c.count.add(w, h, 1)
+			bump(c.carriers, h/24, c)
+		}
+		di := 0
+		if firstB < firstA {
+			di = 1
+		}
+		cd := c.dir[di]
+		if w.once(h, seenKey{a: "\x00cor-dir", b: fmt.Sprint(c.Name, di), tx: key}) {
+			cd.count.add(w, h, 1)
+			bump(cd.carriers, h/24, c)
+		}
+		if obs != "" && w.once(h, seenKey{a: "\x00cor-obs" + fmt.Sprint(c.Name, di), b: obs, tx: tx}) {
+			r := cd.byObs[obs]
+			if r == nil {
+				r = make(ring, w.opt.WindowHours)
+				cd.byObs[obs] = r
+			}
+			r.add(w, h, 1)
 		}
 	}
 }
@@ -590,6 +641,17 @@ type Carrier struct {
 	Packets int    `json:"packets"`
 }
 
+// CorridorDirection is one direction of a corridor, against its usual.
+type CorridorDirection struct {
+	From          string    `json:"from"`
+	To            string    `json:"to"`
+	LastDay       int       `json:"lastDay"`
+	UsualDay      int       `json:"usualDay"`
+	Daily         []int     `json:"daily"`
+	Carriers      []Carrier `json:"carriers"`
+	ObserversDown []string  `json:"observersDown,omitempty"`
+}
+
 // CorridorStatus is a corridor's last complete day against its usual day.
 type CorridorStatus struct {
 	Name     string    `json:"name"`
@@ -599,6 +661,8 @@ type CorridorStatus struct {
 	UsualDay int       `json:"usualDay"`
 	Daily    []int     `json:"daily"`    // packets per day, oldest first, ending with the last complete day
 	Carriers []Carrier `json:"carriers"` // on the last complete day, busiest first
+	// Directions are A to B, then B to A.
+	Directions []CorridorDirection `json:"directions"`
 }
 
 // RouteStatus is a configured route's traffic against its usual: over the
@@ -697,21 +761,35 @@ func (w *Watch) daily(r ring, t int64) (days []int, last, usual int) {
 	return days, last, usual
 }
 
+func topCarriers(m map[string]int) []Carrier {
+	out := []Carrier{}
+	for pk, n := range m {
+		out = append(out, Carrier{Node: pk, Packets: n})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Packets != out[j].Packets {
+			return out[i].Packets > out[j].Packets
+		}
+		return out[i].Node < out[j].Node
+	})
+	if len(out) > 5 {
+		out = out[:5]
+	}
+	return out
+}
+
 func (w *Watch) corridorStatus(c *corridorState, t int64) CorridorStatus {
-	cs := CorridorStatus{Name: c.Name, A: c.A.Name, B: c.B.Name, Carriers: []Carrier{}}
+	cs := CorridorStatus{Name: c.Name, A: c.A.Name, B: c.B.Name}
 	lastDay := (t+1)/24 - 1 // the last complete day
 	cs.Daily, cs.LastDay, cs.UsualDay = w.daily(c.count, t)
-	for pk, n := range c.carriers[lastDay] {
-		cs.Carriers = append(cs.Carriers, Carrier{Node: pk, Packets: n})
-	}
-	sort.Slice(cs.Carriers, func(i, j int) bool {
-		if cs.Carriers[i].Packets != cs.Carriers[j].Packets {
-			return cs.Carriers[i].Packets > cs.Carriers[j].Packets
-		}
-		return cs.Carriers[i].Node < cs.Carriers[j].Node
-	})
-	if len(cs.Carriers) > 5 {
-		cs.Carriers = cs.Carriers[:5]
+	cs.Carriers = topCarriers(c.carriers[lastDay])
+	quiet := w.quietObservers(t)
+	names := [2][2]string{{c.A.Name, c.B.Name}, {c.B.Name, c.A.Name}}
+	for i, cd := range c.dir {
+		d := CorridorDirection{From: names[i][0], To: names[i][1], ObserversDown: w.observersDown(cd.byObs, t, quiet)}
+		d.Daily, d.LastDay, d.UsualDay = w.daily(cd.count, t)
+		d.Carriers = topCarriers(cd.carriers[lastDay])
+		cs.Directions = append(cs.Directions, d)
 	}
 	return cs
 }
