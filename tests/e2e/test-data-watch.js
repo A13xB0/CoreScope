@@ -78,7 +78,7 @@ async function setup(hash, opts) {
     else if (u.indexOf('/api/data/paths') === 0) {
       const req = JSON.parse(init.body);
       posted.push(req);
-      body = { paths: req.pairs.map((p) => pathResp(p.from, p.to, p.from === WARD ? 0.3 : 0.84, p.from === WARD ? QUIET : null)) };
+      body = { paths: req.pairs.map((p) => pathResp(p.from, p.to, p.from === WARD ? 0.3 : 0.84, (p.from === WARD || p.from === INSH) ? QUIET : null)) };
     } else if (u.indexOf('/api/data/path?') === 0) {
       const q = new URLSearchParams(u.split('?')[1]);
       body = (opts && opts.emptyPath) ? Object.assign(pathResp(q.get('from'), q.get('to'), 0), { days: [], verdict: '', routes: [] }) : pathResp(q.get('from'), q.get('to'), 0.3, QUIET);
@@ -131,6 +131,7 @@ const stored = (w) => JSON.parse(w.localStorage.getItem('corescope-data-dashboar
     assert.ok(!asked.some((u) => u.indexOf('/api/data/cube') === 0), 'no cube needed');
     const rows = [...panel(d, 'list').querySelectorAll('.dt-wl-row')];
     assert.strictEqual(rows.length, 2);
+    assert(!/Below usual|Repeater quiet/.test(rows[0].textContent) || /←/.test(rows[0].querySelector('.dt-wl-tag').textContent), 'a tag from the way back says so: ' + rows[0].textContent);
     const quiet = rows[1].textContent.replace(/\s+/g, ' ');
     assert.ok(/Quiet one/.test(quiet) && /30%/.test(quiet) && /Repeater quiet/.test(quiet), 'row: ' + quiet);
     rows[1].click();
