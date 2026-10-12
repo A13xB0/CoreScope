@@ -271,6 +271,15 @@ func Analyse(in Input, act Activity, opt Options) Result {
 			continue
 		}
 		for _, c := range w7changes(b, i, start, share, act, o) {
+			if k := recentDrop(r.Changes, c, start(i)); k >= 0 {
+				// The same repeater dropping out, seen again: once it has
+				// plainly stopped everywhere, the earlier "rerouted" (it was
+				// still busy elsewhere that day) becomes "quiet".
+				if c.Kind == KindRepeaterQuiet {
+					r.Changes[k].Kind = KindRepeaterQuiet
+				}
+				continue
+			}
 			if !seenRecently(r.Changes, c, start(i), o) {
 				r.Changes = append(r.Changes, c)
 			}
@@ -357,6 +366,24 @@ func w7changes(b []bucket, i int, start func(int) time.Time, share func(int) flo
 		}
 	}
 	return out
+}
+
+// recentDrop finds, in the week before day, the same repeater already
+// recorded as dropping out (quiet or rerouted), when c is one too; else -1.
+func recentDrop(list []Change, c Change, day time.Time) int {
+	if c.Kind != KindRepeaterQuiet && c.Kind != KindRerouted {
+		return -1
+	}
+	for k := len(list) - 1; k >= 0; k-- {
+		p := list[k]
+		if day.Sub(p.Day) > 7*24*time.Hour {
+			break
+		}
+		if p.Node == c.Node && (p.Kind == KindRepeaterQuiet || p.Kind == KindRerouted) {
+			return k
+		}
+	}
+	return -1
 }
 
 // seenRecently says whether the same change (kind and repeater, or for a
