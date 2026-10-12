@@ -37,28 +37,67 @@
   // sentOf names what a reach counts: adverts, or channel messages where a
   // link is configured with basis "chat".
   function sentOf(r) { return r.basis === 'chat' ? 'channel messages' : 'adverts'; }
+  // judgeReach uses the server's verdict: the share against the range it
+  // usually falls in (wider for small samples and for shares that swing).
+  var VERDICTS = { worse: { text: 'Worse', cls: 'is-bad' }, better: { text: 'Better', cls: 'is-good' }, 'new': { text: 'New', cls: '' }, normal: { text: 'Normal', cls: '' } };
   function judgeReach(r, down) {
     if (down && down.length) return judge(0, 0, down);
-    // almost nothing used to get across: the link is new, not a big change
-    if (r.usual < 0.02) return { text: 'New', cls: '' };
-    var ratio = r.last / r.usual;
-    if (ratio <= 0.75) return { text: 'Worse', cls: 'is-bad' };
-    if (ratio >= 1.25 && r.usual < 0.8) return { text: 'Better', cls: 'is-good' };
-    return { text: 'Normal', cls: '' };
+    var v = VERDICTS[r.verdict] || VERDICTS.normal;
+    return { text: v.text, cls: v.cls };
   }
   function pc(x) { return Math.round(x * 100) + '%'; }
+  // day names a UTC day, which is what each bar and step is.
+  function day(iso) {
+    var d = typeof iso === 'number' ? new Date(iso) : new Date(iso);
+    return isNaN(d) ? '—' : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  }
+  // barDay is the date of bar i of n, the last being the last complete day.
+  function barDay(hourIso, i, n) {
+    var last = Math.floor((Date.parse(hourIso) / 3600e3 + 1) / 24) - 1;
+    return day((last - (n - 1 - i)) * 86400e3);
+  }
+  function ordinal(n) {
+    var s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+  // oneIn says how unlikely something was by chance.
+  function oneIn(p) {
+    if (p <= 1e-9) return 'less than 1 in a billion';
+    if (p <= 1e-6) return 'less than 1 in a million';
+    if (p <= 1e-3) return 'less than 1 in a thousand';
+    return '1 in ' + Math.round(1 / p);
+  }
+  function every(min) { return min >= 60 ? (Math.round(min / 6) / 10) + ' h' : min + ' min'; }
+  function dB(v) { return (v < 0 ? '−' : '') + Math.abs(Math.round(v)) + ' dB'; }
+  // reachMore is what a reach adds below its headline: the date of a recent
+  // step, the likely cause, and a target's burn.
+  function reachMore(r) {
+    var out = '';
+    if (r.since) out += '<div class="h-note">' + (r.last < r.usual ? 'Down' : 'Up') + ' since ' + esc(day(r.since)) + '; usual is the level before that.</div>';
+    if (r.cause) out += '<div class="h-note">Likely cause: <a href="#/nodes/' + encodeURIComponent(r.cause.node) + '">' + esc(r.cause.name) + '</a> (' + pc(r.cause.explains) + ' of the drop)</div>';
+    if (r.target) {
+      var b = { fast: ['Burning fast', 'is-bad'], slow: ['Burning slowly', 'is-warn'], ok: ['On target', 'is-good'] }[r.burn] || ['Target', ''];
+      out += '<div class="h-note"><span class="h-chip ' + b[1] + '">' + b[0] + '</span> target ' + pc(r.target) + '</div>';
+    }
+    return out;
+  }
+  function range(r) { return r.verdict === 'new' || r.low == null ? '' : ' (' + Math.round(r.low * 100) + '–' + pc(r.high) + ' on a normal day)'; }
   // judgeAny judges a route or corridor direction on advert reach when it has
   // it, else on its packet count.
   function judgeAny(x) { return x.reach ? judgeReach(x.reach, x.observersDown) : judge(x.lastDay, x.usualDay, x.observersDown); }
   // reachBars draws daily shares (0..1) on a fixed 0–100% scale; days with
   // too few adverts are a faint stub.
-  function reachBars(daily, w, h) {
+  // The usual range is a faint band behind the bars; every bar says its day.
+  function reachBars(daily, w, h, r, hourIso) {
     w = w || 140; h = h || 34;
-    var n = daily.length, bw = w / Math.max(n, 1);
-    return '<svg viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" aria-hidden="true">' + daily.map(function (v, i) {
+    var n = daily.length, bw = w / Math.max(n, 1), y = function (v) { return h - Math.max(0, v) * (h - 2); };
+    var band = r && r.low != null && r.verdict !== 'new'
+      ? '<rect class="h-band" x="0" y="' + y(r.high).toFixed(1) + '" width="' + w + '" height="' + Math.max(1, y(r.low) - y(r.high)).toFixed(1) + '"/>' : '';
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" role="img" aria-label="share that got through, by day">' + band + daily.map(function (v, i) {
       var bh = v < 0 ? 2 : Math.max(1, v * (h - 2));
+      var tip = (hourIso ? barDay(hourIso, i, n) + ': ' : '') + (v < 0 ? 'too few to say' : pc(v));
       return '<rect x="' + (i * bw + 1).toFixed(1) + '" y="' + (h - bh).toFixed(1) + '" width="' + Math.max(1, bw - 2).toFixed(1) + '" height="' + bh.toFixed(1) +
-        '" rx="1" fill="' + (v < 0 ? 'var(--border)' : 'var(--accent)') + '" fill-opacity="' + (i === n - 1 ? 1 : 0.45) + '"/>';
+        '" rx="1" fill="' + (v < 0 ? 'var(--border)' : 'var(--accent)') + '" fill-opacity="' + (i === n - 1 ? 1 : 0.45) + '"><title>' + esc(tip) + '</title></rect>';
     }).join('') + '</svg>';
   }
   function verdict(c) {
@@ -121,12 +160,57 @@
 
   function incidentCard(i, open) {
     var hours = Math.round(((open ? Date.now() : Date.parse(i.end)) - Date.parse(i.start)) / 3600e3);
-    var meta = open
-      ? 'Quiet since ' + when(i.start) + ' · flagged ' + when(i.flagged) + ' · usually ' + i.usual + ' relays in 6 h, adverts every ' + i.advertEveryH + ' h'
-      : 'Back ' + when(i.end) + ' after ' + (hours >= 48 ? Math.round(hours / 24) + ' days' : hours + ' h');
+    var deaf = i.kind === 'not-relaying';
+    var lines = [];
+    if (open) {
+      lines.push((deaf ? 'Stopped relaying since ' : 'Quiet since ') + when(i.start) + ' · flagged ' + when(i.flagged));
+      lines.push('Usually ' + i.usual + ' relays in 6 h, ' + i.now + ' now' + (deaf ? ', though its adverts still arrive' : ', adverts every ' + i.advertEveryH + ' h') +
+        (i.chance ? '. By chance ' + oneIn(i.chance) + (i.observers ? ', judged through ' + i.observers + ' observer' + (i.observers === 1 ? '' : 's') + ' up then and now' : '') : ''));
+      if (i.repeats > 1) lines.push('The ' + ordinal(i.repeats) + ' time in the window');
+      if (i.affects && i.affects.length) lines.push('Explains: ' + i.affects.join('; '));
+    } else {
+      lines.push('Back ' + when(i.end) + ' after ' + (hours >= 48 ? Math.round(hours / 24) + ' days' : hours + ' h'));
+    }
     return '<div class="h-inc' + (open ? ' is-open' : '') + '" data-node="' + esc(i.node) + '">' +
-      '<div class="h-inc-text"><a href="#/nodes/' + encodeURIComponent(i.node) + '">' + esc(i.name) + '</a><span>' + esc(meta) + '</span></div>' +
+      '<div class="h-inc-text"><div><a href="#/nodes/' + encodeURIComponent(i.node) + '">' + esc(i.name) + '</a> ' +
+        (open ? '<span class="h-chip ' + (deaf ? 'is-warn' : 'is-bad') + '">' + (deaf ? 'Not relaying' : 'Quiet') + '</span>' : '') + '</div>' +
+        lines.map(function (l) { return '<span>' + esc(l) + '</span>'; }).join('') +
+        (open ? '<span class="h-deliv"></span>' : '') + '</div>' +
       '<div class="h-inc-chart" data-chart="' + esc(i.node) + '"></div></div>';
+  }
+
+  // timeline lists what happened, newest first, under a brief of the last
+  // seven days.
+  function timeline(st) {
+    var since = Date.parse(st.hour) - 7 * 86400e3, n = {};
+    st.events.forEach(function (e) {
+      if (Date.parse(e.hour) < since) return;
+      var k = e.kind === 'not-relaying' ? 'quiet' : e.kind === 'step' ? (e.after < e.before ? 'drop' : 'rise') : e.kind;
+      n[k] = (n[k] || 0) + 1;
+    });
+    var words = [['quiet', 'went quiet', 'went quiet'], ['back', 'came back', 'came back'], ['drop', 'drop', 'drops'], ['rise', 'rise', 'rises'],
+      ['reroute', 'reroute', 'reroutes'], ['drift', 'fading signal', 'fading signals']];
+    var brief = words.filter(function (w) { return n[w[0]]; }).map(function (w) { return n[w[0]] + ' ' + (n[w[0]] === 1 ? w[1] : w[2]); });
+    return '<section class="h-card" id="hTimeline"><h3>What happened</h3>' +
+      '<p class="h-sub">Last 7 days: ' + (brief.length ? brief.join(', ') : 'nothing out of the ordinary') + '.</p>' +
+      (st.events.length ? '<ol class="h-events">' + st.events.slice(0, 15).map(function (e) {
+        return '<li class="is-' + esc(e.kind) + '"><time>' + esc(when(e.hour)) + '</time><span>' + esc(e.text) + '</span></li>';
+      }).join('') + '</ol>' : '<p class="h-empty">Nothing has happened in the window.</p>') +
+      '<p class="h-sub">Also as a feed for any feed reader: <a href="/api/netwatch/feed.atom">feed.atom</a>.</p></section>';
+  }
+
+  // warnings: signals fading and repeaters that go dark at night, before
+  // anything fails.
+  function warnings(st) {
+    var items = (st.drift || []).map(function (d) {
+      return '<li><a href="#/nodes/' + encodeURIComponent(d.node) + '">' + esc(d.name) + '</a>: signal at ' + esc(d.observerName) + ' down from ' + dB(d.before) + ' to ' + dB(d.now) + ' over the last 3 days</li>';
+    }).concat((st.nightly || []).map(function (n) {
+      return '<li><a href="#/nodes/' + encodeURIComponent(n.node) + '">' + esc(n.name) + '</a> goes dark at night (' + ('0' + n.darkFrom).slice(-2) + ':00–' + ('0' + n.darkTo).slice(-2) + ':00 UTC, ' + n.nights + ' of the last 7 nights)' +
+        (n.earlier ? ', and now ' + (Math.round(n.shiftH * 10) / 10) + ' h earlier than the nights before: a battery losing ground' : '') + '</li>';
+    }));
+    return '<section class="h-card" id="hWarn"><h3>Early warnings</h3>' +
+      (items.length ? '<ul class="h-warn">' + items.join('') + '</ul>' : '<p class="h-empty">No early warnings: no repeater’s signal is fading, and none goes dark at night.</p>') +
+      '<p class="h-sub">A signal is fading when, at the same observer, the last 3 days sit 6 dB or more below the usual.</p></section>';
   }
 
   function render(st) {
@@ -137,7 +221,9 @@
     var worse = st.routes.filter(function (r) { return judgeAny(r).text === 'Worse'; });
     document.getElementById('hSub').textContent = st.judged + ' repeaters judged · last complete hour ' + when(st.hour) +
       ' · each one compared with the same ' + st.slotHours + ' hours on the previous ' + st.days + ' days';
-    var html = '<div class="h-stats">' +
+    var html = (st.feed && st.feed.down ? '<div class="h-card h-feed" id="hFeed" role="alert"><b>The packet feed has stopped</b> since ' + esc(when(st.feed.since)) +
+      '. Every observer went quiet at once, so the problem is the feed, not the mesh, and nothing is judged until it is back.</div>' : '') +
+      '<div class="h-stats">' +
       stat('hQuiet', st.open.length, st.open.length === 1 ? 'repeater gone quiet' : 'repeaters gone quiet', st.open.length > 0) +
       stat('hNet', net == null ? '—' : net + '%', 'all traffic, last ' + st.slotHours + ' h vs usual', net != null && net < 50) +
       stat('hObs', quietObs.length, quietObs.length === 1 ? 'observer quiet' : 'observers quiet', quietObs.length > 0) +
@@ -152,35 +238,37 @@
       '</div></section>' +
       '<section class="h-card"><h3>Where</h3><div class="h-map" id="hMap"></div><p class="h-sub">Red: gone quiet. Grey: back recently.</p></section>' +
       '</div>';
+    html += '<div class="h-grid">' + timeline(st) + warnings(st) + '</div>';
     if (st.routes.length) {
       html += '<section class="h-card"><h3>Routes</h3><p class="h-sub">Packets that pass the first repeater and then the second, against usual.</p>' +
         '<div class="h-scroll"><table class="h-table" id="hRoutesTable"><thead><tr><th>Route</th><th>Last day</th><th class="num">Packets</th><th class="num">Last ' + st.slotHours + ' h</th><th>Days</th><th>From → to</th><th></th></tr></thead><tbody>' +
         st.routes.map(function (r, idx) {
           var v = judgeAny(r);
-          var detail = r.reach ? pc(r.reach.last) + ' of ' + sentOf(r.reach) + ' got through, usually ' + pc(r.reach.usual) : (v.pct || '');
+          var detail = r.reach ? pc(r.reach.last) + ' of ' + sentOf(r.reach) + ' got through, usually ' + pc(r.reach.usual) + range(r.reach) : (v.pct || '');
           return '<tr><td><b>' + esc(r.name) + '</b></td>' +
             '<td><span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> <span class="h-num">' + esc(detail) + '</span>' +
-              (v.note ? '<div class="h-note">' + esc(v.note) + '</div>' : '') + '</td>' +
+              (v.note ? '<div class="h-note">' + esc(v.note) + '</div>' : (r.reach ? reachMore(r.reach) : '')) + '</td>' +
             '<td class="num">' + r.lastDay + ' <span class="h-muted">/ ' + r.usualDay + '</span></td>' +
             '<td class="num">' + r.now + ' <span class="h-muted">/ ' + r.usual + '</span></td>' +
-            '<td>' + (r.reach ? reachBars(r.reach.daily.slice(-14)) : bars(r.daily.slice(-14))) + '</td>' +
+            '<td>' + (r.reach ? reachBars(r.reach.daily.slice(-14), 140, 34, r.reach, st.hour) : bars(r.daily.slice(-14))) + '</td>' +
             '<td>' + esc(r.fromName) + ' → ' + esc(r.toName) + '</td>' +
             '<td><button type="button" class="btn" data-probe="' + idx + '">Probe</button></td></tr>';
-        }).join('') + '</tbody></table></div><p class="h-sub">Judged on the share of adverts (or channel messages, for routes set to chat) that pass the first repeater and then the second, against its usual (the median day of the previous ' + st.days + '); Worse below three-quarters of usual. Packets are the count of everything that took the route. One bar per day, the bright one is yesterday.</p></section>';
+        }).join('') + '</tbody></table></div><p class="h-sub">Judged on the share of adverts (or channel messages, for routes set to chat) that pass the first repeater and then the second, against the range it falls in on a normal day (from the previous ' + st.days + ' days, wider when they swing or when few adverts were sent). After a step to a new level, the level before stays the usual for two weeks. Packets are the count of everything that took the route. One bar per day, the bright one is yesterday.</p></section>';
     } else {
       html += '<section class="h-card"><h3>Routes</h3><p class="h-empty">No routes configured. Name two repeaters in <code>netWatch.routes</code> in config.json to follow the traffic between them.</p></section>';
     }
     if (st.corridors.length) {
-      html += '<section class="h-card"><h3>Corridors</h3><p class="h-sub" id="hCorrNote">Each way, judged on the share of adverts from repeaters in one zone that reached the other: adverts come on every repeater\u2019s own schedule, so the share is steady where traffic is not. Where a neighbour no longer sends its adverts across, the corridor is set to channel messages instead, counted from the first repeater that relayed them. One bar per day over the window, the bright one is yesterday; faint stubs are days with too few adverts to say.</p><div class="h-corridors">' + st.corridors.map(function (c) {
+      html += '<section class="h-card"><h3>Corridors</h3><p class="h-sub" id="hCorrNote">Each way, judged on the share of adverts from repeaters in one zone that reached the other: adverts come on every repeater\u2019s own schedule, so the share is steady where traffic is not. Where a neighbour no longer sends its adverts across, the corridor is set to channel messages instead, counted from the first repeater that relayed them. One bar per day over the window (hover for the day), the bright one is yesterday; the shaded band is the range it usually falls in, and faint stubs are days with too few adverts to say. A worse day names its likely cause: the repeater whose share of the crossings fell away while the ones before it kept carrying.</p><div class="h-corridors">' + st.corridors.map(function (c) {
         var dirs = (c.directions || []).map(function (d) {
           var v = judgeAny(d);
           var head = d.reach
-            ? '<div><b>' + pc(d.reach.last) + ' of ' + d.reach.lastAdverts + ' ' + sentOf(d.reach) + '</b> from ' + esc(d.from) + ' got through yesterday, usually ' + pc(d.reach.usual) +
-              ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span></div>'
+            ? '<div><b>' + pc(d.reach.last) + ' of ' + d.reach.lastAdverts + ' ' + sentOf(d.reach) + '</b> from ' + esc(d.from) + ' got through yesterday, usually ' + pc(d.reach.usual) + range(d.reach) +
+              ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span></div>' + (v.note ? '' : reachMore(d.reach))
             : '<div>' + d.lastDay + ' yesterday, usually ' + d.usualDay + ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> ' + v.pct + '</div>';
           return '<div class="h-dir"><div><b>' + esc(d.from) + ' → ' + esc(d.to) + '</b></div>' + head +
             (v.note ? '<div class="h-note">' + esc(v.note) + '</div>' : '') +
-            (d.reach ? reachBars(d.reach.daily, 260, 36) + '<div class="h-muted">All packets: ' + d.lastDay + ' yesterday, usually ' + d.usualDay + '</div>' : bars(d.daily, 260, 36)) +
+            (d.reroute ? '<div class="h-note">Rerouted from ' + esc(d.reroute.fromName) + ' to ' + esc(d.reroute.toName) + ' on ' + esc(day(d.reroute.since)) + '</div>' : '') +
+            (d.reach ? reachBars(d.reach.daily, 260, 36, d.reach, st.hour) + '<div class="h-muted">All packets: ' + d.lastDay + ' yesterday, usually ' + d.usualDay + '</div>' : bars(d.daily, 260, 36)) +
             (d.carriers.length ? '<div class="h-muted">Carried by ' + d.carriers.map(function (k) { return esc(k.name) + ' (' + k.packets + ')'; }).join(', ') + '</div>' : '') +
             '</div>';
         }).join('');
@@ -193,7 +281,7 @@
       st.observers.slice().sort(function (a, b) { return (b.quiet - a.quiet) || (b.usual - a.usual); }).map(function (o) {
         return '<tr><td>' + esc(o.name) + '</td><td class="num">' + o.now + '</td><td class="num">' + o.usual + '</td><td>' +
           (o.quiet ? '<span class="h-chip is-bad">Quiet</span>' : '<span class="h-chip">Normal</span>') + '</td></tr>';
-      }).join('') + '</tbody></table></div><p class="h-sub">When an observer goes quiet, the repeaters mostly heard through it are not blamed.</p></section>';
+      }).join('') + '</tbody></table></div><p class="h-sub">Repeaters are compared only through observers that are up both now and in their usual, so an observer going offline is never blamed on the repeaters it hears.</p></section>';
     body.innerHTML = html;
 
     body.querySelectorAll('[data-probe]').forEach(function (b) {
@@ -211,6 +299,10 @@
       if (!s || !el.isConnected) return;
       var n = Math.min(72, s.relays.length);
       el.innerHTML = spark(s.relays.slice(-n), s.expected.slice(-n), 180, 42);
+      var deliv = el.parentNode && el.parentNode.querySelector('.h-deliv'), dl = s.advertDelivery || [];
+      if (deliv && s.advertEveryMin && dl.length && dl[dl.length - 1] >= 0) {
+        deliv.textContent = 'Adverts every ' + every(s.advertEveryMin) + ' · ' + pc(dl[dl.length - 1]) + ' heard yesterday';
+      }
     }).catch(function () {});
   }
 
