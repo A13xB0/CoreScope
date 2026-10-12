@@ -319,11 +319,19 @@
           '<div class="h-muted">Both ways: ' + c.lastDay + ' yesterday, usually ' + c.usualDay + (total.pct ? ' (' + total.pct + ')' : '') + '</div></div>';
       }).join('') + '</div></section>';
     }
-    html += '<section class="h-card"><h3>Observers</h3><div class="h-scroll"><table class="h-table"><thead><tr><th>Observer</th><th class="num">Last ' + st.slotHours + ' h</th><th class="num">Usual</th><th></th></tr></thead><tbody>' +
-      st.observers.slice().sort(function (a, b) { return (b.quiet - a.quiet) || (b.usual - a.usual); }).map(function (o) {
-        return '<tr><td>' + esc(o.name) + '</td><td class="num">' + o.now + '</td><td class="num">' + o.usual + '</td><td>' +
-          (o.quiet ? '<span class="h-chip is-bad">Quiet</span>' : '<span class="h-chip">Normal</span>') + '</td></tr>';
-      }).join('') + '</tbody></table></div>' + how('hObsHow', 'Repeaters are compared only through observers that are up both now and in their usual, so an observer going offline is never blamed on the repeaters it hears.') + '</section>';
+    // Only the quiet observers up front; those hearing as usual are folded.
+    var obsRow = function (o) {
+      return '<tr><td>' + esc(o.name) + '</td><td class="num">' + o.now + '</td><td class="num">' + o.usual + '</td><td>' +
+        (o.quiet ? '<span class="h-chip is-bad">Quiet</span>' : '<span class="h-chip">Normal</span>') + '</td></tr>';
+    };
+    var obsHead = '<thead><tr><th>Observer</th><th class="num">Last ' + st.slotHours + ' h</th><th class="num">Usual</th><th></th></tr></thead>';
+    var normalObs = st.observers.filter(function (o) { return !o.quiet; }).sort(function (a, b) { return b.usual - a.usual; });
+    html += '<section class="h-card"><h3>Observers</h3>' +
+      (quietObs.length ? '<div class="h-scroll"><table class="h-table" id="hObsTable">' + obsHead + '<tbody>' + quietObs.map(obsRow).join('') + '</tbody></table></div>'
+        : '<p class="h-sub">Every observer is hearing as usual.</p>') +
+      (normalObs.length ? '<details class="h-more" id="hObsNormal"><summary>' + normalObs.length + ' observer' + (normalObs.length === 1 ? '' : 's') + ' hearing as usual</summary>' +
+        '<div class="h-scroll"><table class="h-table">' + obsHead + '<tbody>' + normalObs.map(obsRow).join('') + '</tbody></table></div></details>' : '') +
+      how('hObsHow', 'Repeaters are compared only through observers that are up both now and in their usual, so an observer going offline is never blamed on the repeaters it hears.') + '</section>';
     body.innerHTML = html;
 
     body.querySelectorAll('[data-probe]').forEach(function (b) {
