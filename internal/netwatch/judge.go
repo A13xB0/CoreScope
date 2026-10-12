@@ -1,6 +1,9 @@
 package netwatch
 
-import "sort"
+import (
+	"math"
+	"sort"
+)
 
 // Kinds of incident.
 const (
@@ -12,8 +15,14 @@ const (
 )
 
 // surpriseChance is how unlikely a quiet slot must be, by chance alone,
-// before a repeater is flagged.
-const surpriseChance = 1e-4
+// before a repeater is flagged. A repeater still adverting has only one sign
+// against it, so not relaying needs much stronger evidence, and enough
+// traffic that its absence matters.
+const (
+	surpriseChance      = 1e-4
+	notRelayingChance   = 1e-6
+	notRelayingMinUsual = 30
+)
 
 // judgeable says whether a slot that usually holds this many packets could
 // ever be surprising enough when nothing at all arrives.
@@ -26,6 +35,9 @@ type matchedSlot struct {
 	now, usual int
 	days       []float64 // the same hours on each baseline day
 	observers  int
+	// onAir marks the baseline days its adverts were heard in the slot, so a
+	// quiet day then was quiet traffic, not an outage.
+	onAir []bool
 }
 
 // Baseline days whose slot fell inside one of the repeater's own incidents
@@ -33,13 +45,18 @@ type matchedSlot struct {
 func (w *Watch) matched(byObs map[string]ring, t int64, quiet map[string]bool, pk string) matchedSlot {
 	s := int64(w.opt.Slot)
 	var use []int64 // the end hour of each baseline day's slot that counts
-	for d := 1; d <= w.opt.Days; d++ {
+	for d := 1; d <= w.baseDays(t); d++ {
 		e := t - 24*int64(d)
 		if !w.duringIncident(pk, e-s+1, e) {
 			use = append(use, e)
 		}
 	}
-	m := matchedSlot{days: make([]float64, len(use))}
+	m := matchedSlot{days: make([]float64, len(use)), onAir: make([]bool, len(use))}
+	if nd := w.nodes[pk]; nd != nil {
+		for i, e := range use {
+			m.onAir[i] = nd.adverts.sum(w, e-s+1, e) > 0
+		}
+	}
 	base := make([]int, len(use))
 	tmp := make([]int, len(use))
 	for obs, r := range byObs {
@@ -83,7 +100,19 @@ func quietChance(rawUsual int, m matchedSlot) float64 {
 	for i, v := range m.days {
 		days[i] = v / f
 	}
-	return lowerTail(int(float64(m.now)/f), float64(m.usual)/f, days)
+	p := lowerTail(int(float64(m.now)/f), float64(m.usual)/f, days)
+	// If it was this quiet on days it was plainly on air, that is how often
+	// it happens.
+	same := 0
+	for i, v := range m.days {
+		if m.onAir[i] && v <= float64(m.now) {
+			same++
+		}
+	}
+	if len(m.days) > 0 {
+		p = math.Max(p, float64(same)/float64(len(m.days)))
+	}
+	return p
 }
 
 // FeedStatus says whether the packet feed itself has stopped: every
@@ -316,4 +345,43 @@ func (w *Watch) nightlyList(t int64) []Nightly {
 		return out[i].Node < out[j].Node
 	})
 	return out
+}
+
+// Explanation is how a repeater was judged at an hour: the evidence behind
+// a verdict, or behind the lack of one.
+type Explanation struct {
+	Hour          int64   `json:"hour"`
+	Now           int     `json:"now"`   // relays in the slot ending at Hour
+	Usual         int     `json:"usual"` // usually, all observers
+	MatchedNow    int     `json:"matchedNow"`
+	MatchedUsual  int     `json:"matchedUsual"`
+	Observers     int     `json:"observers"` // up both now and in the usual
+	Chance        float64 `json:"chance"`    // of a slot this quiet by chance
+	AdvertGapH    int     `json:"advertGapH"`
+	LastAdvert    int64   `json:"lastAdvert"`
+	AdvertSilent  bool    `json:"advertSilent"`
+	AdvertsInSlot int     `json:"advertsInSlot"`
+	Nightly       bool    `json:"nightly"`
+	FeedDown      bool    `json:"feedDown"`
+}
+
+// Explain reports how pk is judged at hour t.
+func (w *Watch) Explain(pk string, t int64) Explanation {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	e := Explanation{Hour: t, FeedDown: w.feed.Down}
+	nd := w.nodes[pk]
+	if nd == nil {
+		return e
+	}
+	quiet := w.quietObservers(t)
+	e.Now, e.Usual = w.slot(nd.relays, t)
+	m := w.matched(nd.byObs, t, quiet, pk)
+	e.MatchedNow, e.MatchedUsual, e.Observers = m.now, m.usual, m.observers
+	e.Chance = quietChance(e.Usual, m)
+	silent, gap, last, _ := w.advertSilence(nd, t)
+	e.AdvertSilent, e.AdvertGapH, e.LastAdvert = silent, gap, last
+	e.AdvertsInSlot = nd.adverts.sum(w, t-int64(w.opt.Slot)+1, t)
+	_, e.Nightly = w.nightly(nd, t)
+	return e
 }

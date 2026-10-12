@@ -8,25 +8,19 @@ import (
 // lowerTail is the chance of seeing k or fewer when about mean are expected
 // and the samples (the same hours on earlier days) say how much it usually
 // varies. Counts that vary more than chance alone use a negative binomial,
-// else Poisson. The variance is trimmed (the most extreme 15% at each end
-// left out), so one or two earlier outages do not blunt it, while a repeater
-// that is often near nothing still reads as bursty.
+// else Poisson. The spread is taken from the middle half of the samples, so
+// a few earlier outages do not blunt it, while a repeater that is often near
+// nothing still reads as bursty.
 func lowerTail(k int, mean float64, samples []float64) float64 {
 	if mean <= 0 {
 		return 1
 	}
-	if v := trimmedVariance(samples); v > mean {
+	if sd := spread(samples); sd*sd > mean {
+		v := sd * sd
 		r := mean * mean / (v - mean)
 		return negBinCDF(k, r, r/(r+mean))
 	}
 	return poissonCDF(k, mean)
-}
-
-func trimmedVariance(x []float64) float64 {
-	s := append([]float64(nil), x...)
-	sort.Float64s(s)
-	cut := len(s) * 15 / 100
-	return variance(s[cut : len(s)-cut])
 }
 
 func variance(x []float64) float64 {
@@ -70,18 +64,26 @@ func negBinCDF(k int, r, p float64) float64 {
 	return math.Min(sum, 1)
 }
 
-// spread is a robust standard deviation: 1.4826 times the median absolute
-// deviation, so one odd day does not widen it.
+// spread is a robust standard deviation from the interquartile range, so a
+// few odd days do not widen it, and many equal days do not shrink it to
+// nothing (as the median absolute deviation would).
 func spread(x []float64) float64 {
 	if len(x) < 2 {
 		return 0
 	}
-	m := medianF(x)
-	d := make([]float64, len(x))
-	for i, v := range x {
-		d[i] = math.Abs(v - m)
+	return (quantile(x, 0.75) - quantile(x, 0.25)) / 1.349
+}
+
+// quantile interpolates between the sorted values.
+func quantile(x []float64, q float64) float64 {
+	s := append([]float64(nil), x...)
+	sort.Float64s(s)
+	pos := q * float64(len(s)-1)
+	i := int(pos)
+	if i+1 >= len(s) {
+		return s[len(s)-1]
 	}
-	return 1.4826 * medianF(d)
+	return s[i] + (pos-float64(i))*(s[i+1]-s[i])
 }
 
 func medianF(a []float64) float64 {
