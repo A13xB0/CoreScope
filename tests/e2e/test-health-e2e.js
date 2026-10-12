@@ -39,7 +39,8 @@ const STATUS = {
       { from: 'Central belt', to: 'Highlands', lastDay: 615, usualDay: 840, daily: [850, 840, 900, 615], carriers: [{ node: K('a'), name: 'Keir Hill', packets: 3 }] }] },
     { name: 'Scotland and North East England', a: 'Scotland', b: 'North East England', lastDay: 612, usualDay: 2, daily: [0, 0, 0, 0, 0, 0, 40, 612], carriers: [],
       directions: [
-        { from: 'Scotland', to: 'North East England', lastDay: 400, usualDay: 1, daily: [0, 0, 0, 0, 0, 0, 25, 400], carriers: [] },
+        { from: 'Scotland', to: 'North East England', lastDay: 400, usualDay: 1, daily: [0, 0, 0, 0, 0, 0, 25, 400], carriers: [],
+          reach: { basis: 'chat', last: 0.35, usual: 0, lastAdverts: 536, lastReached: 188, daily: [0, 0, 0, 0.12, 0.35] } },
         { from: 'North East England', to: 'Scotland', lastDay: 212, usualDay: 1, daily: [0, 0, 0, 0, 0, 0, 15, 212], carriers: [],
           reach: { basis: 'chat', last: 0.2, usual: 0.6, lastAdverts: 50, lastReached: 10, daily: [0.6, 0.62, 0.58, 0.2] } }] }],
   routes: [
@@ -136,6 +137,7 @@ async function openPage(browser, { on }) {
 
   await step('a chat-based direction counts channel messages, not adverts', async () => {
     const dirs = await page.$$eval('.h-corr:nth-child(2) .h-dir', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')));
+    assert(/New/.test(dirs[0]) && !/Normal/.test(dirs[0]), 'nothing used to cross, so it is new: ' + dirs[0]);
     assert(/20% of 50 channel messages/.test(dirs[1]) && /usually 60%/.test(dirs[1]) && /Worse/.test(dirs[1]) && !/adverts/.test(dirs[1]), 'chat reach: ' + dirs[1]);
   });
 
