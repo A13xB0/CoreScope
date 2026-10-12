@@ -56,4 +56,7 @@
   .h-inc { flex-direction: column; align-items: stretch; }
   .h-inc-chart { width: 100%; }
   .h-inc-chart svg { width: 100%; }
+  .h-probe-form label { flex-basis: 100%; }
+  .h-probe-form input { flex-basis: 100%; }
+  .h-probe-form .btn { width: 100%; min-height: 44px; }
 }

@@ -122,14 +122,15 @@
       '</div>';
     if (st.routes.length) {
       html += '<section class="h-card"><h3>Routes</h3><p class="h-sub">Packets that pass the first repeater and then the second, against usual.</p>' +
-        '<div class="h-scroll"><table class="h-table" id="hRoutesTable"><thead><tr><th>Route</th><th>From → to</th><th class="num">Last ' + st.slotHours + ' h</th><th class="num">Last day</th><th>Change</th><th>Days</th><th></th></tr></thead><tbody>' +
+        '<div class="h-scroll"><table class="h-table" id="hRoutesTable"><thead><tr><th>Route</th><th>Last day</th><th class="num">Packets</th><th class="num">Last ' + st.slotHours + ' h</th><th>Days</th><th>From → to</th><th></th></tr></thead><tbody>' +
         st.routes.map(function (r, idx) {
           var v = judge(r.lastDay, r.usualDay);
-          return '<tr><td><b>' + esc(r.name) + '</b></td><td>' + esc(r.fromName) + ' → ' + esc(r.toName) + '</td>' +
-            '<td class="num">' + r.now + ' <span class="h-muted">/ ' + r.usual + '</span></td>' +
-            '<td class="num">' + r.lastDay + ' <span class="h-muted">/ ' + r.usualDay + '</span></td>' +
+          return '<tr><td><b>' + esc(r.name) + '</b></td>' +
             '<td><span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> <span class="h-num">' + v.pct + '</span></td>' +
+            '<td class="num">' + r.lastDay + ' <span class="h-muted">/ ' + r.usualDay + '</span></td>' +
+            '<td class="num">' + r.now + ' <span class="h-muted">/ ' + r.usual + '</span></td>' +
             '<td>' + bars(r.daily.slice(-14)) + '</td>' +
+            '<td>' + esc(r.fromName) + ' → ' + esc(r.toName) + '</td>' +
             '<td><button type="button" class="btn" data-probe="' + idx + '">Probe</button></td></tr>';
         }).join('') + '</tbody></table></div><p class="h-sub">Worse or better means at least 25% below or above its usual day (the median of the previous ' + st.days + ').</p></section>';
     } else {
