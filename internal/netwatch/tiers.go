@@ -9,7 +9,12 @@ import "sort"
 type Tiers struct {
 	CoreEveryMin int // core: usually a packet through it at least this often, minutes [10]
 	CoreHours    int // core: the last this many hours are judged [2]
-	LocalSilence int // local: flagged when unheard this many hours, or its usual longest gap if more [3]
+	LocalSilence int // local: flagged when unheard at least this many hours [3]
+	// LocalGapFactor: and for longer than this many times its longest
+	// silence in the week before [1]. Local repeaters are often unheard for
+	// hours on end (coverage, not outages), so their own longest gap is the
+	// yardstick.
+	LocalGapFactor float64
 }
 
 func (t Tiers) withDefaults() Tiers {
@@ -21,6 +26,9 @@ func (t Tiers) withDefaults() Tiers {
 	}
 	if t.LocalSilence <= 0 {
 		t.LocalSilence = 3
+	}
+	if t.LocalGapFactor <= 0 {
+		t.LocalGapFactor = 1
 	}
 	return t
 }
@@ -44,7 +52,7 @@ type TierCounts struct {
 // tierOf places a repeater from the week before t (hours inside its own
 // incidents left out): core when the median hour carries a packet at least
 // every CoreEveryMin minutes; local when it is heard at least once a day
-// (gap is then its usual longest silence, the 95th percentile, in hours);
+// (gap is then its longest silence that week, in hours);
 // "" when it is too seldom heard to judge.
 func (w *Watch) tierOf(nd *node, pk string, t int64) (tier string, gap int) {
 	tc := w.opt.Tiers.withDefaults()
@@ -79,7 +87,7 @@ func (w *Watch) tierOf(nd *node, pk string, t int64) (tier string, gap int) {
 	if len(gaps) == 0 {
 		return "", 0
 	}
-	gap = gaps[int(0.95*float64(len(gaps)-1))]
+	gap = gaps[len(gaps)-1]
 	if gap > 24 {
 		return "", 0
 	}
@@ -114,18 +122,20 @@ func (w *Watch) judgeTier(pk string, nd *node, t int64, quiet map[string]bool) *
 		if m.observers == 0 || float64(m.now) > w.opt.QuietRatio*float64(m.usual) {
 			return nil
 		}
+		// A slowdown alone is one sign, over a short window: it needs the
+		// stronger evidence, as not relaying does.
 		p := quietChance(usual, m)
-		if p >= surpriseChance {
+		if p >= notRelayingChance {
 			return nil
 		}
 		return &Incident{Node: pk, Kind: KindSlowed, Tier: TierCore, Start: w.quietSince(nd.relays, t, usual, s), Flagged: t,
 			Usual: usual, Now: now, WindowH: s, Chance: p, Observers: m.observers, matchedUsual: m.usual}
 	case TierLocal:
-		// Unheard for longer than its usual longest gap, and at least
-		// LocalSilence hours.
+		// Unheard for longer than LocalGapFactor times its longest silence
+		// that week, and at least LocalSilence hours.
 		last := w.lastHeard(nd, t)
 		silence := t - last
-		if silence <= int64(gap) || silence < int64(tc.LocalSilence) {
+		if float64(silence) <= tc.LocalGapFactor*float64(gap) || silence < int64(tc.LocalSilence) {
 			return nil
 		}
 		// An observer that usually hears it must have been listening all that
