@@ -258,3 +258,26 @@ func TestDataPathRemembersAFortnight(t *testing.T) {
 		t.Errorf("flagDays=99: status %d, want 400", w.Code)
 	}
 }
+
+// Observations of one packet read days later (a fill of old history) still
+// make one packet, not one per observation.
+func TestPathIndexCountsPacketsNotObservations(t *testing.T) {
+	db := setupTestDB(t)
+	at := time.Now().UTC().Add(-10 * 24 * time.Hour)
+	mustExec(t, db, `INSERT INTO transmissions (id, raw_hex, hash, first_seen, payload_type) VALUES (1, 'AA', 'p1', ?, 5)`, at.Format("2006-01-02T15:04:05.000Z"))
+	for i, rp := range []string{`["` + pwGoyle + `"]`, `["` + pwGoyle + `","` + pwInsh + `"]`, `["` + pwKeir + `"]`} {
+		mustExec(t, db, `INSERT INTO observations (transmission_id, observer_idx, path_json, timestamp, resolved_path) VALUES (1, ?, '[]', ?, ?)`, i+1, at.Unix(), rp)
+	}
+	idx := newPathIndex(db, 21)
+	if err := idx.fill(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.txs) != 1 || len(idx.recent) != 0 {
+		t.Fatalf("packets %d, recent %d; want one packet, none recent", len(idx.txs), len(idx.recent))
+	}
+	n := 0
+	eachPath(idx.txs[0].hops, func([]nodeID) { n++ })
+	if n != 2 {
+		t.Errorf("paths kept %d, want 2 (Goyle alone is a stretch of Goyle, Insheswood)", n)
+	}
+}

@@ -202,6 +202,7 @@
       if (!f || !DIMS[f.d] || !Array.isArray(f.v)) return 'Unknown filter dimension "' + (f && f.d) + '".';
     }
     if (q.basis && q.basis !== 'all' && q.basis !== 'adverts') return 'Panel "' + p.id + '": basis must be all or adverts.';
+    if (q.flagDays !== undefined && !(q.flagDays >= 1 && q.flagDays <= 21)) return 'Panel "' + p.id + '": a flag lasts 1 to 21 days.';
     if (p.type === 'watch' && (!WATCH_END_RE.test(q.from || '') || !WATCH_END_RE.test(q.to || '') || q.from === q.to)) return 'Panel "' + p.id + '": a path watch needs two different repeaters.';
     if (p.type === 'watchlist') {
       var ws = (p.options && p.options.watches) || [];
@@ -836,8 +837,8 @@
   function chip(text, cls) { return el('span', { 'class': 'dt-chip-s' + (cls ? ' dt-' + cls : ''), text: text }); }
   function dayName(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); }
   function remember(resp) { [resp.from, resp.to].forEach(function (x) { if (x && x.key) pathNames[x.key] = x.name; }); }
-  function getPath(from, to, w, basis) {
-    var url = '/api/data/path?from=' + from + '&to=' + to + '&window=' + encodeURIComponent(w || '7d') + (basis === 'adverts' ? '&basis=adverts' : '');
+  function getPath(from, to, w, basis, flagDays) {
+    var url = '/api/data/path?from=' + from + '&to=' + to + '&window=' + encodeURIComponent(w || '7d') + (basis === 'adverts' ? '&basis=adverts' : '') + (flagDays ? '&flagDays=' + flagDays : '');
     var hit = pathCache[url];
     if (hit && Date.now() - hit.at < 60000) return hit.p;
     var p = getJSON(url).then(function (r) { remember(r); return r; });
@@ -845,10 +846,10 @@
     p.catch(function () { delete pathCache[url]; });
     return p;
   }
-  function postPaths(pairs, w, basis) {
-    var key = JSON.stringify([pairs, w, basis]), hit = pathCache[key];
+  function postPaths(pairs, w, basis, flagDays) {
+    var key = JSON.stringify([pairs, w, basis, flagDays]), hit = pathCache[key];
     if (hit && Date.now() - hit.at < 60000) return hit.p;
-    var p = fetch('/api/data/paths', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ window: w || '7d', basis: basis || 'all', pairs: pairs }) })
+    var p = fetch('/api/data/paths', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ window: w || '7d', basis: basis || 'all', flagDays: flagDays || 7, pairs: pairs }) })
       .then(function (r) { if (!r.ok) throw new Error('status ' + r.status); return r.json(); })
       .then(function (r) { (r.paths || []).forEach(remember); return r; });
     pathCache[key] = { at: Date.now(), p: p };
@@ -923,7 +924,7 @@
     var q = p.query || {}, from = subst(q.from || '', d).toLowerCase(), to = subst(q.to || '', d).toLowerCase();
     if (!KEY_RE.test(from) || !KEY_RE.test(to) || from === to) { empty(body, 'Pick two repeaters above to follow the path between them.'); return; }
     if (!body.firstChild) empty(body, 'Loading…');
-    getPath(from, to, panelWindow(p), q.basis).then(function (resp) {
+    getPath(from, to, panelWindow(p), q.basis, q.flagDays).then(function (resp) {
       if (!body.isConnected) return;
       watchBody(body, resp);
       var h = frame && frame.querySelector('h3'); if (h) h.textContent = substTitle(p.title, d);
@@ -949,7 +950,7 @@
     var addBtn = el('button', { type: 'button', 'class': 'dt-btn dt-wl-add', text: '+ Add watch' });
     addBtn.addEventListener('click', function (e) { e.stopPropagation(); openAddWatch(p, 'watchlist'); });
     if (!ws.length) { body.textContent = ''; body.appendChild(el('p', { 'class': 'dt-empty', text: 'No watches yet.' })); body.appendChild(addBtn); return; }
-    postPaths(watchPairs(ws), panelWindow(p), q.basis).then(function (r) {
+    postPaths(watchPairs(ws), panelWindow(p), q.basis, q.flagDays).then(function (r) {
       if (!body.isConnected) return;
       body.textContent = '';
       var list = el('div', { 'class': 'dt-wl' }), k = 0;
@@ -1066,6 +1067,7 @@
       chips.appendChild(add);
       rail.appendChild(chips);
     }
+    rail.appendChild(field('Keep a route change flagged for', selectOf('dtPFlag', [['7', 'A week'], ['14', 'Two weeks'], ['21', 'Three weeks']], String(q.flagDays || 7), function (v) { change(function () { if (v === '7') delete q.flagDays; else q.flagDays = +v; }); })));
     rail.appendChild(field('Count', selectOf('dtPBasis', [['all', 'Every packet'], ['adverts', 'Adverts only (steadier)']], q.basis || 'all', function (v) { change(function () { if (v === 'all') delete q.basis; else q.basis = v; }); })));
     rail.appendChild(field('Period', selectOf('dtPWin', [['', 'The dashboard’s']].concat((cfg.windows || []).map(function (w) { return [w.key, w.label]; })), q.window || '', function (v) { change(function () { if (v) q.window = v; else delete q.window; }); })));
   }

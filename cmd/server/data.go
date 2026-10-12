@@ -49,6 +49,17 @@ type DataConfig struct {
 	DashboardsFile string `json:"dashboardsFile,omitempty"`
 	// DefaultDashboard is the id of the dashboard the tab opens on.
 	DefaultDashboard string `json:"defaultDashboard,omitempty"`
+	// PathDays is how far back path watch panels remember (default 21, at
+	// most 45): a two-week flag needs the fortnight and the week before.
+	PathDays int `json:"pathDays,omitempty"`
+}
+
+// PathDays is how many days the path watch history holds.
+func (c *Config) PathDays() int {
+	if c == nil || c.Data == nil || c.Data.PathDays <= 0 {
+		return 21
+	}
+	return min(c.Data.PathDays, 45)
 }
 
 // DataEnabled reports whether the Data tab is switched on.
@@ -83,11 +94,13 @@ type dataCached struct {
 
 // dataService owns the index and answers the /api/data endpoints.
 type dataService struct {
-	db    *DB
-	areas *areamap.Map
-	layer string
-	home  string
-	days  int
+	// firstFill, when set, is closed once the first fill has run.
+	firstFill chan struct{}
+	db        *DB
+	areas     *areamap.Map
+	layer     string
+	home      string
+	days      int
 
 	now         func() time.Time
 	refreshSpan time.Duration
@@ -206,6 +219,9 @@ func (d *dataService) run(ctx context.Context) {
 	}
 	if err := d.fill(ctx); err != nil {
 		log.Printf("[data] fill failed: %v", err)
+	}
+	if d.firstFill != nil {
+		close(d.firstFill) // the path watch fills after this one, never alongside
 	}
 	tick := time.NewTicker(dataRefreshEvery)
 	defer tick.Stop()

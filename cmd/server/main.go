@@ -390,6 +390,12 @@ func main() {
 		if store != nil {
 			ds.waitFor = store.StartupLoadDone()
 		}
+		// The path watch's history fills after the Data tab's first fill
+		// (which itself waits for the packet store), never alongside it.
+		ds.firstFill = make(chan struct{})
+		srv.paths = newPathIndex(database, cfg.PathDays())
+		srv.paths.waitFor = []<-chan struct{}{ds.firstFill}
+		go srv.paths.run(context.Background())
 		go ds.run(context.Background())
 		if ds.places() {
 			log.Printf("[data] Data tab on: layer %q, %d days", ds.layer, ds.days)
