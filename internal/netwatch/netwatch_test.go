@@ -781,3 +781,103 @@ func TestNotRelayingTurnsQuietWhenTheAdvertsStopToo(t *testing.T) {
 		t.Fatalf("open %+v, want deaf quiet since hour %d", st.Open, stop)
 	}
 }
+
+// reachFeed sends n adverts an hour from origin, of which share get through
+// to the far end via relay ("" for straight through), for the days asked.
+func reachFeed(w *Watch, id *int64, h int64, origin string, n int, share float64, via, alt string) {
+	for i := 0; i < n; i++ {
+		*id++
+		path := []string{"mid"}
+		if float64(i) < share*float64(n) {
+			path = []string{"mid", via, "s1"}
+			if via == "" {
+				path = []string{"mid", "s1"}
+			}
+		} else if alt != "" {
+			path = []string{"mid", alt}
+		}
+		w.AddAdvertObservation(*id, h, "o", origin, path)
+	}
+}
+
+var reachZones = []Corridor{{Name: "H and C", A: Zone{Name: "Highlands", LatMin: 57.3, LatMax: 59, LonMin: -6, LonMax: -3}, B: Zone{Name: "Central belt", LatMin: 55.5, LatMax: 56.4, LonMin: -5, LonMax: -2}}}
+var reachGrid = grid{"n1": {57.5, -4.2}, "mid": {57.4, -4.0}, "keir": {57.17, -2.3}, "goyle": {56.93, -2.52}, "s1": {55.9, -3.2}}
+
+// When a share drops and stays down, the corridor says since when and keeps
+// comparing with the level before, even once most of the baseline is after.
+func TestAReachThatDroppedSaysSinceWhenAndKeepsTheOldUsual(t *testing.T) {
+	w := New(Options{WindowHours: 26 * day, Days: 14, Corridors: reachZones}, reachGrid)
+	var id int64
+	base := int64(1008)
+	for h := int64(0); h < 26*day; h++ {
+		share := 0.9
+		if h >= 16*day {
+			share = 0.3
+		}
+		reachFeed(w, &id, base+h, "n1", 8, share, "keir", "")
+		w.Evaluate(base + h)
+	}
+	r := w.Status().Corridors[0].Directions[0].Reach
+	if r == nil || r.Since == nil || *r.Since != base+16*day || r.Usual < 0.85 || r.Verdict != "worse" {
+		t.Fatalf("reach %+v, want worse since day 16 against about 0.9", r)
+	}
+}
+
+// A share is judged against the range it usually falls in: a share that
+// swings from day to day is not worse for an ordinary low day.
+func TestAReachIsJudgedAgainstItsUsualRange(t *testing.T) {
+	w := New(Options{Days: 14, WindowHours: 20 * day, Corridors: reachZones}, reachGrid)
+	var id int64
+	swings := []float64{0.8, 0.5, 0.9, 0.55, 0.85, 0.6, 0.75, 0.9, 0.5, 0.8, 0.6, 0.85, 0.55, 0.9, 0.7, 0.8, 0.6, 0.85, 0.9, 0.55}
+	for h := int64(0); h < 20*day; h++ {
+		reachFeed(w, &id, 1008+h, "n1", 2, swings[h/day], "keir", "")
+		w.Evaluate(1008 + h)
+	}
+	r := w.Status().Corridors[0].Directions[0].Reach
+	if r == nil || r.Verdict != "normal" || r.Low > 0.55 {
+		t.Fatalf("reach %+v, want normal with a range that allows its low days", r)
+	}
+}
+
+// When a corridor gets worse, the watch names the repeater whose crossings
+// fell away; and when its main carrier changes, it says it was rerouted.
+func TestAWorseCorridorNamesItsLikelyCauseAndReroute(t *testing.T) {
+	w := New(Options{Days: 14, WindowHours: 20 * day, Corridors: reachZones}, reachGrid)
+	var id int64
+	for h := int64(0); h < 20*day; h++ {
+		if h < 19*day {
+			reachFeed(w, &id, 1008+h, "n1", 10, 0.9, "keir", "")
+		} else { // keir is gone; a few get through via goyle
+			reachFeed(w, &id, 1008+h, "n1", 10, 0.3, "goyle", "")
+		}
+		w.Evaluate(1008 + h)
+	}
+	d := w.Status().Corridors[0].Directions[0]
+	if d.Reach == nil || d.Reach.Verdict != "worse" || d.Reach.Cause == nil || d.Reach.Cause.Node != "keir" || d.Reach.Cause.Explains < 0.9 {
+		t.Fatalf("reach %+v, want worse with keir as the cause", d.Reach)
+	}
+	if d.Reroute == nil || d.Reroute.From != "keir" || d.Reroute.To != "goyle" || d.Reroute.Since != 1008+19*day {
+		t.Errorf("reroute %+v, want keir to goyle on day 19", d.Reroute)
+	}
+}
+
+// With a target, a corridor says whether it is burning through it fast (the
+// last 6 and 24 hours both under) or slowly (the last 24 and 72 hours).
+func TestACorridorWithATargetSaysHowFastItIsBurning(t *testing.T) {
+	zones := []Corridor{reachZones[0]}
+	zones[0].Target = 0.7
+	w := New(Options{Days: 14, WindowHours: 20 * day, Corridors: zones}, reachGrid)
+	var id int64
+	for h := int64(0); h < 20*day; h++ {
+		share := 0.9
+		if h >= 20*day-12 {
+			share = 0.2
+		}
+		reachFeed(w, &id, 1008+h, "n1", 10, share, "keir", "")
+		w.Evaluate(1008 + h)
+	}
+	r := w.Status().Corridors[0].Directions[0].Reach
+	if r == nil || r.Target != 0.7 || r.Burn != "fast" {
+		t.Fatalf("reach %+v, want burning fast against 0.7", r)
+	}
+}
