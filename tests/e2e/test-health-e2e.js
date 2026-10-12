@@ -35,7 +35,8 @@ const STATUS = {
     { node: K('i'), name: 'Long Gone', start: '2026-09-25T10:00:00Z', flagged: '2026-09-26T10:00:00Z', usual: 3, now: 0, advertEveryH: 12,
       kind: 'unheard', tier: 'local', windowH: 280, heardEveryH: 14, observers: 2, repeats: 1 }],
   tiers: { core: 38, local: 104 },
-  recent: [{ node: K('b'), name: 'Tarbat RPT', lat: 57.83, lon: -3.83, start: '2026-10-04T06:00:00Z', flagged: '2026-10-04T11:00:00Z', end: '2026-10-06T10:00:00Z', usual: 208, now: 2, advertEveryH: 2, kind: 'quiet', chance: 1e-6, observers: 12, repeats: 1 }],
+  recent: [{ node: K('b'), name: 'Tarbat RPT', lat: 57.83, lon: -3.83, start: '2026-10-04T06:00:00Z', flagged: '2026-10-04T11:00:00Z', end: '2026-10-06T10:00:00Z', usual: 208, now: 2, advertEveryH: 2, kind: 'quiet', chance: 1e-6, observers: 12, repeats: 1 }]
+    .concat(['j', 'k', 'l'].map((c, n) => ({ node: K(c), name: 'Back ' + c, start: '2026-10-03T06:00:00Z', flagged: '2026-10-03T09:00:00Z', end: '2026-10-0' + (5 - n) + 'T10:00:00Z', usual: 30, now: 0, advertEveryH: 2, kind: 'quiet', observers: 3, repeats: 1 }))),
   feed: { down: false },
   events: [
     { hour: '2026-10-06T23:00:00Z', kind: 'quiet', node: K('a'), name: 'Keir Hill', text: 'Keir Hill went quiet' },
@@ -143,6 +144,32 @@ async function openPage(browser, { on, feedDown }) {
     const cards = await page.$$eval('#hOpen .h-inc', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')));
     assert(/Core/.test(cards[0]) && /in 2 h/.test(cards[0]), 'core: ' + cards[0]);
     assert(/Glen Local/.test(cards[1]) && /Local/.test(cards[1]) && /Not heard/.test(cards[1]) && /usually heard at least every 2 h/i.test(cards[1]), 'local: ' + cards[1]);
+  });
+
+  await step('each incident is one line until asked for its evidence', async () => {
+    const first = await page.$('#hOpen > .h-list > details.h-inc');
+    assert(first, 'incidents are folded rows');
+    assert(!(await first.evaluate((d) => d.open)), 'closed to start with');
+    assert(/Keir Hill/.test(await first.$eval('summary', (s) => s.textContent)) && /since/i.test(await first.$eval('summary', (s) => s.textContent)), 'the row names it and says since when');
+    assert(!(await page.isVisible('#hOpen details.h-inc >> text=judged through')), 'evidence hidden');
+    await first.$eval('summary', (s) => s.click());
+    assert(await page.isVisible('#hOpen details.h-inc >> text=judged through'), 'evidence shown on click');
+  });
+
+  await step('local repeaters not heard lately are grouped and folded', async () => {
+    assert(/Local repeaters not heard lately \(1\)/.test(await page.textContent('#hLocal summary')), await page.textContent('#hLocal summary'));
+    assert(!(await page.$eval('#hLocal', (d) => d.open)), 'folded');
+  });
+
+  await step('only the latest few back and the latest events are shown, the rest behind more', async () => {
+    assert((await page.$$('#hBack > .h-inc')).length === 3, 'three back');
+    assert(/1 more/.test(await page.textContent('#hBack details summary')), 'the rest folded');
+    assert((await page.$$('#hTimeline .h-events > li')).length <= 6, 'six events at most up front');
+  });
+
+  await step('how each section is judged is folded away', async () => {
+    assert(!(await page.isVisible('#hCorrNote')), 'corridor note hidden');
+    assert(await page.isVisible('#hCorridorsHow summary'), 'a link to it');
   });
 
   await step('repeaters silent for over a week are kept apart, folded away', async () => {
