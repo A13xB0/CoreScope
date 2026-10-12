@@ -110,7 +110,7 @@ func (w *Watch) judgeTier(pk string, nd *node, t int64, quiet map[string]bool) *
 		// Over a window this short an observer going offline does not show as
 		// quiet yet, so those not listening at their usual level are left out
 		// too.
-		m := w.matchedN(nd.byObs, t, w.deafOver(quiet, t-int64(s)+1, t), pk, s)
+		m := w.matchedN(nd.byObs, t, w.deafOver(nd, quiet, t-int64(s)+1, t), pk, s)
 		if m.observers == 0 || float64(m.now) > w.opt.QuietRatio*float64(m.usual) {
 			return nil
 		}
@@ -130,7 +130,7 @@ func (w *Watch) judgeTier(pk string, nd *node, t int64, quiet map[string]bool) *
 		}
 		// An observer that usually hears it must have been listening all that
 		// time: an observer going offline takes hours to show as quiet.
-		n := w.listening(nd.byObs, last+1, t)
+		n := w.listening(nd, last+1, t)
 		if n == 0 {
 			return nil
 		}
@@ -141,35 +141,44 @@ func (w *Watch) judgeTier(pk string, nd *node, t int64, quiet map[string]bool) *
 	return nil
 }
 
-// listening counts the observers that heard pk in the week before from and
-// whose own traffic over [from, to] is at least half the same hours' usual.
-func (w *Watch) listening(byObs map[string]ring, from, to int64) int {
+// listening counts the observers that heard nd in the week before from and
+// that were listening at their usual level over [from, to].
+func (w *Watch) listening(nd *node, from, to int64) int {
 	n := 0
-	for obs, r := range byObs {
-		if r.sum(w, from-24*7, from-1) == 0 {
-			continue
-		}
-		all := w.observers[obs]
-		if all == nil {
-			continue
-		}
-		now, usual := w.slotN(all, to, int(to-from+1))
-		if usual > 0 && 2*now >= usual {
+	for obs, r := range nd.byObs {
+		if r.sum(w, from-24*7, from-1) > 0 && w.listeningOver(nd, obs, from, to) {
 			n++
 		}
 	}
 	return n
 }
 
-// deafOver adds to quiet the observers whose own traffic over [from, to] is
-// under half the same hours' usual.
-func (w *Watch) deafOver(quiet map[string]bool, from, to int64) map[string]bool {
+// listeningOver says whether obs's traffic over [from, to], leaving out
+// nd's own (whose drop is the question), is at least half the same hours'
+// usual.
+func (w *Watch) listeningOver(nd *node, obs string, from, to int64) bool {
+	all := w.observers[obs]
+	if all == nil {
+		return false
+	}
+	hours := int(to - from + 1)
+	now, usual := w.slotN(all, to, hours)
+	if mine := nd.byObs[obs]; mine != nil {
+		mNow, mUsual := w.slotN(mine, to, hours)
+		now, usual = now-mNow, usual-mUsual
+	}
+	return usual <= 0 || 2*now >= usual
+}
+
+// deafOver adds to quiet the observers that heard nd but were not listening
+// at their usual level over [from, to].
+func (w *Watch) deafOver(nd *node, quiet map[string]bool, from, to int64) map[string]bool {
 	out := make(map[string]bool, len(quiet))
 	for k, v := range quiet {
 		out[k] = v
 	}
-	for obs, r := range w.observers {
-		if now, usual := w.slotN(r, to, int(to-from+1)); usual > 0 && 2*now < usual {
+	for obs := range nd.byObs {
+		if !w.listeningOver(nd, obs, from, to) {
 			out[obs] = true
 		}
 	}
