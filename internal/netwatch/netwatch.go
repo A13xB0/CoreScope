@@ -23,6 +23,7 @@ type Options struct {
 	WindowHours   int     // hours of history kept [360]
 	Slot          int     // hours compared at a time [6]
 	Days          int     // days of history a slot is compared with [7]
+	MinDays       int     // judging starts once this many of them are in the window [7, or Days if fewer]
 	MinUsual      int     // a slot must usually hold this many relays to be judged [20]
 	QuietRatio    float64 // flagged below this share of usual [0.2]
 	BackRatio     float64 // back at or above this share of usual [0.5]
@@ -78,6 +79,10 @@ func (o Options) withDefaults() Options {
 	def(&o.WindowHours, 360)
 	def(&o.Slot, 6)
 	def(&o.Days, 7)
+	def(&o.MinDays, 7)
+	if o.MinDays > o.Days {
+		o.MinDays = o.Days
+	}
 	def(&o.MinUsual, 20)
 	deff(&o.QuietRatio, 0.2)
 	deff(&o.BackRatio, 0.5)
@@ -625,16 +630,31 @@ func (w *Watch) slot(r ring, t int64) (now, usual int) {
 	s := int64(w.opt.Slot)
 	now = r.sum(w, t-s+1, t)
 	prev := make([]int, 0, w.opt.Days)
-	for d := int64(1); d <= int64(w.opt.Days); d++ {
+	for d := int64(1); d <= int64(w.baseDays(t)); d++ {
 		e := t - 24*d
 		prev = append(prev, r.sum(w, e-s+1, e))
 	}
 	return now, median(prev)
 }
 
-func (w *Watch) covered(t int64) bool {
-	return t-24*int64(w.opt.Days)-int64(w.opt.Slot) > w.newest-int64(w.opt.WindowHours)
+// baseDays is how many of the Days before t have their slot inside the
+// window, so a watch that has just started compares with what it has.
+func (w *Watch) baseDays(t int64) int {
+	n := 0
+	for d := 1; d <= w.opt.Days; d++ {
+		if t-24*int64(d)-int64(w.opt.Slot) < w.newest-int64(w.opt.WindowHours) {
+			break
+		}
+		n++
+	}
+	return n
 }
+
+// covered says whether hour t has enough history to be judged. Judging from
+// MinDays rather than Days means a watch that has just filled has already
+// recorded the incidents of its first weeks, and keeps them out of the
+// baseline.
+func (w *Watch) covered(t int64) bool { return w.baseDays(t) >= w.opt.MinDays }
 
 // advertSilence says whether pk's adverts have been silent at hour t for
 // AdvertGaps of its usual gaps, and what that gap is. known is false until it
@@ -776,7 +796,8 @@ func (w *Watch) Evaluate(t int64) {
 		switch {
 		case known && silent:
 			inc.Kind, inc.Start = KindQuiet, last+1
-		case known && m.observers >= 2 && w.advertsDuring(nd, t, gap) && w.neighboursCarryOn(pk, t, quietObs):
+		case known && p < notRelayingChance && m.usual >= notRelayingMinUsual && m.observers >= 2 &&
+			w.advertsDuring(nd, t, gap) && w.neighboursCarryOn(pk, t, quietObs):
 			inc.Kind, inc.Start = KindNotRelaying, t-int64(w.opt.Slot)+1
 		default:
 			continue
