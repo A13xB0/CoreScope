@@ -68,3 +68,17 @@ func TestASilentSlotStandsOutEvenWhereTrafficVariesByMultiples(t *testing.T) {
 		t.Errorf("40 in a slot that held 13 to 379: p=%g, want ordinary", p)
 	}
 }
+
+// A share that rose for a week and then fell back is dated from its fall,
+// against the week before it, not against every day in the window.
+func TestStepChangeComparesWithTheWeekBefore(t *testing.T) {
+	x := []float64{0.15, 0.15, 0.35, 0.19, 0.29, 0.46, 0.43, 0.23, 0.38, 0.24, 0.74, 0.86, 0.91, 0.87, 0.91, 0.87, 0.82, 0.36, 0.26, 0.29, 0.22}
+	ns := make([]int, len(x))
+	for i := range ns {
+		ns[i] = 200
+	}
+	at, before, down, ok := stepChange(x, ns)
+	if !ok || at != 17 || !down || before < 0.85 {
+		t.Fatalf("step at %d before %v down %v ok %v, want a fall on day 17 from about 0.87", at, before, down, ok)
+	}
+}
