@@ -144,20 +144,30 @@ func TestARepeaterComesBack(t *testing.T) {
 	}
 }
 
-func TestQuietRepeatersAreNotJudged(t *testing.T) {
+// A quiet but steady repeater is judged on how unlikely its silence is: 12
+// relays in every 6 h and then none is not chance. One whose traffic comes in
+// bursts, often nothing for hours, is not flagged for the same silence.
+func TestQuietRepeatersAreJudgedOnHowUnlikelyTheSilenceIs(t *testing.T) {
 	f := newFeed(t)
 	for h := int64(0); h < 12*day; h++ {
-		rate, adv := 2, []string(nil) // 12 relays in 6 h: below the 20 needed to judge
-		if h >= 10*day {
-			rate = 0
-		} else if h%2 == 0 {
-			adv = []string{"tiny"}
+		steady, bursty, adv := 2, 0, []string(nil)
+		if (h/6)%3 == 0 {
+			bursty = 6 // 36 in one slot, then two slots of nothing
 		}
-		f.hour(h, "obs1", map[string]int{"tiny": rate}, adv, 60)
+		if h >= 10*day {
+			steady, bursty = 0, 0
+		} else if h%2 == 0 {
+			adv = []string{"tiny", "burst"}
+		}
+		f.hour(h, "obs1", map[string]int{"tiny": steady, "burst": bursty}, adv, 60)
 		f.w.Evaluate(f.start + h)
 	}
-	if st := f.w.Status(); len(st.Open) != 0 {
-		t.Fatalf("judged a repeater with too little traffic: %+v", st.Open)
+	st := f.w.Status()
+	if len(st.Open) != 1 || st.Open[0].Node != "tiny" {
+		t.Fatalf("open %+v, want only the steady quiet repeater", st.Open)
+	}
+	if p := st.Open[0].Chance; p <= 0 || p > 1e-4 {
+		t.Errorf("chance %g, want a small probability as evidence", p)
 	}
 }
 
@@ -581,5 +591,135 @@ func TestChatBasedReachIgnoresAdverts(t *testing.T) {
 	rr := st.Routes[0].Reach
 	if rr == nil || rr.Basis != BasisChat || rr.Usual != 1 || rr.Last != 0.25 {
 		t.Errorf("border route chat reach %+v", rr)
+	}
+}
+
+// Repeaters are compared through the observers that are up both now and in
+// the usual: one that dies while its main observer is offline is still
+// caught through the others, at the right strength.
+func TestARepeaterThatDiesWhileItsMainObserverIsDownIsStillCaught(t *testing.T) {
+	f := newFeed(t)
+	obsGone, dies := int64(9*day), int64(10*day)
+	for h := int64(0); h < 12*day; h++ {
+		var adv []string
+		rate := 30
+		if h >= dies {
+			rate = 0
+		} else if h%2 == 0 {
+			adv = []string{"r1"}
+		}
+		if h < obsGone { // obs1 hears most of r1, then goes offline
+			f.hour(h, "obs1", map[string]int{"r1": rate}, adv, 60)
+		}
+		f.hour(h, "obs2", map[string]int{"r1": rate / 6}, adv, 60)
+		f.w.Evaluate(f.start + h)
+	}
+	st := f.w.Status()
+	if len(st.Open) != 1 || st.Open[0].Node != "r1" {
+		t.Fatalf("open %+v, want r1 caught through obs2", st.Open)
+	}
+	if st.Open[0].Observers != 1 {
+		t.Errorf("judged through %d observers, want 1 (obs2)", st.Open[0].Observers)
+	}
+}
+
+// When every observer goes quiet at once the feed is the problem: nothing is
+// flagged, and the status says so.
+func TestAFeedOutageFlagsNothing(t *testing.T) {
+	f := newFeed(t)
+	cut := int64(10 * day)
+	for h := int64(0); h < 10*day+10; h++ {
+		if h < cut {
+			for _, o := range []string{"obs1", "obs2", "obs3"} {
+				var adv []string
+				if h%2 == 0 {
+					adv = []string{"r" + o}
+				}
+				f.hour(h, o, map[string]int{"r" + o: 30}, adv, 60)
+			}
+		}
+		f.w.Evaluate(f.start + h) // hours with no packets at all are still judged
+	}
+	st := f.w.Status()
+	if len(st.Open) != 0 {
+		t.Errorf("flagged during a feed outage: %+v", st.Open)
+	}
+	if !st.Feed.Down || st.Feed.Since != f.start+cut {
+		t.Errorf("feed %+v, want down since hour %d", st.Feed, cut)
+	}
+}
+
+// A repeater still heard (its adverts arrive) that stopped relaying while its
+// neighbours carry on is a gray failure.
+func TestARepeaterHeardButNotRelayingIsFlagged(t *testing.T) {
+	f := newFeed(t)
+	stop := int64(10 * day)
+	for h := int64(0); h < 12*day; h++ {
+		rate := 30
+		if h >= stop {
+			rate = 0
+		}
+		f.hour(h, "obs1", map[string]int{"deaf": rate, "nb1": 30, "nb2": 30}, []string{"deaf", "nb1", "nb2"}, 60)
+		for i := 0; i < 20; i++ { // deaf usually passes traffic between its neighbours
+			f.tx++
+			path := []string{"nb1", "deaf", "nb2"}
+			if h >= stop {
+				path = []string{"nb1", "nb2"}
+			}
+			f.w.AddObservation(f.tx, f.start+h, "obs1", path)
+		}
+		f.w.Evaluate(f.start + h)
+	}
+	st := f.w.Status()
+	if len(st.Open) != 1 || st.Open[0].Node != "deaf" || st.Open[0].Kind != KindNotRelaying {
+		t.Fatalf("open %+v, want deaf flagged as heard but not relaying", st.Open)
+	}
+}
+
+// A repeater that keeps going quiet says how often.
+func TestRepeatedIncidentsAreCounted(t *testing.T) {
+	f := newFeed(t)
+	for h := int64(0); h < 21*day; h++ {
+		rate, adv := 40, []string(nil)
+		if d := h / day; d == 9 || d == 13 || d == 17 || d == 20 { // a day off now and then
+			rate = 0
+		} else if h%2 == 0 {
+			adv = []string{"r1"}
+		}
+		f.hour(h, "obs1", map[string]int{"r1": rate}, adv, 60)
+		f.w.Evaluate(f.start + h)
+	}
+	st := f.w.Status()
+	if len(st.Open) != 1 || st.Open[0].Repeats != 4 {
+		t.Fatalf("open %+v, want the fourth time it went quiet", st.Open)
+	}
+}
+
+// A repeater that goes dark every night (solar, small battery) is recognised
+// as such, and warned about when it starts going dark earlier.
+func TestNightlyDropOutsAreRecognisedAndAnEarlierStartIsWarned(t *testing.T) {
+	f := newFeed(t)
+	f.start = 500016 // midnight UTC
+	for h := int64(0); h < 14*day; h++ {
+		hh, d := h%24, h/24
+		dark := int64(20)
+		if d >= 11 {
+			dark = 18 // the battery is giving out sooner
+		}
+		on := hh >= 7 && hh < dark
+		rate, adv := 0, []string(nil)
+		if on {
+			rate = 20
+			adv = []string{"solar"}
+		}
+		f.hour(h, "obs1", map[string]int{"solar": rate, "mains": 20}, append(adv, "mains"), 60)
+		f.w.Evaluate(f.start + h)
+	}
+	st := f.w.Status()
+	if len(st.Open)+len(st.Recent) != 0 {
+		t.Errorf("nightly drop-outs raised incidents: %+v %+v", st.Open, st.Recent)
+	}
+	if len(st.Nightly) != 1 || st.Nightly[0].Node != "solar" || !st.Nightly[0].Earlier || st.Nightly[0].DarkFrom != 18 {
+		t.Fatalf("nightly %+v, want solar going dark earlier, from 18:00", st.Nightly)
 	}
 }
