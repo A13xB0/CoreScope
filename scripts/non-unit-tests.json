@@ -132,6 +132,7 @@
     "files": [
       "tests/e2e/test-region-quick-picks.js",
       "tests/e2e/test-data-tab.js",
+      "tests/e2e/test-data-watch.js",
       "tests/e2e/test-table-sort.js"
     ]
   },
