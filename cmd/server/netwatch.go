@@ -38,6 +38,17 @@ type NetWatchConfig struct {
 	// Notify, when it names a webhook, posts each incident as it opens and
 	// closes (over the internet; nothing is sent on the mesh).
 	Notify *NetWatchNotify `json:"notify,omitempty"`
+	// Tiers, when present, also judges core repeaters (traffic through them
+	// every few minutes) over a couple of hours and local ones on how long
+	// they have gone unheard. Zero values take the defaults.
+	Tiers *NetWatchTiers `json:"tiers,omitempty"`
+}
+
+// NetWatchTiers tunes the core and local tiers.
+type NetWatchTiers struct {
+	CoreEveryMinutes  int `json:"coreEveryMinutes,omitempty"`  // core: usually a packet at least this often (default 10)
+	CoreHours         int `json:"coreHours,omitempty"`         // core: judged over the last this many hours (default 2)
+	LocalSilenceHours int `json:"localSilenceHours,omitempty"` // local: unheard this long, or its usual longest gap if more (default 3)
 }
 
 // NetWatchNotify is where incident notifications go: a webhook taking
@@ -147,6 +158,9 @@ func newNetWatchService(db *DB, cfg *Config) *netWatchService {
 	}
 	for _, r := range c.Routes {
 		opt.Routes = append(opt.Routes, netwatch.Route{Name: r.Name, From: strings.ToLower(r.From), To: strings.ToLower(r.To), Basis: netwatch.Basis(strings.ToLower(r.Basis)), Target: r.Target})
+	}
+	if t := c.Tiers; t != nil {
+		opt.Tiers = &netwatch.Tiers{CoreEveryMin: t.CoreEveryMinutes, CoreHours: t.CoreHours, LocalSilence: t.LocalSilenceHours}
 	}
 	s.watch = netwatch.New(opt, s)
 	if c.Notify != nil && c.Notify.Webhook != "" {
@@ -471,11 +485,16 @@ type NetWatchIncident struct {
 	// Kind is quiet (adverts and relays stopped) or not-relaying (still
 	// heard). Chance is how likely its quiet slot was by chance, judged
 	// through Observers observers up both now and in its usual.
-	Kind      string   `json:"kind"`
-	Chance    float64  `json:"chance"`
-	Observers int      `json:"observers"`
-	Repeats   int      `json:"repeats"`
-	Affects   []string `json:"affects,omitempty"`
+	Kind string `json:"kind"`
+	// Tier is core or local when tiers are on; WindowH the hours Usual and
+	// Now cover; HeardEveryH a local repeater's usual longest silence.
+	Tier        string   `json:"tier,omitempty"`
+	WindowH     int      `json:"windowH,omitempty"`
+	HeardEveryH int      `json:"heardEveryH,omitempty"`
+	Chance      float64  `json:"chance"`
+	Observers   int      `json:"observers"`
+	Repeats     int      `json:"repeats"`
+	Affects     []string `json:"affects,omitempty"`
 }
 
 // NetWatchObserver is an observer's traffic against its usual.
@@ -609,6 +628,7 @@ type NetWatchResponse struct {
 	Corridors    []NetWatchCorridorStatus `json:"corridors"`
 	Routes       []NetWatchRouteStatus    `json:"routes"`
 	Feed         NetWatchFeedStatus       `json:"feed"`
+	Tiers        *netwatch.TierCounts     `json:"tiers,omitempty"` // how many judged repeaters are core and local
 	Nightly      []NetWatchNightly        `json:"nightly"`
 	Drift        []NetWatchDrift          `json:"drift"`
 	Events       []NetWatchEvent          `json:"events"` // newest first
@@ -737,7 +757,7 @@ func (s *netWatchService) incident(i netwatch.Incident) NetWatchIncident {
 	n := s.node(i.Node)
 	out := NetWatchIncident{Node: i.Node, Name: n.name, Start: hourISO(i.Start), Flagged: hourISO(i.Flagged),
 		Usual: i.Usual, Now: i.Now, AdvertEveryH: i.AdvertEveryH, Kind: i.Kind, Chance: i.Chance, Observers: i.Observers,
-		Repeats: i.Repeats, Affects: i.Affects}
+		Repeats: i.Repeats, Affects: i.Affects, Tier: i.Tier, WindowH: i.WindowH, HeardEveryH: i.HeardEveryH}
 	if n.placed {
 		lat, lon := n.lat, n.lon
 		out.Lat, out.Lon = &lat, &lon
@@ -812,6 +832,7 @@ func (nw *netWatchService) response() NetWatchResponse {
 			To: rt.To, ToName: nw.node(rt.To).name, Now: rt.Now, Usual: rt.Usual, LastDay: rt.LastDay, UsualDay: rt.UsualDay, Daily: rt.Daily,
 			ObserversDown: nw.observerNames(rt.ObserversDown), Reach: nw.reachResp(rt.Reach)})
 	}
+	resp.Tiers = st.Tiers
 	if st.Feed.Down {
 		v := hourISO(st.Feed.Since)
 		resp.Feed = NetWatchFeedStatus{Down: true, Since: &v}
@@ -849,6 +870,10 @@ func (nw *netWatchService) event(e netwatch.Event) NetWatchEvent {
 		out.Text = out.Name + " went quiet"
 	case netwatch.KindNotRelaying:
 		out.Text = out.Name + " stopped relaying, though it is still heard"
+	case netwatch.KindSlowed:
+		out.Text = out.Name + " slowed right down"
+	case netwatch.KindUnheard:
+		out.Text = out.Name + " has not been heard for longer than usual"
 	case "back":
 		out.Text = out.Name + " is back"
 	case "step":

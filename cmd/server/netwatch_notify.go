@@ -77,12 +77,20 @@ func (n *netWatchNotifier) link() string {
 }
 
 func (n *netWatchNotifier) opened(i NetWatchIncident) string {
-	what := "went quiet"
-	if i.Kind == "not-relaying" {
-		what = "stopped relaying, though it is still heard"
+	what := map[string]string{"not-relaying": "stopped relaying, though it is still heard", "slowed": "slowed right down",
+		"unheard": "has not been heard for longer than usual"}[i.Kind]
+	if what == "" {
+		what = "went quiet"
+	}
+	if i.Tier != "" {
+		what += " (" + i.Tier + " repeater)"
+	}
+	win := i.WindowH
+	if win == 0 {
+		win = 6
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s (since %s UTC). Usually %d relays in 6 h, now %d", i.Name, what, shortHour(i.Start), i.Usual, i.Now)
+	fmt.Fprintf(&b, "%s %s (since %s UTC). Usually %d relays in %d h, now %d", i.Name, what, shortHour(i.Start), i.Usual, win, i.Now)
 	if i.Chance > 0 {
 		fmt.Fprintf(&b, "; a quiet spell like this happens by chance about %s", oneIn(i.Chance))
 	}
