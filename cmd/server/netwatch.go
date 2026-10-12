@@ -393,6 +393,8 @@ type NetWatchRouteStatus struct {
 	LastDay  int    `json:"lastDay"`
 	UsualDay int    `json:"usualDay"`
 	Daily    []int  `json:"daily"`
+	// ObserversDown names quiet observers that usually hear most of it.
+	ObserversDown []string `json:"observersDown,omitempty"`
 }
 
 // NetWatchResponse is GET /api/netwatch.
@@ -431,15 +433,17 @@ type NetWatchRouteNode struct {
 
 // NetWatchHop is one link on a probed route against its usual.
 type NetWatchHop struct {
-	From     string    `json:"from"`
-	FromName string    `json:"fromName"`
-	To       string    `json:"to"`
-	ToName   string    `json:"toName"`
-	Now      int       `json:"now"`
-	Usual    int       `json:"usual"`
-	Quiet    bool      `json:"quiet"`
-	Series   []int     `json:"series"`
-	Expected []float64 `json:"expected"`
+	From     string `json:"from"`
+	FromName string `json:"fromName"`
+	To       string `json:"to"`
+	ToName   string `json:"toName"`
+	Now      int    `json:"now"`
+	Usual    int    `json:"usual"`
+	Quiet    bool   `json:"quiet"`
+	// ObserversDown names quiet observers that usually hear most of this hop.
+	ObserversDown []string  `json:"observersDown,omitempty"`
+	Series        []int     `json:"series"`
+	Expected      []float64 `json:"expected"`
 }
 
 // NetWatchProbeResponse is GET /api/netwatch/probe?from=&to=.
@@ -448,6 +452,24 @@ type NetWatchProbeResponse struct {
 	Route []NetWatchRouteNode `json:"route"`
 	Hops  []NetWatchHop       `json:"hops"`
 	Note  string              `json:"note,omitempty"`
+}
+
+// observerNames turns observer ids into their names.
+func (s *netWatchService) observerNames(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		if n := s.obsNames[id]; n != "" {
+			out[i] = n
+		} else {
+			out[i] = id[:min(8, len(id))]
+		}
+	}
+	return out
 }
 
 func hourISO(h int64) string { return time.Unix(h*3600, 0).UTC().Format(time.RFC3339) }
@@ -518,7 +540,8 @@ func (s *Server) handleNetWatch(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, rt := range st.Routes {
 		resp.Routes = append(resp.Routes, NetWatchRouteStatus{Name: rt.Name, From: rt.From, FromName: nw.node(rt.From).name,
-			To: rt.To, ToName: nw.node(rt.To).name, Now: rt.Now, Usual: rt.Usual, LastDay: rt.LastDay, UsualDay: rt.UsualDay, Daily: rt.Daily})
+			To: rt.To, ToName: nw.node(rt.To).name, Now: rt.Now, Usual: rt.Usual, LastDay: rt.LastDay, UsualDay: rt.UsualDay, Daily: rt.Daily,
+			ObserversDown: nw.observerNames(rt.ObserversDown)})
 	}
 	writeJSON(w, resp)
 }
@@ -560,7 +583,7 @@ func (s *Server) handleNetWatchProbe(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, h := range p.Hops {
 		resp.Hops = append(resp.Hops, NetWatchHop{From: h.From, FromName: nw.node(h.From).name, To: h.To, ToName: nw.node(h.To).name,
-			Now: h.Now, Usual: h.Usual, Quiet: h.Quiet, Series: h.Series, Expected: h.Expected})
+			Now: h.Now, Usual: h.Usual, Quiet: h.Quiet, ObserversDown: nw.observerNames(h.ObserversDown), Series: h.Series, Expected: h.Expected})
 	}
 	writeJSON(w, resp)
 }

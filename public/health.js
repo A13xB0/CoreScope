@@ -21,7 +21,10 @@
   function pctText(c) { return c == null ? '—' : (c > 0 ? '+' : c < 0 ? '−' : '') + Math.abs(c) + '%'; }
   // judge compares a last day with its usual one; with almost no usual traffic
   // a percentage means nothing, so new traffic is called new.
-  function judge(last, usual) {
+  function judge(last, usual, down) {
+    if (down && down.length) {
+      return { text: 'Observer offline', cls: 'is-warn', pct: '', note: down.join(', ') + (down.length === 1 ? ' is' : ' are') + ' offline and usually hears most of it' };
+    }
     if (usual < 10) {
       return last >= 30 ? { text: 'New', cls: 'is-good', pct: '' } : { text: 'Too little traffic', cls: '', pct: '' };
     }
@@ -102,7 +105,7 @@
     if (!body) return;
     var net = st.networkUsual ? Math.round(st.networkNow / st.networkUsual * 100) : null;
     var quietObs = st.observers.filter(function (o) { return o.quiet; });
-    var worse = st.routes.filter(function (r) { return judge(r.lastDay, r.usualDay).text === 'Worse'; });
+    var worse = st.routes.filter(function (r) { return judge(r.lastDay, r.usualDay, r.observersDown).text === 'Worse'; });
     document.getElementById('hSub').textContent = st.judged + ' repeaters judged · last complete hour ' + when(st.hour) +
       ' · each one compared with the same ' + st.slotHours + ' hours on the previous ' + st.days + ' days';
     var html = '<div class="h-stats">' +
@@ -124,9 +127,10 @@
       html += '<section class="h-card"><h3>Routes</h3><p class="h-sub">Packets that pass the first repeater and then the second, against usual.</p>' +
         '<div class="h-scroll"><table class="h-table" id="hRoutesTable"><thead><tr><th>Route</th><th>Last day</th><th class="num">Packets</th><th class="num">Last ' + st.slotHours + ' h</th><th>Days</th><th>From → to</th><th></th></tr></thead><tbody>' +
         st.routes.map(function (r, idx) {
-          var v = judge(r.lastDay, r.usualDay);
+          var v = judge(r.lastDay, r.usualDay, r.observersDown);
           return '<tr><td><b>' + esc(r.name) + '</b></td>' +
-            '<td><span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> <span class="h-num">' + v.pct + '</span></td>' +
+            '<td><span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> <span class="h-num">' + v.pct + '</span>' +
+              (v.note ? '<div class="h-note">' + esc(v.note) + '</div>' : '') + '</td>' +
             '<td class="num">' + r.lastDay + ' <span class="h-muted">/ ' + r.usualDay + '</span></td>' +
             '<td class="num">' + r.now + ' <span class="h-muted">/ ' + r.usual + '</span></td>' +
             '<td>' + bars(r.daily.slice(-14)) + '</td>' +
@@ -215,14 +219,18 @@
     fetch('/api/netwatch/probe?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to)).then(function (r) { return r.json(); }).then(function (p) {
       if (!p.route || !p.route.length) { v.textContent = p.note || 'No usual route between these two.'; return; }
       var first = p.hops.filter(function (h) { return h.quiet; })[0];
-      v.textContent = first ? 'Traffic drops off at ' + first.fromName + ' → ' + first.toName + ': ' + first.now + ' packets in the last 6 h, usually ' + first.usual + '.'
-        : 'Every hop is carrying its usual traffic.';
-      v.className = 'h-verdict' + (first ? ' is-bad' : ' is-good');
+      var blind = p.hops.filter(function (h) { return h.observersDown && h.observersDown.length; })[0];
+      if (first) v.textContent = 'Traffic drops off at ' + first.fromName + ' → ' + first.toName + ': ' + first.now + ' packets in the last 6 h, usually ' + first.usual + '.';
+      else if (blind) v.textContent = 'Can’t tell past ' + blind.fromName + ': ' + blind.observersDown.join(', ') + ', which usually hears most of it, is offline.';
+      else v.textContent = 'Every hop is carrying its usual traffic.';
+      v.className = 'h-verdict' + (first ? ' is-bad' : blind ? ' is-warn' : ' is-good');
       out.innerHTML = '<ol class="h-hops">' + p.hops.map(function (h) {
         var c = change(h.now, h.usual);
         return '<li class="h-hop' + (h.quiet ? ' is-bad' : '') + '"><div class="h-hop-text"><b>' + esc(h.fromName) + ' → ' + esc(h.toName) + '</b>' +
           '<span>' + h.now + ' packets in the last 6 h, usually ' + h.usual + ' (' + pctText(c) + ')</span></div>' +
-          '<span class="h-chip ' + (h.quiet ? 'is-bad' : '') + '">' + (h.quiet ? 'Quiet' : 'Normal') + '</span>' +
+          (h.observersDown && h.observersDown.length
+            ? '<span class="h-chip is-warn" title="' + esc(h.observersDown.join(', ')) + ' offline">Observer offline</span>'
+            : '<span class="h-chip ' + (h.quiet ? 'is-bad' : '') + '">' + (h.quiet ? 'Quiet' : 'Normal') + '</span>') +
           spark(h.series, h.expected, 220, 40) + '</li>';
       }).join('') + '</ol><p class="h-sub">Charts: the last 72 hours per hop; dashed is usual for that hour.</p>';
     }).catch(function () { v.textContent = 'The probe failed. Try again in a moment.'; });
