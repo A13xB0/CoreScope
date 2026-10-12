@@ -761,6 +761,13 @@ func (w *Watch) Evaluate(t int64) {
 	for pk, nd := range w.nodes {
 		now, usual := w.slot(nd.relays, t)
 		if nd.open != nil {
+			// Still relaying nothing and now its adverts have stopped too: it
+			// has gone quiet altogether (since its relays stopped).
+			if nd.open.Kind == KindNotRelaying {
+				if silent, _, _, known := w.advertSilence(nd, t); known && silent {
+					nd.open.Kind = KindQuiet
+				}
+			}
 			// Back once it relays half of what was usual when it was flagged,
 			// counted as it was then or like for like. Adverts are not
 			// required: a repeater far from every observer may have them heard
