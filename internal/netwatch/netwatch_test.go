@@ -547,7 +547,7 @@ func TestAdvertsNobodyRelayedDoNotCountTowardsReach(t *testing.T) {
 // flooding them), a corridor or route can be judged on channel messages
 // instead: their origin is the first repeater that relayed them.
 func TestChatBasedReachIgnoresAdverts(t *testing.T) {
-	pos := grid{"ne1": {54.9, -1.6}, "bord": {55.6, -2.0}, "s1": {55.9, -3.2}}
+	pos := grid{"ne1": {54.9, -1.6}, "bord": {55.4, -2.0}, "s1": {55.9, -3.2}}
 	ne := Zone{Name: "North East", LatMin: 54.5, LatMax: 55.5, LonMin: -2.5, LonMax: -1}
 	sc := Zone{Name: "Scotland", LatMin: 55.55, LatMax: 59, LonMin: -6, LonMax: -1.9}
 	w := New(Options{
