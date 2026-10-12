@@ -1777,15 +1777,82 @@ func rechargeTx(tx *StoreTx) int64 {
 	return d
 }
 
+// pathLen returns the number of hops in a path_json array, or 0 when it is
+// not a JSON array. It runs for every observation on every load and ingest
+// (pickBestObservation), so the usual array of plain strings is counted by
+// countStringArray without decoding; anything else is decoded.
 func pathLen(pathJSON string) int {
 	if pathJSON == "" {
 		return 0
+	}
+	if n, ok := countStringArray(pathJSON); ok {
+		return n
 	}
 	var hops []interface{}
 	if json.Unmarshal([]byte(pathJSON), &hops) != nil {
 		return 0
 	}
 	return len(hops)
+}
+
+// countStringArray counts the elements of s if it is a JSON array whose
+// elements are all strings without escapes, with JSON whitespace allowed
+// between tokens. ok is false for anything else (escapes, other element
+// types, malformed input), which the caller decodes instead.
+func countStringArray(s string) (n int, ok bool) {
+	i := skipJSONSpace(s, 0)
+	if i >= len(s) || s[i] != '[' {
+		return 0, false
+	}
+	i = skipJSONSpace(s, i+1)
+	if i < len(s) && s[i] == ']' {
+		return 0, skipJSONSpace(s, i+1) == len(s)
+	}
+	for {
+		if i, ok = skipPlainJSONString(s, i); !ok {
+			return 0, false
+		}
+		n++
+		i = skipJSONSpace(s, i)
+		if i >= len(s) {
+			return 0, false
+		}
+		switch s[i] {
+		case ',':
+			i = skipJSONSpace(s, i+1)
+		case ']':
+			return n, skipJSONSpace(s, i+1) == len(s)
+		default:
+			return 0, false
+		}
+	}
+}
+
+// skipJSONSpace returns the index of the first byte at or after i that is
+// not JSON whitespace.
+func skipJSONSpace(s string, i int) int {
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+		i++
+	}
+	return i
+}
+
+// skipPlainJSONString expects a JSON string starting at s[i] and returns
+// the index just past its closing quote. ok is false if there is no string
+// there, or it has an escape or a control character.
+func skipPlainJSONString(s string, i int) (int, bool) {
+	if i >= len(s) || s[i] != '"' {
+		return i, false
+	}
+	for i++; i < len(s) && s[i] != '"'; i++ {
+		if s[i] == '\\' || s[i] < 0x20 {
+			return i, false
+		}
+	}
+	if i >= len(s) {
+		return i, false
+	}
+	return i + 1, true
 }
 
 // indexResolvedPathHops indexes a transmission under every relay-hop pubkey
