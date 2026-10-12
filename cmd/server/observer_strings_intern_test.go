@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -151,4 +152,18 @@ func TestInternStrHitDoesNotAllocate(t *testing.T) {
 	if n := testing.AllocsPerRun(1000, func() { _ = internStr(k) }); n != 0 {
 		t.Fatalf("internStr allocates %.0f times on a hit", n)
 	}
+}
+
+// A canonical copy outlives a garbage collection: interning the same value
+// after a GC returns the copy observations already hold, not a new one, so a
+// long load or a long-running server keeps one copy per value in total.
+func TestInternStrSurvivesGC(t *testing.T) {
+	a := internStr(strings.Repeat("x", 3) + "gc-obs")
+	runtime.GC()
+	runtime.GC()
+	b := internStr(strings.Repeat("x", 3) + "gc-obs")
+	if unsafe.StringData(a) != unsafe.StringData(b) {
+		t.Fatal("interning after a GC made a second copy of a value still in use")
+	}
+	runtime.KeepAlive(a)
 }
