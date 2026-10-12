@@ -34,6 +34,9 @@
   }
   // judgeReach compares the share of adverts that got through with its usual
   // share; adverts come on every repeater's own schedule, so it is steady.
+  // sentOf names what a reach counts: adverts, or channel messages where a
+  // link is configured with basis "chat".
+  function sentOf(r) { return r.basis === 'chat' ? 'channel messages' : 'adverts'; }
   function judgeReach(r, down) {
     if (down && down.length) return judge(0, 0, down);
     var ratio = r.usual > 0 ? r.last / r.usual : 1;
@@ -152,7 +155,7 @@
         '<div class="h-scroll"><table class="h-table" id="hRoutesTable"><thead><tr><th>Route</th><th>Last day</th><th class="num">Packets</th><th class="num">Last ' + st.slotHours + ' h</th><th>Days</th><th>From → to</th><th></th></tr></thead><tbody>' +
         st.routes.map(function (r, idx) {
           var v = judgeAny(r);
-          var detail = r.reach ? pc(r.reach.last) + ' of adverts got through, usually ' + pc(r.reach.usual) : (v.pct || '');
+          var detail = r.reach ? pc(r.reach.last) + ' of ' + sentOf(r.reach) + ' got through, usually ' + pc(r.reach.usual) : (v.pct || '');
           return '<tr><td><b>' + esc(r.name) + '</b></td>' +
             '<td><span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> <span class="h-num">' + esc(detail) + '</span>' +
               (v.note ? '<div class="h-note">' + esc(v.note) + '</div>' : '') + '</td>' +
@@ -161,16 +164,16 @@
             '<td>' + (r.reach ? reachBars(r.reach.daily.slice(-14)) : bars(r.daily.slice(-14))) + '</td>' +
             '<td>' + esc(r.fromName) + ' → ' + esc(r.toName) + '</td>' +
             '<td><button type="button" class="btn" data-probe="' + idx + '">Probe</button></td></tr>';
-        }).join('') + '</tbody></table></div><p class="h-sub">Judged on the share of adverts that pass the first repeater and then the second, against its usual (the median day of the previous ' + st.days + '); Worse below three-quarters of usual. Packets are the count of everything that took the route. One bar per day, the bright one is yesterday.</p></section>';
+        }).join('') + '</tbody></table></div><p class="h-sub">Judged on the share of adverts (or channel messages, for routes set to chat) that pass the first repeater and then the second, against its usual (the median day of the previous ' + st.days + '); Worse below three-quarters of usual. Packets are the count of everything that took the route. One bar per day, the bright one is yesterday.</p></section>';
     } else {
       html += '<section class="h-card"><h3>Routes</h3><p class="h-empty">No routes configured. Name two repeaters in <code>netWatch.routes</code> in config.json to follow the traffic between them.</p></section>';
     }
     if (st.corridors.length) {
-      html += '<section class="h-card"><h3>Corridors</h3><p class="h-sub" id="hCorrNote">Each way, judged on the share of adverts from repeaters in one zone that reached the other: adverts come on every repeater\u2019s own schedule, so the share is steady where traffic is not. One bar per day over the window, the bright one is yesterday; faint stubs are days with too few adverts to say.</p><div class="h-corridors">' + st.corridors.map(function (c) {
+      html += '<section class="h-card"><h3>Corridors</h3><p class="h-sub" id="hCorrNote">Each way, judged on the share of adverts from repeaters in one zone that reached the other: adverts come on every repeater\u2019s own schedule, so the share is steady where traffic is not. Where a neighbour no longer sends its adverts across, the corridor is set to channel messages instead, counted from the first repeater that relayed them. One bar per day over the window, the bright one is yesterday; faint stubs are days with too few adverts to say.</p><div class="h-corridors">' + st.corridors.map(function (c) {
         var dirs = (c.directions || []).map(function (d) {
           var v = judgeAny(d);
           var head = d.reach
-            ? '<div><b>' + pc(d.reach.last) + ' of ' + d.reach.lastAdverts + ' adverts</b> from ' + esc(d.from) + ' got through yesterday, usually ' + pc(d.reach.usual) +
+            ? '<div><b>' + pc(d.reach.last) + ' of ' + d.reach.lastAdverts + ' ' + sentOf(d.reach) + '</b> from ' + esc(d.from) + ' got through yesterday, usually ' + pc(d.reach.usual) +
               ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span></div>'
             : '<div>' + d.lastDay + ' yesterday, usually ' + d.usualDay + ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> ' + v.pct + '</div>';
           return '<div class="h-dir"><div><b>' + esc(d.from) + ' → ' + esc(d.to) + '</b></div>' + head +
