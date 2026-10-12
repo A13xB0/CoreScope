@@ -32,7 +32,10 @@ const STATUS = {
   recent: [{ node: K('b'), name: 'Tarbat RPT', lat: 57.83, lon: -3.83, start: '2026-10-04T06:00:00Z', flagged: '2026-10-04T11:00:00Z', end: '2026-10-06T10:00:00Z', usual: 208, now: 2, advertEveryH: 2 }],
   observers: [{ id: 'O1', name: 'Edinburgh Obs', now: 410, usual: 400, quiet: false }, { id: 'O2', name: 'Caithness Observer', now: 0, usual: 60, quiet: true }],
   networkNow: 1900, networkUsual: 2000,
-  corridors: [{ name: 'Highlands ⇄ central belt', a: 'Highlands', b: 'Central belt', lastDay: 512, usualDay: 1100, daily: [1000, 1050, 1100, 1120, 1080, 1150, 1100, 512], carriers: [{ node: K('c'), name: 'Goyle Hill', packets: 500 }] },
+  corridors: [{ name: 'Highlands ⇄ central belt', a: 'Highlands', b: 'Central belt', lastDay: 724, usualDay: 822, daily: [800, 822, 850, 724], carriers: [{ node: K('c'), name: 'Goyle Hill', packets: 500 }],
+    directions: [
+      { from: 'Highlands', to: 'Central belt', lastDay: 109, usualDay: 165, daily: [160, 170, 165, 109], carriers: [{ node: K('c'), name: 'Goyle Hill', packets: 100 }] },
+      { from: 'Central belt', to: 'Highlands', lastDay: 615, usualDay: 840, daily: [850, 840, 900, 615], carriers: [{ node: K('a'), name: 'Keir Hill', packets: 3 }] }] },
     { name: 'Scotland and North East England', a: 'Scotland', b: 'North East England', lastDay: 612, usualDay: 2, daily: [0, 0, 0, 0, 0, 0, 40, 612], carriers: [] }],
   routes: [
     { name: 'North link', from: K('d'), fromName: 'Inverness', to: K('e'), toName: 'Edinburgh', now: 40, usual: 120, lastDay: 300, usualDay: 900, daily: [880, 900, 910, 300] },
@@ -107,6 +110,13 @@ async function openPage(browser, { on }) {
     assert(/Gateway to Ayr/.test(rows[2]) && /Observer offline/.test(rows[2]) && /AYR-Observer/.test(rows[2]) && !/Worse/.test(rows[2]), 'observer down: ' + rows[2]);
     assert(/North link/.test(rows[0]) && /−67%/.test(rows[0]) && /Worse/.test(rows[0]), 'north link: ' + rows[0]);
     assert(/Ireland gateway/.test(rows[1]) && /\+30%/.test(rows[1]) && /Better/.test(rows[1]), 'gateway: ' + rows[1]);
+  });
+
+  await step('a corridor is judged in each direction, so one way dropping shows even when the total looks normal', async () => {
+    const card = (await page.$$eval('.h-corr', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' '))))[0];
+    assert(/Highlands → Central belt/.test(card) && /Central belt → Highlands/.test(card), 'both directions: ' + card);
+    const dirs = await page.$$eval('.h-corr:first-child .h-dir', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')));
+    assert(dirs.length === 2 && /Worse/.test(dirs[0]) && /−34%/.test(dirs[0]) && /Worse/.test(dirs[1]) && /−27%/.test(dirs[1]), 'directions: ' + dirs.join(' | '));
   });
 
   await step('a corridor with almost no history says it is new, not a huge percentage', async () => {
