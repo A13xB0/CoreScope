@@ -582,6 +582,7 @@ jobs:
           suite 1 test-channel-issue-1087-e2e.js BASE_URL=$B
           suite 1 test-channel-issue-1111-e2e.js BASE_URL=$B
           suite 2 test-map-modal-fluid-e2e.js BASE_URL=$B
+          suite 2 test-health-e2e.js BASE_URL=$B
           suite 2 test-map-nodes-pagination-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 3 test-observer-iata-1188-e2e.js BASE_URL=$B
           suite 2 test-issue-1639-observers-sort-e2e.js BASE_URL=$B
