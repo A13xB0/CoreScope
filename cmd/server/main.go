@@ -367,6 +367,16 @@ func main() {
 	srv := NewServer(database, cfg, hub)
 	srv.configDir = configDir
 	srv.store = store
+	// Network Watch (the Health page): off unless netWatch.enabled. It reads
+	// its window from SQLite once the store has finished its own load.
+	if nw := newNetWatchService(database, cfg); nw != nil {
+		nw.waitFor = store.StartupLoadDone()
+		srv.netwatch = nw
+		nwCtx, stopNetWatch := context.WithCancel(context.Background())
+		defer stopNetWatch()
+		go nw.run(nwCtx)
+		log.Printf("[netwatch] enabled: %d-hour window, %d corridors, %d routes", nw.window, len(nw.cfg.Corridors), len(nw.cfg.Routes))
+	}
 	// Optional user management (off by default). Fails startup on a bad
 	// config rather than running with registration that cannot work.
 	if err := srv.initUserManagement(resolvedDB); err != nil {
