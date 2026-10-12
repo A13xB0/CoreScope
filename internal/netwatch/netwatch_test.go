@@ -1113,8 +1113,8 @@ func TestALocalRepeaterUnheardForHoursIsFlagged(t *testing.T) {
 		var adv []string
 		if h < stop {
 			rel["hourly"] = 1 // heard every hour
-			if h%5 == 0 {
-				rel["fively"] = 1 // heard every 5 hours
+			if h%5 == 4 {
+				rel["fively"] = 1 // heard every 5 hours, last just before the stop
 			}
 		}
 		if h%2 == 0 {

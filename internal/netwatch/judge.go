@@ -46,7 +46,12 @@ type matchedSlot struct {
 // existed, or before the watch started), are left out: an outage does not
 // teach what is normal.
 func (w *Watch) matched(byObs map[string]ring, t int64, quiet map[string]bool, pk string) matchedSlot {
-	s := int64(w.opt.Slot)
+	return w.matchedN(byObs, t, quiet, pk, w.opt.Slot)
+}
+
+// matchedN is matched over hours hours rather than Slot.
+func (w *Watch) matchedN(byObs map[string]ring, t int64, quiet map[string]bool, pk string, hours int) matchedSlot {
+	s := int64(hours)
 	nd := w.nodes[pk]
 	var use []int64 // the end hour of each baseline day's slot that counts
 	for d := 1; d <= w.baseDays(t); d++ {
@@ -310,10 +315,10 @@ func (w *Watch) advertsDuring(nd *node, t int64, gap int) bool {
 	return nd.adverts.sum(w, t-s+1, t) >= due
 }
 
-// quietSince is the first hour of the slot ending at t after the last hour
-// that still held half its usual share of the slot's usual count.
-func (w *Watch) quietSince(r ring, t int64, usual int) int64 {
-	s := int64(w.opt.Slot)
+// quietSince is the first hour of the hours-long slot ending at t after the
+// last hour that still held half its usual share of the slot's usual count.
+func (w *Watch) quietSince(r ring, t int64, usual, hours int) int64 {
+	s := int64(hours)
 	half := float64(usual) / float64(s) / 2
 	for h := t; h > t-s; h-- {
 		if float64(r.at(w, h)) >= half {
