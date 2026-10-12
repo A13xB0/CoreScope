@@ -4,7 +4,8 @@
  * Drives window._analyticsPacketsPerHourCard(pph) from public/analytics.js:
  * months of hours roll up to daily bars with few labels, missing hours count
  * as zero, and the chart starts where the data does, not at a thin run of
- * old packets a short store keeps because they were heard again.
+ * old packets a short store keeps because they were heard again. Labels
+ * follow the viewer's locale (14/09 in the UK, 09/14 in the US).
  *
  * Usage: node tests/unit/test-issue-2193-packets-per-hour.js
  */
@@ -32,8 +33,21 @@ ctx.document = {
   documentElement: {}, createElement: () => ({ style: {}, addEventListener() {} }),
   addEventListener() {}, removeEventListener() {}, querySelector: () => null, querySelectorAll: () => [], getElementById: () => null,
 };
+const src = fs.readFileSync(path.join(__dirname, '..', '..', 'public/analytics.js'), 'utf8');
+// cardIn loads the page as a viewer in locale would see it, with the app's
+// timezone setting on UTC so the labels do not depend on this machine's zone.
+function cardIn(locale) {
+  const c = Object.assign({}, ctx, {
+    Intl: { DateTimeFormat: function (_, o) { return new Intl.DateTimeFormat(locale, o); } },
+    getTimestampTimezone: () => 'utc',
+  });
+  c.window = c;
+  vm.createContext(c);
+  vm.runInContext(src, c);
+  return c._analyticsPacketsPerHourCard;
+}
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '..', 'public/analytics.js'), 'utf8'), ctx);
+vm.runInContext(src, ctx);
 const card = ctx._analyticsPacketsPerHourCard;
 if (typeof card !== 'function') { console.error('  ✗ _analyticsPacketsPerHourCard not exposed'); process.exit(1); }
 
@@ -83,6 +97,13 @@ c = card(hours(44 * 24, (k, back) => (back < 8 * 24 ? 300 + (k % 140) : k % 24 =
 assert(/since 10-04/.test(c.html), 'a cropped chart says where it starts (since 10-04)');
 c = card(hours(2932), { window: '' });
 assert(!/since/.test(c.html), 'and an uncropped one says nothing');
+
+const texts = (html) => [...html.matchAll(/<text [^>]*font-size="9"[^>]*>([^<]+)</g)].map((m) => m[1]);
+const gb = texts(cardIn('en-GB')(hours(2932)).html), us = texts(cardIn('en-US')(hours(2932)).html);
+assert(gb.length > 3 && gb.every((l) => /^\d{2}\/\d{2}$/.test(l)), 'UK dates read dd/mm (got ' + gb.join(' ') + ')');
+assert(us.length === gb.length && gb.every((l) => /\//.test(l)) && us.every((l, i) => l === gb[i].split('/').reverse().join('/')), 'US dates read mm/dd (got ' + us.join(' ') + ')');
+const gbH = texts(cardIn('en-GB')(hours(24)).html), usH = texts(cardIn('en-US')(hours(24)).html);
+assert(gbH.includes('12:00') && usH.includes('12:00 PM'), 'hours in the viewer\'s clock: 12:00 in the UK, 12:00 PM in the US (got ' + gbH.join(' ') + ' / ' + usH.join(' ') + ')');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
