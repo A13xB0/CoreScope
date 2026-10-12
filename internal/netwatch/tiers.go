@@ -61,6 +61,11 @@ func (w *Watch) tierOf(nd *node, pk string, t int64) (tier string, gap int) {
 	if to-from < 72 {
 		return "", 0
 	}
+	// A key seen only in resolved paths, never adverting, may be a
+	// mis-resolved hop rather than a repeater.
+	if nd.adverts.sum(w, w.newest-int64(w.opt.WindowHours)+1, t) == 0 {
+		return "", 0
+	}
 	var counts []int
 	var heard []int64
 	for h := from; h <= to; h++ {
