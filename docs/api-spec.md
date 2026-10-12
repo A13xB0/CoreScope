@@ -53,6 +53,12 @@
 - [GET /api/config/region-quick-picks](#get-apiconfigregion-quick-picks)
 - [GET /api/config/areas](#get-apiconfigareas)
 - [GET /api/config/areas/polygons](#get-apiconfigareaspolygons)
+- [GET /api/config/areas/geojson](#get-apiconfigareasgeojson)
+- [GET /api/data/config](#get-apidataconfig)
+- [GET /api/data/summary](#get-apidatasummary)
+- [GET /api/data/cube](#get-apidatacube)
+- [GET /api/data/packets](#get-apidatapackets)
+- [GET /api/data/dashboards](#get-apidatadashboards)
 - [GET /api/config/client](#get-apiconfigclient)
 - [GET /api/config/cache](#get-apiconfigcache)
 - [GET /api/config/map](#get-apiconfigmap)
@@ -2336,22 +2342,23 @@ of its codes appears in `GET /api/config/regions`, and selects just those codes.
 
 ## GET /api/config/areas
 
-Available area filters defined in `config.json` under `areas`. Used by the frontend to populate the area pill bar. Entries with an empty `label` (e.g. comment keys) are excluded.
+Available area filters: those defined in `config.json` under `areas`, then those in the GeoJSON file named by `areasFile`, in the file's order. Used by the frontend to populate the area pill bar. Entries with an empty `label` (e.g. comment keys) are excluded.
 
 ### Response `200`
 
 ```jsonc
 [
   {
-    "key":   string,   // area key as defined in config (e.g. "bayarea")
-    "label": string    // display name (e.g. "Bay Area")
+    "key":   string,   // area key as defined in config (e.g. "bayarea"), or a feature's code in areasFile
+    "label": string,   // display name (e.g. "Bay Area")
+    "layer": string    // "region" for config.json areas; the feature's layer for areasFile areas
   }
 ]
 ```
 
 Returns `[]` when no areas are configured.
 
-**Note:** Polygon coordinates are **not** included. Use `/api/config/areas/polygons` for the full geometry.
+**Note:** Polygon coordinates are **not** included. Use `/api/config/areas/geojson` for every area's shape (config.json and `areasFile` alike), or `/api/config/areas/polygons` for config.json's raw entries.
 
 ---
 
@@ -2376,6 +2383,195 @@ Full area definitions including polygon/bounding-box coordinates. Intended for m
 ```
 
 Returns `[]` when no areas are configured.
+
+---
+
+## GET /api/config/areas/geojson
+
+Every area's shape, for drawing on a map: config.json's polygons and boxes and the features of `areasFile`, as one GeoJSON FeatureCollection. Rings are simplified to about 450 m (never dropping an area or opening a ring) and the response is built once per layer.
+
+### Query
+
+| Param | Description |
+|---|---|
+| `layer` | Only this layer's areas. Omitted: every layer. |
+
+### Response `200`
+
+```jsonc
+{
+  "type": "FeatureCollection",
+  "features": [{
+    "type": "Feature",
+    "properties": { "code": string, "label": string, "layer": string },
+    "geometry": { "type": "MultiPolygon", "coordinates": [[[[lon, lat]]]] }   // GeoJSON [lon, lat] order
+  }]
+}
+```
+
+`features` is `[]` when no areas are configured.
+
+---
+
+## GET /api/data/config
+
+The Data tab's set-up. The tab is off unless `data.enabled` is set in `config.json`. Areas (`areasFile` or `areas`) are optional: without them `places` is false, nothing is placed (every packet starts and is heard in `unknown`), and the place dimensions are left out of `dimensions`.
+
+### Response `200`
+
+```jsonc
+{
+  "enabled":     boolean,          // false: nothing else is sent and the other /api/data routes answer 404
+  "places":      boolean,          // false when no areas are defined: layer, layers, home and areas are omitted
+  "layer":       string,           // the areas layer packets are placed in
+  "layers":      [string],
+  "home":        string,           // data.homeArea, or omitted
+  "areas":       [{ "code": string, "label": string }],   // in the file's order
+  "windows":     [{ "key": "24h" | "7d" | "30d", "label": string }],   // those data.days reaches
+  "groups":      [{ "key": string, "label": string, "types": [number], "floodOnly": boolean }],
+  "typeNames":   { "<payload type>": string },
+  "dimensions":  [string],         // filter dimensions that mean something here; without areas, not border, origin, heard, through or how
+  "days":        number,
+  "rows":        number,           // rows held: one per packet per receiving area
+  "coveredFrom": string,           // ISO time the index holds every packet from
+  "filling":     boolean           // true while the startup fill runs
+}
+```
+
+---
+
+## GET /api/data/summary
+
+One period's headline figures. Cached 60 s.
+
+| Param | Description |
+|---|---|
+| `window` | `24h`, `7d` or `30d`, as far as `data.days` reaches (400 otherwise) |
+
+### Response `200`
+
+```jsonc
+{
+  "window": string, "label": string, "from": string, "to": string,
+  "coveredFrom": string, "complete": boolean,   // complete: the index covers the whole period
+  "bucketSeconds": number,
+  "packets": number,          // distinct packets
+  "crossBorder": number,      // packets heard in an area other than the one they started in
+  "bases": { "advert" | "node" | "first-relay" | "zero-hop" | "unknown": number },  // how starts were decided
+  "areas": [{ "code": string, "observed": boolean, "originated": number }],
+  "matrix": [{ "origin": string, "heard": string, "packets": number, "relayed": number, "across": number }],
+  "matrixByGroup": { "<group key>": [ /* cells as matrix */ ] },
+  "flows": [{
+    "origin": string, "heard": string, "packets": number, "relayed": number, "across": number,
+    "viaHome": number,                                   // a home repeater passed it on
+    "from":  [{ "key": string, "name": string, "area": string, "packets": number }],   // relays heard from
+    "gates": [ /* as from: home relays at the boundary */ ]
+  }]
+}
+```
+
+A packet's start (`origin`) is, first rule that answers: its advert's own GPS; for an advert without one, the sender's node record; the first repeater to pass it on, when its hop is 2 bytes or more (a shorter prefix shared by several repeaters places it only when they all stand in one area); the area of an observer that heard it with no repeater; otherwise `unknown`. `relayed` counts packets an area's own repeater carried in; `across` those heard straight from the start area.
+
+---
+
+## GET /api/data/cube
+
+Packets per time bucket along every dimension the tab can filter or split by. Cached 60 s.
+
+| Param | Description |
+|---|---|
+| `window` | as `/api/data/summary` |
+
+### Response `200`
+
+```jsonc
+{
+  "window": string, "from": string, "to": string, "coveredFrom": string, "complete": boolean,
+  "bucketSeconds": number,      // 600 for 24h, 3600 for 7d, 21600 for 30d
+  "buckets":  [number],         // bucket start times, unix seconds
+  "origins":  [string], "heard": [string],      // area codes, "unknown" last
+  "types":    [number], "routes": [number],
+  "scopes":   [{ "key": string, "class": "direct" | "unscoped" | "unrecognised" | "scoped" }],
+  "how":      ["relayed", "across", "unclear"],
+  "through":  [string],         // "" for none, else area codes joined with "+"
+  "channels": [string],         // channel name, "hash:XX" when no key is held, "" for non-channel traffic
+  "rows":     [[bucket, origin, heard, type, scope, how, route, through, channel, packets]]   // indexes into the lists
+}
+```
+
+---
+
+## GET /api/data/packets
+
+The packets behind any figure, under the same filters. Newest first, at most 2,000 rows, with the full total. Two run at a time.
+
+| Param | Description |
+|---|---|
+| `window` | as `/api/data/summary` |
+| `from`, `to` | optional unix seconds, `[from, to)` |
+| `f` | optional JSON list of filters: `{"d": dimension, "v": [values], "n": 1 to exclude, "x": 1 for an exact "through" match}`. Dimensions: `border` (local, crossed, unknown), `origin`, `heard`, `through` (area codes, or `straight`), `kind` (a group key, or `direct-advert`), `type`, `channel`, `scope`, `sclass`, `how`, `routing` (flood, direct). 400 on bad JSON or an unknown dimension. |
+
+### Response `200`
+
+```jsonc
+{
+  "total": number, "limit": 2000,
+  "rows": [{
+    "hash": string, "at": number, "type": number, "typeName": string, "kind": string, "routing": string,
+    "scope": string, "scopeClass": string, "channel": string, "border": string,
+    "origin": string, "basis": string, "heard": string, "through": string, "how": string, "observers": number,
+    "heardFrom": string, "heardFromIn": string,   // the relay observers there heard it from, and its area
+    "boundary": string, "boundaryIn": string      // the home relay at the boundary (with data.homeArea)
+  }]
+}
+```
+
+---
+
+## GET /api/data/dashboards
+
+The dashboards the Data tab offers, in this order:
+
+1. the built-in ones (generic; without areas, a set that leaves out the place views);
+2. the operator's, from the file named by `data.dashboardsFile`.
+
+All are validated at startup. Without areas, an operator dashboard with an `area` variable or a place dimension (`border`, `origin`, `heard`, `through`, `how`) stops startup with the reason. A visitor's own dashboards live in their browser and are never sent here.
+
+### Response `200`
+
+```jsonc
+{
+  "default": string,            // id of the dashboard to open first (data.defaultDashboard, else the first built-in)
+  "home": string,               // data.homeArea, the default of a $home variable; omitted when unset
+  "dashboards": [{
+    "schema": 1,
+    "id": string,               // lower-case letters, digits and dashes
+    "title": string,
+    "description": string,
+    "window": "24h" | "7d" | "30d",
+    "source": "built-in" | "operator",
+    "variables": [{ "name": string, "kind": "area" | "scope" | "channel" | "text", "label": string, "default": string }],
+    "panels": [{
+      "id": string,
+      "title": string,          // may contain $variables
+      "type": "bar" | "line" | "area" | "matrix" | "stat" | "table" | "top" | "text",
+      "query": {
+        "window": string,       // overrides the dashboard period for this panel
+        "filters": [ /* as /api/data/packets f=; values may be $variables */ ],
+        "x": "time" | dimension, "split": dimension, "facet": dimension,
+        "mode": "count" | "share", "rollup": "10m" | "30m" | "1h" | "6h" | "1d" | "1w",
+        "pick": [string],       // series shown on their own; the rest are counted together
+        "rows": dimension, "cols": dimension,   // matrix
+        "dim": dimension, "top": number          // top list
+      },
+      "options": { "text": string },             // text panels: short Markdown
+      "layout": { "x": number, "y": number, "w": number, "h": number }   // 12-column grid
+    }]
+  }]
+}
+```
+
+`404` when the tab is off. The file is a JSON list of these documents, exactly as the tab's **Export** saves them; a file with an unknown field, panel type or dimension, or more than 50 dashboards or 24 panels, stops startup with the reason.
 
 ---
 

@@ -90,6 +90,8 @@
       "tests/e2e/test-logo-pulse-1173-e2e.js",
       "tests/e2e/test-logo-rebrand-e2e.js",
       "tests/e2e/test-logo-theme-e2e.js",
+      "tests/e2e/test-map-areas-overlay-e2e.js",
+      "tests/e2e/test-packets-origin-e2e.js",
       "tests/e2e/test-map-modal-fluid-e2e.js",
       "tests/e2e/test-map-nodes-pagination-e2e.js",
       "tests/e2e/test-nav-drawer-1064-e2e.js",
@@ -123,6 +125,8 @@
     "reason": "Requires jsdom. The JS unit gate runs with no node_modules at all (its job has no npm install), so a suite needing a third-party module cannot live in test-all.sh. It runs in the E2E job, which does npm ci, and is invoked by its own deploy.yml line.",
     "files": [
       "tests/e2e/test-region-quick-picks.js",
+      "tests/e2e/test-data-tab.js",
+      "tests/e2e/test-data-watch.js",
       "tests/e2e/test-table-sort.js"
     ]
   },

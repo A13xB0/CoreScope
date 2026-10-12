@@ -217,6 +217,12 @@ jobs:
           go test ./...
           echo "--- Decrypt CLI tests passed ---"
 
+      - name: Test path watch module
+        run: |
+          set -e -o pipefail
+          cd internal/pathwatch && go test -race ./...
+          echo "--- pathwatch tests passed ---"
+
       - name: Test user-management modules (users, mailer)
         run: |
           set -e -o pipefail
@@ -575,6 +581,8 @@ jobs:
           suite 2 test-filter-ux-e2e.js BASE_URL=$B
           suite 1 test-channel-issue-1087-e2e.js BASE_URL=$B
           suite 1 test-channel-issue-1111-e2e.js BASE_URL=$B
+          suite 2 test-map-areas-overlay-e2e.js BASE_URL=$B
+          suite 2 test-packets-origin-e2e.js BASE_URL=$B
           suite 2 test-map-modal-fluid-e2e.js BASE_URL=$B
           suite 2 test-map-nodes-pagination-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 3 test-observer-iata-1188-e2e.js BASE_URL=$B
@@ -689,6 +697,8 @@ jobs:
           suite 3 test-path-inspector-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 3 test-pr-1490-live-map-gpu-animations-e2e.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 1 test-region-quick-picks.js
+          suite 3 test-data-tab.js
+          suite 3 test-data-watch.js
           suite 3 test-table-sort.js
           suite 1 test-touch-targets.js CHROMIUM_REQUIRE=1 BASE_URL=$B
           suite 3 test-live-dedup.js BASE_URL=$B

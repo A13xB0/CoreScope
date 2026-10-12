@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/meshcore-analyzer/areamap"
 	"github.com/meshcore-analyzer/dbconfig"
 	"github.com/meshcore-analyzer/geofilter"
 	"github.com/meshcore-analyzer/packetpath"
@@ -24,6 +25,9 @@ type AreaEntry struct {
 	LatMax  *float64     `json:"latMax,omitempty"`
 	LonMin  *float64     `json:"lonMin,omitempty"`
 	LonMax  *float64     `json:"lonMax,omitempty"`
+	// match, when set, decides membership instead of the polygon or box: an
+	// area from areasFile, tested against its GeoJSON geometry.
+	match func(lat, lon float64) bool
 }
 
 // ListLimitsConfig defines maximum row limits for list endpoints to prevent DoS.
@@ -144,6 +148,18 @@ type Config struct {
 	GeoFilter *GeoFilterConfig `json:"geo_filter,omitempty"`
 
 	Areas map[string]AreaEntry `json:"areas,omitempty"`
+	// AreasFile names a GeoJSON FeatureCollection of further areas, relative
+	// to the config directory: real boundaries (coastlines, islands, holes)
+	// in layers, which config.json's polygons cannot hold. See
+	// internal/areamap for the feature properties it reads.
+	AreasFile string `json:"areasFile,omitempty"`
+	// areaMap holds every area, from Areas and AreasFile, once LoadAreaMap
+	// has run. Nil until then.
+	areaMap *areamap.Map
+
+	// Data turns on the Data tab: every packet of the last few days placed
+	// by the area it started in and the areas that heard it. Needs areas.
+	Data *DataConfig `json:"data,omitempty"`
 
 	Timestamps *TimestampConfig `json:"timestamps,omitempty"`
 

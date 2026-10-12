@@ -1,0 +1,297 @@
+/* === CoreScope — data.css ===
+   The Data tab (#/data): a full-height workspace. A pinned bar holds the
+   dashboard, its period and its variables; the panels sit on a 12-column
+   grid below. In edit mode a rail on the left edits the dashboard or the
+   selected panel. On a phone the panels stack in reading order. */
+
+/* Categorical slots from the dataviz reference palette, in its fixed order,
+   validated against --card-bg in both themes (light #ffffff, dark #232340).
+   Light slots 3-5 sit under 3:1 against white, so every split chart carries
+   a legend with counts. */
+.dt-page, .dt-modal {
+  --dt-c1: #2a78d6; --dt-c2: #eb6834; --dt-c3: #1baf7a; --dt-c4: #eda100;
+  --dt-c5: #e87ba4; --dt-c6: #008300; --dt-c7: #4a3aa7; --dt-c-rest: #a3b1c6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dt-page, :root:not([data-theme="light"]) .dt-modal {
+    --dt-c1: #3987e5; --dt-c2: #d95926; --dt-c3: #199e70; --dt-c4: #c98500;
+    --dt-c5: #d55181; --dt-c6: #008300; --dt-c7: #9085e9; --dt-c-rest: #4e5d75;
+  }
+}
+:root[data-theme="dark"] .dt-page, :root[data-theme="dark"] .dt-modal {
+  --dt-c1: #3987e5; --dt-c2: #d95926; --dt-c3: #199e70; --dt-c4: #c98500;
+  --dt-c5: #d55181; --dt-c6: #008300; --dt-c7: #9085e9; --dt-c-rest: #4e5d75;
+}
+
+.dt-page { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--content-bg); color: var(--text); position: relative; }
+.dt-off { padding: var(--space-lg) var(--gutter); color: var(--text-muted); max-width: 70ch; }
+.dt-off h2 { color: var(--text); margin: 0 0 8px; }
+.dt-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---- the bar ---------------------------------------------------------- */
+.dt-bar { flex: none; display: flex; align-items: center; gap: 10px 12px; padding: 10px var(--gutter); background: var(--card-bg);
+  border-bottom: 1px solid var(--border); min-width: 0; flex-wrap: wrap; }
+.dt-title { margin: 0; font-size: var(--fs-lg); font-weight: var(--fw-semibold); }
+.dt-pick select, .dt-var select, .dt-inp, .dt-field select, .dt-addcol {
+  font: inherit; font-size: 13.5px; color: var(--text); background: var(--input-bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 6px 8px; min-height: 34px; max-width: 100%; box-sizing: border-box; }
+.dt-pick select { font-weight: var(--fw-semibold); max-width: 280px; }
+.dt-src { font-size: 12px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.dt-src-mine { border-color: var(--accent); color: var(--text); }
+.dt-vars { display: inline-flex; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.dt-vars:empty { display: none; }
+.dt-var { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); min-width: 0; }
+.dt-bar-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+
+.dt-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; background: var(--card-bg); flex: none; }
+.dt-seg button { font: inherit; font-size: 13.5px; color: var(--text-muted); background: none; border: 0; padding: 6px 12px; cursor: pointer; min-height: 34px; }
+.dt-seg button + button { border-left: 1px solid var(--border); }
+.dt-seg button[aria-pressed="true"] { color: var(--text); background: var(--selected-bg); font-weight: var(--fw-semibold); }
+.dt-seg button:hover { color: var(--text); }
+
+.dt-btn { font: inherit; font-size: 13.5px; color: var(--text); background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 6px 12px; min-height: 34px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.dt-btn[hidden] { display: none; }
+.dt-btn:hover:not(:disabled) { border-color: var(--accent); }
+.dt-btn:disabled { opacity: .45; cursor: default; }
+.dt-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent, #fff); }
+.dt-btn-quiet { color: var(--text-muted); border-style: dashed; }
+.dt-link { font: inherit; font-size: 13px; color: var(--link-color); background: none; border: 0; cursor: pointer; padding: 4px 0; text-align: left; }
+
+/* ---- rail and board ---------------------------------------------------- */
+.dt-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.dt-rail { flex: none; width: 320px; overflow-y: auto; border-right: 1px solid var(--border); background: var(--card-bg); padding: 12px 16px 32px;
+  display: flex; flex-direction: column; gap: 10px; box-sizing: border-box; }
+.dt-rail[hidden] { display: none; }
+.dt-main { flex: 1 1 auto; overflow-y: auto; padding: var(--space-md) var(--gutter) 40px; min-width: 0; }
+.dt-dhead h2 { margin: 0; font-size: var(--fs-lg); }
+.dt-dhead p { margin: 2px 0 0; color: var(--text-muted); font-size: 13.5px; max-width: 100ch; }
+.dt-dhead p:empty { display: none; }
+.dt-note { margin: 10px 0 0; font-size: 13px; color: var(--text-muted); max-width: 100ch; }
+.dt-note[hidden] { display: none; }
+.dt-k { margin: 8px 0 0; font-size: 12px; font-weight: var(--fw-semibold); letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.dt-field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-muted); min-width: 0; }
+.dt-field .dt-inp, .dt-field select { width: 100%; }
+textarea.dt-inp { resize: vertical; font-family: inherit; line-height: 1.45; }
+.dt-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dt-hint { margin: 0; font-size: 13px; color: var(--text-muted); line-height: 1.45; }
+
+/* Panels are placed on a 12 x n grid by their layout; rows are 64px. */
+.dt-board { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: 64px; gap: 12px; margin-top: var(--space-md); }
+.dt-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-md); min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  position: relative; overflow: hidden; }
+.dt-ph { display: flex; align-items: baseline; gap: 6px; padding: 10px 12px 4px; min-width: 0; }
+.dt-ph h3 { margin: 0; font-size: 14px; font-weight: var(--fw-semibold); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-kind { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; display: none; }
+.dt-handle { display: none; font: inherit; font-size: 16px; line-height: 1; color: var(--text-muted); background: none; border: 0; padding: 2px 4px; cursor: grab; touch-action: none; }
+.dt-pb { flex: 1 1 auto; min-height: 0; padding: 4px 12px 8px; position: relative; overflow: hidden; }
+.dt-pb > svg { display: block; position: absolute; top: 4px; left: 12px; }
+.dt-resize { display: none; }
+.dt-editing .dt-panel { cursor: pointer; border-style: dashed; }
+.dt-editing .dt-panel.dt-sel { border: 2px solid var(--accent); }
+.dt-editing .dt-handle, .dt-editing .dt-kind { display: inline-block; }
+.dt-editing .dt-resize { display: block; position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; touch-action: none;
+  background: linear-gradient(135deg, transparent 0 55%, var(--text-muted) 55% 62%, transparent 62% 72%, var(--text-muted) 72% 79%, transparent 79%); }
+.dt-panel.dt-dragging { opacity: .75; z-index: 3; box-shadow: 0 12px 32px -12px rgba(0,0,0,.5); }
+.dt-addtile { font: inherit; font-size: 14px; color: var(--link-color); background: none; border: 1px dashed var(--border); border-radius: var(--radius-md); cursor: pointer; }
+.dt-addtile:hover { border-color: var(--accent); }
+.dt-empty-dash { grid-column: 1 / -1; grid-row: span 2; display: flex; align-items: center; justify-content: center; gap: 4px; color: var(--text-muted);
+  border: 1px dashed var(--border); border-radius: var(--radius-md); font-size: 14px; flex-wrap: wrap; padding: 12px; text-align: center; }
+
+/* ---- panel bodies ------------------------------------------------------- */
+.dt-gridline { stroke: var(--border); stroke-width: 1; }
+.dt-tick { fill: var(--text-muted); font-size: 11px; font-family: var(--mono); }
+.dt-tick-lab { font-family: inherit; font-size: 12px; fill: var(--text); }
+.dt-col:hover .dt-seg-r, .dt-col:focus .dt-seg-r { filter: brightness(1.15); }
+.dt-col:focus, .dt-hitr:focus { outline: none; }
+.dt-col:focus .dt-hitr, .dt-hitr:focus { stroke: var(--accent); stroke-width: 1; }
+.dt-seg-r, .dt-hitr { cursor: pointer; }
+.dt-editing .dt-seg-r, .dt-editing .dt-hitr { cursor: inherit; }
+.dt-empty { margin: 0; padding: 8px 0; color: var(--text-muted); font-size: 13.5px; }
+.dt-legend { display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 0 12px 10px; flex: none; max-height: 52px; overflow-y: auto; }
+.dt-leg { font-size: 12.5px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 5px; }
+.dt-leg b { color: var(--text); font-weight: var(--fw-semibold); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.dt-sw { width: 10px; height: 10px; border-radius: 2px; flex: none; display: inline-block; }
+
+.dt-stat { display: flex; flex-direction: column; height: 100%; cursor: pointer; border-radius: var(--radius-sm); }
+.dt-stat:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dt-stat-v { font-size: var(--fs-xl); font-weight: var(--fw-semibold); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.dt-stat-s { font-size: 12.5px; color: var(--text-muted); }
+.dt-spark { flex: 1 1 auto; min-height: 14px; width: 100%; margin-top: 4px; }
+.dt-spark-a { fill: var(--accent-bg); }
+.dt-spark-l { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+
+.dt-top { display: flex; flex-direction: column; gap: 4px; height: 100%; overflow-y: auto; align-content: start; }
+.dt-top-row { font: inherit; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; background: none; border: 0; padding: 4px 2px; text-align: left; color: var(--text);
+  cursor: pointer; border-radius: var(--radius-sm); }
+.dt-top-row:hover { background: var(--row-hover); }
+.dt-top-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-top-row b { font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.dt-top-bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; }
+
+.dt-facets { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 8px 14px; height: 100%; overflow-y: auto; }
+.dt-facet { display: flex; flex-direction: column; min-height: 130px; min-width: 0; }
+.dt-facet-h { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dt-facet-h strong { color: var(--text); }
+.dt-facet-chart { flex: 1 1 auto; position: relative; min-height: 110px; }
+.dt-facet-chart > svg { position: absolute; top: 0; left: 0; }
+
+.dt-md { font-size: 13.5px; line-height: 1.5; color: var(--text); height: 100%; overflow-y: auto; }
+.dt-md p { margin: 0 0 8px; }
+.dt-md code { font-family: var(--mono); font-size: 12.5px; background: var(--content-bg); padding: 1px 4px; border-radius: 3px; }
+
+.dt-scroll { overflow: auto; height: 100%; }
+.dt-mx { border-collapse: separate; border-spacing: 3px; font-size: 13px; }
+.dt-mx th { font-weight: var(--fw-normal); font-size: 12px; color: var(--text-muted); padding: 4px 6px; white-space: nowrap; }
+.dt-mx thead th { text-align: center; vertical-align: bottom; }
+.dt-mx tbody th { text-align: right; position: sticky; left: 0; background: var(--card-bg); z-index: 1; }
+.dt-corner { text-align: left !important; font-size: 11.5px; }
+.dt-mx td { text-align: center; padding: 6px 8px; border-radius: var(--radius-sm); font-family: var(--mono); font-variant-numeric: tabular-nums; min-width: 52px; cursor: pointer; }
+.dt-mx td:hover, .dt-mx td:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.dt-mx td.dt-self { color: var(--text-muted); background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--border) 60%, transparent) 6px 7px); }
+
+.dt-t { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dt-t th { text-align: left; font-weight: var(--fw-normal); font-size: 12px; color: var(--text-muted); padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  position: sticky; top: 0; background: var(--card-bg); }
+.dt-t td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.dt-t tr:last-child td { border-bottom: 0; }
+.dt-n { text-align: right !important; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.dt-tip { position: fixed; pointer-events: none; z-index: 50; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 10px; font-size: 12.5px; box-shadow: 0 8px 24px -12px rgba(0,0,0,.45); min-width: 160px; max-width: 280px; }
+.dt-tip[hidden] { display: none; }
+.dt-tip-h { color: var(--text-muted); margin-bottom: 4px; }
+.dt-tip-row { display: flex; align-items: center; gap: 6px; }
+.dt-tip-row strong { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* ---- chips (filters, values, columns) ------------------------------------ */
+.dt-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.dt-chip { font: inherit; font-size: 13px; color: var(--text); background: none; border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; cursor: pointer; min-height: 32px; }
+.dt-chip:hover { border-color: var(--accent); }
+.dt-add { border-style: dashed; color: var(--link-color); }
+.dt-fchip { display: inline-flex; align-items: stretch; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-bg); overflow: hidden; max-width: 100%; }
+.dt-fchip button, .dt-fchip span { font: inherit; font-size: 13px; color: var(--text); background: none; border: 0; min-height: 30px; }
+.dt-fchip-edit { padding: 4px 4px 4px 12px; display: inline-flex; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.dt-fchip-x { padding: 0 10px 0 6px; font-size: 17px !important; line-height: 1; color: var(--text-muted) !important; cursor: pointer; }
+.dt-fchip-x:hover { color: var(--accent) !important; }
+.dt-editor { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--content-bg); display: flex; flex-direction: column; gap: 10px; }
+.dt-editor[hidden] { display: none; }
+.dt-vchips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 220px; overflow-y: auto; padding: 2px; }
+.dt-vchip { font: inherit; font-size: 13px; color: var(--text); background: none; border: 1px dashed var(--border); border-radius: 999px;
+  padding: 4px 10px; min-height: 30px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; max-width: 100%; }
+.dt-vchip:hover { border-color: var(--accent); }
+.dt-vchip[aria-pressed="true"] { border: 1px solid var(--accent); background: var(--accent-bg); }
+.dt-vchip.is-empty { opacity: .55; }
+.dt-vcount { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.dt-picks { display: flex; flex-direction: column; gap: 6px; }
+
+/* ---- dialogs -------------------------------------------------------------- */
+.dt-modal { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--card-bg); color: var(--text); box-shadow: 0 24px 64px -24px rgba(0,0,0,.6); }
+.dt-modal::backdrop { background: rgba(4, 10, 20, .55); }
+.dt-modal-in { display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 50px); padding: 16px 18px; box-sizing: border-box; }
+.dt-modal-in > h3 { margin: 0; font-size: var(--fs-md); }
+.dt-modal-head { display: flex; align-items: flex-start; gap: 14px; }
+.dt-modal-head > div { flex: 1 1 auto; min-width: 0; }
+.dt-modal-head h3 { margin: 0 0 4px; font-size: var(--fs-md); }
+.dt-modal-sum { margin: 0; font-size: 13.5px; color: var(--text-muted); max-width: 95ch; }
+.dt-modal-table { overflow: auto; flex: 1 1 auto; min-height: 0; border-top: 1px solid var(--border); }
+.dt-acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.dt-code { font-family: var(--mono); font-size: 12.5px; width: 100%; min-height: 260px; box-sizing: border-box; color: var(--text); background: var(--input-bg);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; resize: vertical; }
+.dt-code-short { min-height: 90px; word-break: break-all; }
+.dt-err { margin: 0; color: var(--status-red, var(--text)); font-size: 13.5px; }
+.dt-err:empty { display: none; }
+.dt-types { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.dt-types button { font: inherit; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; background: var(--card-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; }
+.dt-types button:hover { border-color: var(--accent); }
+.dt-types span { font-size: 12.5px; color: var(--text-muted); }
+
+.dt-drill-t thead th { padding: 0; z-index: 1; }
+.dt-sort { font: inherit; font-size: 12.5px; color: var(--text-muted); background: none; border: 0; padding: 8px 10px; cursor: pointer; width: 100%; text-align: inherit; white-space: nowrap; }
+.dt-sort:hover { color: var(--text); }
+th[aria-sort="ascending"] .dt-sort, th[aria-sort="descending"] .dt-sort { color: var(--text); font-weight: var(--fw-semibold); }
+.dt-drill-t td { white-space: nowrap; }
+.dt-link-row { cursor: pointer; }
+.dt-link-row:hover td { background: var(--row-hover); }
+.dt-drill-t a { color: var(--link-color); }
+.dt-code-cell { font-family: var(--mono); }
+.dt-more-btn { margin: 12px 0 4px; }
+
+.dt-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 60; background: var(--text); color: var(--card-bg); padding: 8px 14px;
+  border-radius: var(--radius-md); font-size: 13.5px; max-width: calc(100vw - 32px); box-shadow: 0 8px 24px -12px rgba(0,0,0,.5); }
+.dt-toast[hidden] { display: none; }
+
+/* ---- full screen: hide the site chrome ---------------------------------- */
+body.dt-full .top-nav, body.dt-full .bottom-nav, body.dt-full nav.top-nav { display: none !important; }
+body.dt-full #app.app-fixed { height: 100vh; height: 100dvh; }
+
+/* ---- narrow screens: panels stack in reading order, the rail folds above -- */
+@media (max-width: 900px) {
+  .dt-body { flex-direction: column; overflow-y: auto; }
+  .dt-rail { width: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); }
+  .dt-main { overflow: visible; }
+  .dt-board { grid-template-columns: 1fr; grid-auto-rows: auto; }
+  .dt-board > * { grid-column: 1 / -1 !important; grid-row: auto !important; }
+  .dt-panel { min-height: calc(var(--dt-h, 4) * 52px); }
+  .dt-type-stat, .dt-type-text { min-height: 120px; }
+  .dt-addtile { min-height: 56px; }
+  .dt-editing .dt-resize { display: none; }
+  .dt-pick select { max-width: 100%; }
+  .dt-toast { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+}
+@media (max-width: 560px) {
+  .dt-bar { gap: 8px; }
+  .dt-pick { flex: 1 1 100%; }
+  .dt-pick select { width: 100%; }
+  .dt-bar .dt-seg { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; }
+  .dt-bar .dt-seg button { font-size: 12.5px; padding: 6px 4px; }
+  .dt-bar-actions { margin-left: 0; }
+  #dtFill { display: none; }
+  .dt-two { grid-template-columns: 1fr; }
+  .dt-modal { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; margin: 0; }
+  .dt-modal-in { max-height: 100dvh; height: 100%; }
+}
+
+/* Path watch panels (watch, watchlist). Theme variables only. */
+.dt-type-watch .dt-pb, .dt-type-watchlist .dt-pb { overflow: auto; }
+.dt-chip-s { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
+.dt-chip-s.dt-bad { background: color-mix(in srgb, var(--status-red, #ef4444) 16%, transparent); color: var(--status-red, #ef4444); border-color: transparent; }
+.dt-chip-s.dt-good { background: color-mix(in srgb, var(--status-green, #22c55e) 16%, transparent); color: var(--status-green, #22c55e); border-color: transparent; }
+.dt-chip-s.dt-warn { background: color-mix(in srgb, var(--status-amber, #f59e0b) 18%, transparent); color: var(--status-amber, #b45309); border-color: transparent; }
+.dt-muted { color: var(--text-muted); }
+.dt-watch, .dt-type-watch .dt-pb { display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.dt-watch-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dt-watch-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.dt-watch-stats > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.dt-watch-stats span { font-size: 11.5px; color: var(--text-muted); }
+.dt-watch-stats b { font-size: 20px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.dt-watch-stats b.dt-watch-route { font-size: 14px; overflow-wrap: anywhere; }
+.dt-watch-sec { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dt-watch-sec h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.dt-watch-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; }
+.dt-watch-rt { display: grid; grid-template-columns: minmax(0, 1fr) 44px 58px; gap: 8px; align-items: center; padding: 4px 0; border-top: 1px solid var(--border); }
+.dt-watch-rt:first-of-type { border-top: 0; }
+.dt-meter { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; margin-top: 3px; }
+.dt-meter i { display: block; height: 100%; background: var(--accent); }
+.dt-watch-ch { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding: 5px 0; border-top: 1px solid var(--border); }
+.dt-wl { display: flex; flex-direction: column; }
+.dt-wl-row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 110px minmax(0, 120px); gap: 12px; align-items: center; padding: 8px 4px; border-top: 1px solid var(--border); cursor: pointer; font-size: 13px; }
+.dt-wl-row:first-child { border-top: 0; }
+.dt-wl-row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.dt-wl-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.dt-wl-name { display: flex; flex-direction: column; min-width: 0; }
+.dt-wl-name span { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-wl-dir { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
+.dt-wl-v { display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.dt-wl-v span { font-size: 11.5px; }
+.dt-wl-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; font-size: 12px; }
+.dt-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+@media (max-width: 760px) {
+  .dt-watch-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dt-watch-two { grid-template-columns: minmax(0, 1fr); }
+  .dt-wl-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
+  .dt-wl-dir { grid-column: 1 / -1; }
+  .dt-wl-foot { flex-direction: column; align-items: stretch; }
+}

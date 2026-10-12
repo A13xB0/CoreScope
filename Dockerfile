@@ -56,6 +56,10 @@ ENV CC=zigcc CGO_ENABLED=1
 # Build server
 WORKDIR /build/server
 COPY cmd/server/go.mod cmd/server/go.sum ./
+COPY internal/areamap/ ../../internal/areamap/
+COPY internal/origin/ ../../internal/origin/
+COPY internal/dataindex/ ../../internal/dataindex/
+COPY internal/pathwatch/ ../../internal/pathwatch/
 COPY internal/geofilter/ ../../internal/geofilter/
 COPY internal/sigvalidate/ ../../internal/sigvalidate/
 COPY internal/packetpath/ ../../internal/packetpath/
