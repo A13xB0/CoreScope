@@ -94,7 +94,8 @@ async function openPage(browser, { on }) {
   await step('each quiet repeater says when it went quiet and what is usual for it, with its chart', async () => {
     const card = await page.textContent('#hOpen .h-inc');
     assert(/Keir Hill/.test(card) && /158/.test(card) && /every 2 h/.test(card), card);
-    await page.waitForSelector('#hOpen .h-inc svg polyline');
+    // attached, not visible: a flat line has no height to be visible by.
+    await page.waitForSelector('#hOpen .h-inc svg polyline', { state: 'attached' });
     assert(/Tarbat RPT/.test(await page.textContent('#hBack')), 'recently back');
   });
 

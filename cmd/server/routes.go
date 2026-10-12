@@ -555,6 +555,7 @@ func (s *Server) handleConfigClient(w http.ResponseWriter, r *http.Request) {
 		Customizer:                     CustomizerClientConfig{DisabledTabs: disabledTabs},
 		ClientRxCoverage:               s.cfg.ClientRxCoverageEnabled(),
 		ClientRfSamples:                s.cfg.ClientRfSamplesEnabled(),
+		NetWatch:                       s.netwatch != nil,
 		ClientRxRequireLinkedCompanion: s.auth != nil && s.cfg.ClientRxRequireLinkedCompanionSet(),
 		PathTrust:                      &pathTrust,
 		UserManagement:                 s.clientUserManagement(),
