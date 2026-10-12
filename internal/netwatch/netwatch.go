@@ -31,6 +31,9 @@ type Options struct {
 	ObserverShare float64 // a repeater mostly heard through quiet observers is not blamed [0.5]
 	Corridors     []Corridor
 	Routes        []Route
+	// Area, when set, limits judging to repeaters placed inside it (by the
+	// Locator); repeaters outside it are still counted but never flagged.
+	Area *Zone
 }
 
 // Route is a named pair of repeaters whose traffic the watch follows: packets
@@ -450,6 +453,16 @@ func (w *Watch) advertSilence(nd *node, t int64) (silent bool, gap int, last int
 	return t-last >= need, gap, last, true
 }
 
+// judged says whether pk is inside the area (or there is no area, or pk
+// cannot be placed).
+func (w *Watch) judged(pk string) bool {
+	if w.opt.Area == nil || w.loc == nil {
+		return true
+	}
+	lat, lon, ok := w.loc.Position(pk)
+	return !ok || w.opt.Area.contains(lat, lon)
+}
+
 func (w *Watch) quietObservers(t int64) map[string]bool {
 	q := map[string]bool{}
 	for id, r := range w.observers {
@@ -480,7 +493,10 @@ func (w *Watch) Evaluate(t int64) {
 		now, usual := w.slot(nd.relays, t)
 		silent, gap, last, known := w.advertSilence(nd, t)
 		if nd.open != nil {
-			if !silent && float64(now) >= w.opt.BackRatio*float64(nd.open.Usual) {
+			// Back once it relays half of what was usual when it was flagged.
+			// Adverts are not required: a repeater far from every observer
+			// may have them heard only now and then.
+			if float64(now) >= w.opt.BackRatio*float64(nd.open.Usual) {
 				end := t
 				nd.open.End = &end
 				w.closed = append(w.closed, *nd.open)
@@ -488,7 +504,7 @@ func (w *Watch) Evaluate(t int64) {
 			}
 			continue
 		}
-		if !known || !silent || usual < w.opt.MinUsual || float64(now) > w.opt.QuietRatio*float64(usual) {
+		if !known || !silent || usual < w.opt.MinUsual || float64(now) > w.opt.QuietRatio*float64(usual) || !w.judged(pk) {
 			continue
 		}
 		// Not blamed when most of what it relays reached us through
@@ -584,8 +600,8 @@ func (w *Watch) Status() Status {
 	if t == 0 {
 		return st
 	}
-	for _, nd := range w.nodes {
-		if _, usual := w.slot(nd.relays, t); usual >= w.opt.MinUsual {
+	for pk, nd := range w.nodes {
+		if _, usual := w.slot(nd.relays, t); usual >= w.opt.MinUsual && w.judged(pk) {
 			st.Judged++
 		}
 		if nd.open != nil {
