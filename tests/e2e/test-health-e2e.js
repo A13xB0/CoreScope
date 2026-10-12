@@ -40,7 +40,8 @@ const STATUS = {
     { name: 'Scotland and North East England', a: 'Scotland', b: 'North East England', lastDay: 612, usualDay: 2, daily: [0, 0, 0, 0, 0, 0, 40, 612], carriers: [],
       directions: [
         { from: 'Scotland', to: 'North East England', lastDay: 400, usualDay: 1, daily: [0, 0, 0, 0, 0, 0, 25, 400], carriers: [] },
-        { from: 'North East England', to: 'Scotland', lastDay: 212, usualDay: 1, daily: [0, 0, 0, 0, 0, 0, 15, 212], carriers: [] }] }],
+        { from: 'North East England', to: 'Scotland', lastDay: 212, usualDay: 1, daily: [0, 0, 0, 0, 0, 0, 15, 212], carriers: [],
+          reach: { basis: 'chat', last: 0.2, usual: 0.6, lastAdverts: 50, lastReached: 10, daily: [0.6, 0.62, 0.58, 0.2] } }] }],
   routes: [
     { name: 'North link', from: K('d'), fromName: 'Inverness', to: K('e'), toName: 'Edinburgh', now: 40, usual: 120, lastDay: 300, usualDay: 900, daily: [880, 900, 910, 300],
       reach: { last: 0.3, usual: 0.9, lastAdverts: 120, lastReached: 36, daily: [0.9, 0.91, 0.89, 0.3] } },
@@ -131,6 +132,11 @@ async function openPage(browser, { on }) {
   await step('a corridor with almost no history says it is new, not a huge percentage', async () => {
     const txt = (await page.$$eval('.h-corr', (els) => els.map((e) => e.textContent)))[1];
     assert(/New/.test(txt) && !/\d{4,}%/.test(txt), 'new corridor: ' + txt);
+  });
+
+  await step('a chat-based direction counts channel messages, not adverts', async () => {
+    const dirs = await page.$$eval('.h-corr:nth-child(2) .h-dir', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')));
+    assert(/20% of 50 channel messages/.test(dirs[1]) && /usually 60%/.test(dirs[1]) && /Worse/.test(dirs[1]) && !/adverts/.test(dirs[1]), 'chat reach: ' + dirs[1]);
   });
 
   await step('probing a route lists every hop and points at where the traffic drops off', async () => {
