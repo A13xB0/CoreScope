@@ -1012,3 +1012,30 @@ func TestTheQuietRepeaterIsPreferredAsTheCause(t *testing.T) {
 		t.Fatalf("cause %+v, want keir (quiet) rather than goyle (which lost more); open %+v candidates %+v", c, st.Open, st.Corridors[0].Directions[0].Reach.candidates)
 	}
 }
+
+// Adverts flood on past where they cross. A repeater beyond the far zone
+// says nothing about the crossing, so losing sight of it (its observer went
+// offline) does not make it the cause.
+func TestRepeatersBeyondTheCrossingAreNotCauses(t *testing.T) {
+	pos := grid{"n1": {57.5, -4.2}, "mid": {57.4, -4.0}, "keir": {57.17, -2.3}, "s1": {55.9, -3.2}, "ayr": {55.46, -4.63}}
+	w := New(Options{Days: 14, WindowHours: 20 * day, Corridors: reachZones}, pos)
+	var id int64
+	for h := int64(0); h < 20*day; h++ {
+		for i := 0; i < 10; i++ {
+			id++
+			path := []string{"mid", "keir", "s1", "ayr"} // ayr hears it after it crossed
+			if h >= 19*day {
+				path = []string{"mid"} // keir gone, and ayr's observer with it
+				if i < 3 {
+					path = []string{"mid", "s1"}
+				}
+			}
+			w.AddAdvertObservation(id, 1008+h, "o", "n1", path)
+		}
+		w.Evaluate(1008 + h)
+	}
+	c := w.Status().Corridors[0].Directions[0].Reach.Cause
+	if c == nil || c.Node != "keir" {
+		t.Fatalf("cause %+v, want keir, not ayr beyond the crossing", c)
+	}
+}
