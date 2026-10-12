@@ -44,6 +44,7 @@ type Route struct {
 	Name     string
 	From, To string
 	Basis    Basis
+	Target   float64 // optional share of adverts that should get through, 0..1
 }
 
 // Basis is the steady traffic a corridor or route's reach is judged on.
@@ -117,9 +118,10 @@ func (z Zone) contains(lat, lon float64) bool {
 
 // Corridor counts packets whose path joins a repeater in A and one in B.
 type Corridor struct {
-	Name  string
-	A, B  Zone
-	Basis Basis
+	Name   string
+	A, B   Zone
+	Basis  Basis
+	Target float64 // optional share each way that should get through, 0..1
 }
 
 // Locator places a repeater by its key; nil places nothing (no corridors).
@@ -183,10 +185,37 @@ type corridorDir struct {
 	reach    reach
 }
 
-// reach counts adverts that could cross (den) and those that did (num).
-type reach struct{ den, num ring }
+// reach counts adverts that could cross (den) and those that did (num), and
+// by day the repeaters the ones that crossed went through (via).
+type reach struct {
+	den, num ring
+	via      map[int64]map[string]int
+}
 
-func newReach(n int) reach { return reach{den: make(ring, n), num: make(ring, n)} }
+func newReach(n int) reach {
+	return reach{den: make(ring, n), num: make(ring, n), via: map[int64]map[string]int{}}
+}
+
+func (r reach) addVia(h int64, origin string, path []string) {
+	day := r.via[h/24]
+	if day == nil {
+		day = map[string]int{}
+		r.via[h/24] = day
+	}
+	for _, pk := range path {
+		if pk != "" && pk != origin {
+			day[pk]++
+		}
+	}
+}
+
+func (r reach) prune(before int64) {
+	for d := range r.via {
+		if d < before {
+			delete(r.via, d)
+		}
+	}
+}
 
 type routeState struct {
 	Route
@@ -269,6 +298,7 @@ func (w *Watch) advance(h int64) {
 		clear(r.count)
 		clear(r.reach.den)
 		clear(r.reach.num)
+		r.reach.prune((h - n) / 24)
 		for _, o := range r.byObs {
 			clear(o)
 		}
@@ -284,6 +314,7 @@ func (w *Watch) advance(h int64) {
 			clear(cd.count)
 			clear(cd.reach.den)
 			clear(cd.reach.num)
+			cd.reach.prune((h - n) / 24)
 			for _, r := range cd.byObs {
 				clear(r)
 			}
@@ -391,6 +422,7 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 					}
 					if w.pathReaches(path, zones[1]) && w.once(h, seenKey{a: "\x00reach-num", b: key, tx: tx}) {
 						cd.reach.num.add(w, h, 1)
+						cd.reach.addVia(h, origin, path)
 					}
 				}
 			}
@@ -419,6 +451,7 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 		}
 		if reached && w.once(h, seenKey{a: "\x00rreach-num", b: key, tx: tx}) {
 			r.reach.num.add(w, h, 1)
+			r.reach.addVia(h, origin, path)
 		}
 	}
 }
@@ -855,44 +888,21 @@ type Reach struct {
 	LastAdverts int       `json:"lastAdverts"` // adverts (or messages) that could cross on the last day
 	LastReached int       `json:"lastReached"`
 	Daily       []float64 `json:"daily"`
-}
-
-const minReachAdverts = 10
-
-// reachStatus is nil when there is not enough to say: too few adverts on
-// the last day, or fewer than three usable days before it.
-func (w *Watch) reachStatus(r reach, basis Basis, t int64) *Reach {
-	den, _, _ := w.daily(r.den, t)
-	num, _, _ := w.daily(r.num, t)
-	if len(den) == 0 {
-		return nil
-	}
-	rates := make([]float64, len(den))
-	for i := range den {
-		rates[i] = -1
-		if den[i] >= minReachAdverts {
-			rates[i] = float64(num[i]) / float64(den[i])
-		}
-	}
-	n := len(den)
-	if den[n-1] < minReachAdverts {
-		return nil
-	}
-	var prev []float64
-	for i := n - 2; i >= 0 && len(prev) < w.opt.Days; i-- {
-		if rates[i] >= 0 {
-			prev = append(prev, rates[i])
-		}
-	}
-	if len(prev) < 3 {
-		return nil
-	}
-	sort.Float64s(prev)
-	usual := prev[len(prev)/2]
-	if len(prev)%2 == 0 {
-		usual = (prev[len(prev)/2-1] + prev[len(prev)/2]) / 2
-	}
-	return &Reach{Last: rates[n-1], Usual: usual, Basis: basis.orDefault(), LastAdverts: den[n-1], LastReached: num[n-1], Daily: rates}
+	// Low and High are the range it usually falls in on a day like the last
+	// one; Verdict is worse, better, normal or new.
+	Low     float64 `json:"low"`
+	High    float64 `json:"high"`
+	Verdict string  `json:"verdict"`
+	// Since is the first hour of the day it stepped to its present level,
+	// when that is recent; Usual is then the level before.
+	Since *int64 `json:"since,omitempty"`
+	// Cause is the repeater whose crossings fell away, when one explains
+	// most of a worse day.
+	Cause *Cause `json:"cause,omitempty"`
+	// Target, when set, and how fast the recent hours are burning through
+	// it: fast (the last 6 and 24 hours both under), slow (24 and 72), ok.
+	Target float64 `json:"target,omitempty"`
+	Burn   string  `json:"burn,omitempty"`
 }
 
 // CorridorDirection is one direction of a corridor, against its usual.
@@ -906,6 +916,8 @@ type CorridorDirection struct {
 	ObserversDown []string  `json:"observersDown,omitempty"`
 	// Reach is the share of adverts from repeaters in From that reached To.
 	Reach *Reach `json:"reach,omitempty"`
+	// Reroute is set when its main carrier changed and the old one fell away.
+	Reroute *Reroute `json:"reroute,omitempty"`
 }
 
 // CorridorStatus is a corridor's last complete day against its usual day.
@@ -998,7 +1010,7 @@ func (w *Watch) Status() Status {
 		rs := RouteStatus{Name: r.Name, From: r.From, To: r.To, ObserversDown: w.observersDown(r.byObs, t, quiet)}
 		rs.Now, rs.Usual = w.slot(r.count, t)
 		rs.Daily, rs.LastDay, rs.UsualDay = w.daily(r.count, t)
-		rs.Reach = w.reachStatus(r.reach, r.Basis, t)
+		rs.Reach = w.reachStatus(r.reach, r.Basis, r.Target, t)
 		st.Routes = append(st.Routes, rs)
 	}
 	return st
@@ -1052,7 +1064,8 @@ func (w *Watch) corridorStatus(c *corridorState, t int64) CorridorStatus {
 		d := CorridorDirection{From: names[i][0], To: names[i][1], ObserversDown: w.observersDown(cd.byObs, t, quiet)}
 		d.Daily, d.LastDay, d.UsualDay = w.daily(cd.count, t)
 		d.Carriers = topCarriers(cd.carriers[lastDay])
-		d.Reach = w.reachStatus(cd.reach, c.Basis, t)
+		d.Reach = w.reachStatus(cd.reach, c.Basis, c.Target, t)
+		d.Reroute = w.reroute(cd.carriers, t)
 		cs.Directions = append(cs.Directions, d)
 	}
 	return cs

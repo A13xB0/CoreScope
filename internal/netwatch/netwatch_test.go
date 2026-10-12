@@ -830,7 +830,7 @@ func TestAReachIsJudgedAgainstItsUsualRange(t *testing.T) {
 	var id int64
 	swings := []float64{0.8, 0.5, 0.9, 0.55, 0.85, 0.6, 0.75, 0.9, 0.5, 0.8, 0.6, 0.85, 0.55, 0.9, 0.7, 0.8, 0.6, 0.85, 0.9, 0.55}
 	for h := int64(0); h < 20*day; h++ {
-		reachFeed(w, &id, 1008+h, "n1", 2, swings[h/day], "keir", "")
+		reachFeed(w, &id, 1008+h, "n1", 20, swings[h/day], "keir", "")
 		w.Evaluate(1008 + h)
 	}
 	r := w.Status().Corridors[0].Directions[0].Reach
