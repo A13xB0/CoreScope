@@ -8,18 +8,40 @@ import (
 // lowerTail is the chance of seeing k or fewer when about mean are expected
 // and the samples (the same hours on earlier days) say how much it usually
 // varies. Counts that vary more than chance alone use a negative binomial,
-// else Poisson.
+// else Poisson; the plain variance is used, so an odd day makes it more
+// cautious, never less. If the slot was this quiet on any of those days, the
+// chance is at least that share of days.
 func lowerTail(k int, mean float64, samples []float64) float64 {
 	if mean <= 0 {
 		return 1
 	}
-	v := spread(samples)
-	v *= v
-	if v <= mean {
-		return poissonCDF(k, mean)
+	p := poissonCDF(k, mean)
+	if v := variance(samples); v > mean {
+		r := mean * mean / (v - mean)
+		p = negBinCDF(k, r, r/(r+mean))
 	}
-	r := mean * mean / (v - mean)
-	return negBinCDF(k, r, r/(r+mean))
+	low := 0
+	for _, x := range samples {
+		if x <= float64(k) {
+			low++
+		}
+	}
+	if len(samples) > 0 {
+		p = math.Max(p, float64(low)/float64(len(samples)))
+	}
+	return p
+}
+
+func variance(x []float64) float64 {
+	if len(x) < 2 {
+		return 0
+	}
+	m := mean(x)
+	s := 0.0
+	for _, v := range x {
+		s += (v - m) * (v - m)
+	}
+	return s / float64(len(x)-1)
 }
 
 func poissonCDF(k int, m float64) float64 {
