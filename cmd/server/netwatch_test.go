@@ -246,7 +246,7 @@ func TestNetWatchAtomFeedListsWhatHappened(t *testing.T) {
 func TestNetWatchIgnoresHopsItCannotTellApart(t *testing.T) {
 	db := setupTestDB(t)
 	now := time.Now().UTC().Truncate(time.Hour).Add(-time.Minute)
-	twin := "aa00000000000000000000000000000000000000000000000000000000000099"
+	twin := "aa11000000000000000000000000000000000000000000000000000000000099"
 	mustExecDB(t, db, `INSERT INTO nodes (public_key, name, role, lat, lon, last_seen) VALUES ('`+nwKeir+`', 'Keir Hill', 'repeater', 57.17, -2.30, '`+now.Format(time.RFC3339)+`')`)
 	mustExecDB(t, db, `INSERT INTO nodes (public_key, name, role, lat, lon, last_seen) VALUES ('`+twin+`', 'Keir Twin', 'repeater', 57.30, -2.40, '`+now.Format(time.RFC3339)+`')`)
 	mustExecDB(t, db, `INSERT INTO nodes (public_key, name, role, lat, lon, last_seen) VALUES ('`+nwSouth+`', 'Edinburgh', 'repeater', 55.95, -3.19, '`+now.Format(time.RFC3339)+`')`)

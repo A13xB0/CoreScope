@@ -35,6 +35,18 @@ type NetWatchConfig struct {
 	// Area, when set, limits judging to repeaters placed inside it (those
 	// with no position are still judged); others are counted, never flagged.
 	Area *NetWatchZone `json:"area,omitempty"`
+	// Notify, when it names a webhook, posts each incident as it opens and
+	// closes (over the internet; nothing is sent on the mesh).
+	Notify *NetWatchNotify `json:"notify,omitempty"`
+}
+
+// NetWatchNotify is where incident notifications go: a webhook taking
+// Discord ({"content"}), Slack ({"text"}) or plain JSON posts, and the site
+// address to link back to.
+type NetWatchNotify struct {
+	Webhook string `json:"webhook"`
+	Format  string `json:"format,omitempty"` // discord (default), slack or json
+	BaseURL string `json:"baseUrl,omitempty"`
 }
 
 // NetWatchZone is a box on the map, in degrees.
@@ -52,20 +64,23 @@ type NetWatchZone struct {
 // Basis picks the steady traffic its reach is judged on: "adverts" (the
 // default) or "chat" (channel messages, from the first repeater that relayed
 // them) where adverts no longer cross.
+// Target, when set, is the share (0..1) that should get across each way.
 type NetWatchCorridor struct {
-	Name  string       `json:"name"`
-	A     NetWatchZone `json:"a"`
-	B     NetWatchZone `json:"b"`
-	Basis string       `json:"basis,omitempty"`
+	Name   string       `json:"name"`
+	A      NetWatchZone `json:"a"`
+	B      NetWatchZone `json:"b"`
+	Basis  string       `json:"basis,omitempty"`
+	Target float64      `json:"target,omitempty"`
 }
 
 // NetWatchRoute follows packets that pass From and later To (repeater public
 // keys); Basis is as for NetWatchCorridor.
 type NetWatchRoute struct {
-	Name  string `json:"name"`
-	From  string `json:"from"`
-	To    string `json:"to"`
-	Basis string `json:"basis,omitempty"`
+	Name   string  `json:"name"`
+	From   string  `json:"from"`
+	To     string  `json:"to"`
+	Basis  string  `json:"basis,omitempty"`
+	Target float64 `json:"target,omitempty"`
 }
 
 const (
@@ -73,6 +88,9 @@ const (
 	netWatchDefaultDays = 22
 	netWatchBaseDays    = 14 // each hour is compared with the same hours on this many days
 	netWatchDefaultPoll = 300
+	netWatchMinDays     = 7   // judging starts once this many baseline days are in the window
+	netWatchTwinKm      = 150 // a shared hop prefix this close to the resolved repeater could be either
+	netWatchSeenDays    = 30  // repeaters heard this recently can share a prefix
 )
 
 type nwNode struct {
@@ -90,12 +108,15 @@ type netWatchService struct {
 	window  int // hours
 
 	mu        sync.RWMutex
-	nodes     map[string]nwNode // lower-case public key
-	obsByIdx  map[int64]string  // observers.rowid -> id
-	obsNames  map[string]string // id -> name
+	nodes     map[string]nwNode   // lower-case public key
+	prefixes  map[string][]string // 1- and 2-byte hop prefix (lower hex) -> repeaters heard lately
+	obsByIdx  map[int64]string    // observers.rowid -> id
+	obsNames  map[string]string   // id -> name
 	lastObsID int64
 	evaluated int64 // last hour judged
 	ready     bool
+	hops      [2]int64 // short hops read, and those dropped as ambiguous
+	notifier  *netWatchNotifier
 }
 
 // newNetWatchService returns nil when the watch is off.
@@ -113,20 +134,24 @@ func newNetWatchService(db *DB, cfg *Config) *netWatchService {
 	}
 	s := &netWatchService{db: db, cfg: c, now: time.Now, window: days * 24,
 		nodes: map[string]nwNode{}, obsByIdx: map[int64]string{}, obsNames: map[string]string{}}
-	opt := netwatch.Options{WindowHours: s.window, Days: netWatchBaseDays}
+	opt := netwatch.Options{WindowHours: s.window, Days: netWatchBaseDays, MinDays: netWatchMinDays}
 	if a := c.Area; a != nil {
 		opt.Area = &netwatch.Zone{Name: a.Name, LatMin: a.LatMin, LatMax: a.LatMax, LonMin: a.LonMin, LonMax: a.LonMax, Polygon: a.Polygon}
 	}
 	for _, cr := range c.Corridors {
 		opt.Corridors = append(opt.Corridors, netwatch.Corridor{Name: cr.Name,
-			A:     netwatch.Zone{Name: cr.A.Name, LatMin: cr.A.LatMin, LatMax: cr.A.LatMax, LonMin: cr.A.LonMin, LonMax: cr.A.LonMax, Polygon: cr.A.Polygon},
-			B:     netwatch.Zone{Name: cr.B.Name, LatMin: cr.B.LatMin, LatMax: cr.B.LatMax, LonMin: cr.B.LonMin, LonMax: cr.B.LonMax, Polygon: cr.B.Polygon},
-			Basis: netwatch.Basis(strings.ToLower(cr.Basis))})
+			A:      netwatch.Zone{Name: cr.A.Name, LatMin: cr.A.LatMin, LatMax: cr.A.LatMax, LonMin: cr.A.LonMin, LonMax: cr.A.LonMax, Polygon: cr.A.Polygon},
+			B:      netwatch.Zone{Name: cr.B.Name, LatMin: cr.B.LatMin, LatMax: cr.B.LatMax, LonMin: cr.B.LonMin, LonMax: cr.B.LonMax, Polygon: cr.B.Polygon},
+			Basis:  netwatch.Basis(strings.ToLower(cr.Basis)),
+			Target: cr.Target})
 	}
 	for _, r := range c.Routes {
-		opt.Routes = append(opt.Routes, netwatch.Route{Name: r.Name, From: strings.ToLower(r.From), To: strings.ToLower(r.To), Basis: netwatch.Basis(strings.ToLower(r.Basis))})
+		opt.Routes = append(opt.Routes, netwatch.Route{Name: r.Name, From: strings.ToLower(r.From), To: strings.ToLower(r.To), Basis: netwatch.Basis(strings.ToLower(r.Basis)), Target: r.Target})
 	}
 	s.watch = netwatch.New(opt, s)
+	if c.Notify != nil && c.Notify.Webhook != "" {
+		s.notifier = &netWatchNotifier{cfg: *c.Notify, client: &http.Client{Timeout: 10 * time.Second}}
+	}
 	return s
 }
 
@@ -158,10 +183,19 @@ func (s *netWatchService) run(ctx context.Context) {
 	defer t.Stop()
 	for {
 		start := time.Now()
+		wasReady := s.isReady()
 		if err := s.catchUp(ctx); err != nil {
 			log.Printf("[netwatch] %v", err)
-		} else if !s.isReady() {
-			log.Printf("[netwatch] filled in %s", time.Since(start).Round(time.Millisecond))
+		} else {
+			if !wasReady {
+				s.mu.RLock()
+				hops := s.hops
+				s.mu.RUnlock()
+				log.Printf("[netwatch] filled in %s; %d of %d short hops set aside as ambiguous", time.Since(start).Round(time.Millisecond), hops[1], hops[0])
+			}
+			if s.notifier != nil {
+				s.notifier.update(ctx, s.response())
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -180,21 +214,28 @@ func (s *netWatchService) isReady() bool {
 // refreshNames reloads repeater names and positions and the observer table.
 func (s *netWatchService) refreshNames() error {
 	nodes := map[string]nwNode{}
-	rows, err := s.db.conn.Query(`SELECT public_key, COALESCE(name,''), COALESCE(role,''), lat, lon FROM nodes`)
+	prefixes := map[string][]string{}
+	recent := s.now().Add(-netWatchSeenDays * 24 * time.Hour)
+	rows, err := s.db.conn.Query(`SELECT public_key, COALESCE(name,''), COALESCE(role,''), lat, lon, COALESCE(last_seen,'') FROM nodes`)
 	if err != nil {
 		return fmt.Errorf("nodes: %w", err)
 	}
 	for rows.Next() {
-		var pk, name, role string
+		var pk, name, role, seen string
 		var lat, lon sql.NullFloat64
-		if rows.Scan(&pk, &name, &role, &lat, &lon) != nil {
+		if rows.Scan(&pk, &name, &role, &lat, &lon, &seen) != nil {
 			continue
 		}
+		pk = strings.ToLower(pk)
 		n := nwNode{name: name, role: role}
 		if lat.Valid && lon.Valid && (lat.Float64 != 0 || lon.Float64 != 0) {
 			n.lat, n.lon, n.placed = lat.Float64, lon.Float64, true
 		}
-		nodes[strings.ToLower(pk)] = n
+		nodes[pk] = n
+		if at, ok := parseFirstSeen(seen); ok && at.After(recent) && (role == "repeater" || role == "room") && len(pk) >= 4 {
+			prefixes[pk[:2]] = append(prefixes[pk[:2]], pk)
+			prefixes[pk[:4]] = append(prefixes[pk[:4]], pk)
+		}
 	}
 	rows.Close()
 	byIdx, names := map[int64]string{}, map[string]string{}
@@ -211,7 +252,7 @@ func (s *netWatchService) refreshNames() error {
 	}
 	orows.Close()
 	s.mu.Lock()
-	s.nodes, s.obsByIdx, s.obsNames = nodes, byIdx, names
+	s.nodes, s.obsByIdx, s.obsNames, s.prefixes = nodes, byIdx, names, prefixes
 	s.mu.Unlock()
 	return nil
 }
@@ -258,7 +299,8 @@ func (s *netWatchService) catchUp(ctx context.Context) error {
 		obsCol = "o.observer_id"
 	}
 	q := `SELECT o.id, o.transmission_id, ` + obsCol + `, COALESCE(o.resolved_path,''), t.first_seen,
-		COALESCE(t.payload_type,-1), COALESCE(t.from_pubkey,'')
+		COALESCE(t.payload_type,-1), COALESCE(t.from_pubkey,''), COALESCE(o.path_json,''), o.snr,
+		CASE WHEN t.payload_type = 4 THEN json_extract(t.decoded_json, '$.timestamp') END
 		FROM observations o JOIN transmissions t ON t.id = o.transmission_id
 		WHERE o.id > ? ORDER BY o.id LIMIT ?`
 	for {
@@ -302,12 +344,18 @@ func (s *netWatchService) readBatch(q string, after int64) (int, int64, error) {
 		return 0, after, fmt.Errorf("observations: %w", err)
 	}
 	defer rows.Close()
+	s.mu.RLock()
+	nodes, prefixes := s.nodes, s.prefixes
+	s.mu.RUnlock()
+	var shortHops, ambiguous int64
 	n, last := 0, after
 	for rows.Next() {
 		var id, tx, typ int64
 		var obs sql.NullString
-		var rp, firstSeen, from string
-		if err := rows.Scan(&id, &tx, &obs, &rp, &firstSeen, &typ, &from); err != nil {
+		var rp, firstSeen, from, pj string
+		var snr sql.NullFloat64
+		var sent sql.NullInt64
+		if err := rows.Scan(&id, &tx, &obs, &rp, &firstSeen, &typ, &from, &pj, &snr, &sent); err != nil {
 			return n, last, err
 		}
 		n++
@@ -337,15 +385,73 @@ func (s *netWatchService) readBatch(q string, after int64) (int, int64, error) {
 				}
 			}
 		}
+		// A short hop (1 or 2 bytes) that another repeater heard lately
+		// shares, close enough to be either, is not credited to the one it
+		// was resolved to.
+		if pj != "" && len(path) > 0 {
+			var hops []string
+			if json.Unmarshal([]byte(pj), &hops) == nil {
+				for i, hop := range hops {
+					if i >= len(path) || path[i] == "" || len(hop) > 4 {
+						continue
+					}
+					shortHops++
+					if nwAmbiguous(strings.ToLower(hop), path[i], nodes, prefixes) {
+						path[i] = ""
+						ambiguous++
+					}
+				}
+			}
+		}
+		from = strings.ToLower(from)
 		if typ == 4 && from != "" {
-			s.watch.AddAdvertObservation(tx, h, observer, strings.ToLower(from), path)
+			s.watch.AddAdvertObservation(tx, h, observer, from, path)
+			if sent.Valid {
+				s.watch.AddAdvertSent(from, sent.Int64)
+			}
 		} else if typ == 5 { // GRP_TXT: a channel message
 			s.watch.AddChatObservation(tx, h, observer, path)
 		} else {
 			s.watch.AddObservation(tx, h, observer, path)
 		}
+		// The signal heard is the last hop's, or the sender's when an advert
+		// came straight to the observer.
+		if snr.Valid {
+			if len(path) > 0 {
+				s.watch.AddSignal(h, observer, path[len(path)-1], snr.Float64)
+			} else if typ == 4 {
+				s.watch.AddSignal(h, observer, from, snr.Float64)
+			}
+		}
 	}
+	s.mu.Lock()
+	s.hops[0] += shortHops
+	s.hops[1] += ambiguous
+	s.mu.Unlock()
 	return n, last, rows.Err()
+}
+
+// nwAmbiguous says whether a short hop prefix resolved to pk could as well
+// be another repeater heard lately: one sharing the prefix within
+// netWatchTwinKm of it, or any other when pk has no position.
+func nwAmbiguous(prefix, pk string, nodes map[string]nwNode, prefixes map[string][]string) bool {
+	cands := prefixes[prefix]
+	if len(cands) < 2 {
+		return false
+	}
+	me, ok := nodes[pk]
+	if !ok || !me.placed {
+		return true
+	}
+	for _, c := range cands {
+		if c == pk {
+			continue
+		}
+		if o := nodes[c]; o.placed && haversineKm(me.lat, me.lon, o.lat, o.lon) <= netWatchTwinKm {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- API ---------------------------------------------------------------------
@@ -362,6 +468,14 @@ type NetWatchIncident struct {
 	Usual        int      `json:"usual"`
 	Now          int      `json:"now"`
 	AdvertEveryH int      `json:"advertEveryH"`
+	// Kind is quiet (adverts and relays stopped) or not-relaying (still
+	// heard). Chance is how likely its quiet slot was by chance, judged
+	// through Observers observers up both now and in its usual.
+	Kind      string   `json:"kind"`
+	Chance    float64  `json:"chance"`
+	Observers int      `json:"observers"`
+	Repeats   int      `json:"repeats"`
+	Affects   []string `json:"affects,omitempty"`
 }
 
 // NetWatchObserver is an observer's traffic against its usual.
@@ -389,13 +503,50 @@ type NetWatchReach struct {
 	LastAdverts int       `json:"lastAdverts"`
 	LastReached int       `json:"lastReached"`
 	Daily       []float64 `json:"daily"` // -1 where a day had too few adverts
+	// Low and High are the range it usually falls in; Verdict is worse,
+	// better, normal or new; Since dates a recent step to its present level
+	// (Usual is then the level before).
+	Low     float64        `json:"low"`
+	High    float64        `json:"high"`
+	Verdict string         `json:"verdict"`
+	Since   *string        `json:"since,omitempty"`
+	Cause   *NetWatchCause `json:"cause,omitempty"`
+	Target  float64        `json:"target,omitempty"`
+	Burn    string         `json:"burn,omitempty"` // fast, slow or ok against Target
 }
 
-func reachResp(r *netwatch.Reach) *NetWatchReach {
+// NetWatchCause is the repeater whose crossings fell away on a worse day.
+type NetWatchCause struct {
+	Node     string  `json:"node"`
+	Name     string  `json:"name"`
+	Explains float64 `json:"explains"` // share of the drop it accounts for
+	Usual    float64 `json:"usual"`
+	Last     float64 `json:"last"`
+}
+
+// NetWatchReroute is a change of a corridor direction's main carrier.
+type NetWatchReroute struct {
+	From     string `json:"from"`
+	FromName string `json:"fromName"`
+	To       string `json:"to"`
+	ToName   string `json:"toName"`
+	Since    string `json:"since"`
+}
+
+func (s *netWatchService) reachResp(r *netwatch.Reach) *NetWatchReach {
 	if r == nil {
 		return nil
 	}
-	return &NetWatchReach{Last: r.Last, Usual: r.Usual, Basis: string(r.Basis), LastAdverts: r.LastAdverts, LastReached: r.LastReached, Daily: r.Daily}
+	out := &NetWatchReach{Last: r.Last, Usual: r.Usual, Basis: string(r.Basis), LastAdverts: r.LastAdverts, LastReached: r.LastReached, Daily: r.Daily,
+		Low: r.Low, High: r.High, Verdict: r.Verdict, Target: r.Target, Burn: r.Burn}
+	if r.Since != nil {
+		v := hourISO(*r.Since)
+		out.Since = &v
+	}
+	if c := r.Cause; c != nil {
+		out.Cause = &NetWatchCause{Node: c.Node, Name: s.node(c.Node).name, Explains: c.Explains, Usual: c.Usual, Last: c.Last}
+	}
+	return out
 }
 
 // NetWatchCorridorDirection is one direction of a corridor against usual.
@@ -408,7 +559,8 @@ type NetWatchCorridorDirection struct {
 	Carriers      []NetWatchCarrier `json:"carriers"`
 	ObserversDown []string          `json:"observersDown,omitempty"`
 	// Reach is the share of adverts from repeaters in From that reached To.
-	Reach *NetWatchReach `json:"reach,omitempty"`
+	Reach   *NetWatchReach   `json:"reach,omitempty"`
+	Reroute *NetWatchReroute `json:"reroute,omitempty"`
 }
 
 // NetWatchCorridorStatus is a corridor's last day against usual.
@@ -456,6 +608,52 @@ type NetWatchResponse struct {
 	NetworkUsual int                      `json:"networkUsual"`
 	Corridors    []NetWatchCorridorStatus `json:"corridors"`
 	Routes       []NetWatchRouteStatus    `json:"routes"`
+	Feed         NetWatchFeedStatus       `json:"feed"`
+	Nightly      []NetWatchNightly        `json:"nightly"`
+	Drift        []NetWatchDrift          `json:"drift"`
+	Events       []NetWatchEvent          `json:"events"` // newest first
+}
+
+// NetWatchFeedStatus says whether the packet feed itself has stopped.
+type NetWatchFeedStatus struct {
+	Down  bool    `json:"down"`
+	Since *string `json:"since,omitempty"`
+}
+
+// NetWatchNightly is a repeater that goes dark at night; hours are UTC.
+type NetWatchNightly struct {
+	Node     string  `json:"node"`
+	Name     string  `json:"name"`
+	DarkFrom int     `json:"darkFrom"`
+	DarkTo   int     `json:"darkTo"`
+	Nights   int     `json:"nights"`
+	Earlier  bool    `json:"earlier"`
+	ShiftH   float64 `json:"shiftH"`
+}
+
+// NetWatchDrift is a repeater whose signal at an observer has fallen (dB).
+type NetWatchDrift struct {
+	Node         string  `json:"node"`
+	Name         string  `json:"name"`
+	Observer     string  `json:"observer"`
+	ObserverName string  `json:"observerName"`
+	Before       float64 `json:"before"`
+	Now          float64 `json:"now"`
+	Since        string  `json:"since"`
+}
+
+// NetWatchEvent is one line of the timeline, with Text in words.
+type NetWatchEvent struct {
+	Hour      string  `json:"hour"`
+	Kind      string  `json:"kind"` // quiet, not-relaying, back, step, reroute, drift
+	Node      string  `json:"node,omitempty"`
+	Name      string  `json:"name,omitempty"`
+	Other     string  `json:"other,omitempty"`
+	OtherName string  `json:"otherName,omitempty"`
+	Where     string  `json:"where,omitempty"`
+	Before    float64 `json:"before,omitempty"`
+	After     float64 `json:"after,omitempty"`
+	Text      string  `json:"text"`
 }
 
 // NetWatchNodeResponse is GET /api/netwatch/node/{pubkey}: hourly, oldest first.
@@ -466,6 +664,12 @@ type NetWatchNodeResponse struct {
 	Relays   []int     `json:"relays"`
 	Adverts  []int     `json:"adverts"`
 	Expected []float64 `json:"expected"`
+	// AdvertEveryMin is how often it adverts (from the times its adverts
+	// carry), AdvertDelivery the share of them heard per day, and Why the
+	// evidence it is judged on at End.
+	AdvertEveryMin int                  `json:"advertEveryMin"`
+	AdvertDelivery []float64            `json:"advertDelivery"`
+	Why            netwatch.Explanation `json:"why"`
 }
 
 // NetWatchRouteNode is one repeater on a probed route.
@@ -532,7 +736,8 @@ func (s *netWatchService) node(pk string) nwNode {
 func (s *netWatchService) incident(i netwatch.Incident) NetWatchIncident {
 	n := s.node(i.Node)
 	out := NetWatchIncident{Node: i.Node, Name: n.name, Start: hourISO(i.Start), Flagged: hourISO(i.Flagged),
-		Usual: i.Usual, Now: i.Now, AdvertEveryH: i.AdvertEveryH}
+		Usual: i.Usual, Now: i.Now, AdvertEveryH: i.AdvertEveryH, Kind: i.Kind, Chance: i.Chance, Observers: i.Observers,
+		Repeats: i.Repeats, Affects: i.Affects}
 	if n.placed {
 		lat, lon := n.lat, n.lon
 		out.Lat, out.Lon = &lat, &lon
@@ -557,10 +762,17 @@ func (s *Server) handleNetWatch(w http.ResponseWriter, r *http.Request) {
 	if nw == nil {
 		return
 	}
+	writeJSON(w, nw.response())
+}
+
+// response is the whole status, with names: the API, the feed and the
+// notifications all read it.
+func (nw *netWatchService) response() NetWatchResponse {
 	st := nw.watch.Status()
 	resp := NetWatchResponse{Ready: nw.isReady(), Hour: hourISO(st.Hour), SlotHours: 6, Days: netWatchBaseDays, Judged: st.Judged,
 		Open: []NetWatchIncident{}, Recent: []NetWatchIncident{}, Observers: []NetWatchObserver{},
-		NetworkNow: st.Network.Now, NetworkUsual: st.Network.Usual, Corridors: []NetWatchCorridorStatus{}, Routes: []NetWatchRouteStatus{}}
+		NetworkNow: st.Network.Now, NetworkUsual: st.Network.Usual, Corridors: []NetWatchCorridorStatus{}, Routes: []NetWatchRouteStatus{},
+		Nightly: []NetWatchNightly{}, Drift: []NetWatchDrift{}, Events: []NetWatchEvent{}}
 	for _, i := range st.Open {
 		resp.Open = append(resp.Open, nw.incident(i))
 	}
@@ -584,9 +796,12 @@ func (s *Server) handleNetWatch(w http.ResponseWriter, r *http.Request) {
 		cs.Directions = []NetWatchCorridorDirection{}
 		for _, d := range c.Directions {
 			nd := NetWatchCorridorDirection{From: d.From, To: d.To, LastDay: d.LastDay, UsualDay: d.UsualDay, Daily: d.Daily,
-				Carriers: []NetWatchCarrier{}, ObserversDown: nw.observerNames(d.ObserversDown), Reach: reachResp(d.Reach)}
+				Carriers: []NetWatchCarrier{}, ObserversDown: nw.observerNames(d.ObserversDown), Reach: nw.reachResp(d.Reach)}
 			for _, k := range d.Carriers {
 				nd.Carriers = append(nd.Carriers, NetWatchCarrier{Node: k.Node, Name: nw.node(k.Node).name, Packets: k.Packets})
+			}
+			if rr := d.Reroute; rr != nil {
+				nd.Reroute = &NetWatchReroute{From: rr.From, FromName: nw.node(rr.From).name, To: rr.To, ToName: nw.node(rr.To).name, Since: hourISO(rr.Since)}
 			}
 			cs.Directions = append(cs.Directions, nd)
 		}
@@ -595,9 +810,61 @@ func (s *Server) handleNetWatch(w http.ResponseWriter, r *http.Request) {
 	for _, rt := range st.Routes {
 		resp.Routes = append(resp.Routes, NetWatchRouteStatus{Name: rt.Name, From: rt.From, FromName: nw.node(rt.From).name,
 			To: rt.To, ToName: nw.node(rt.To).name, Now: rt.Now, Usual: rt.Usual, LastDay: rt.LastDay, UsualDay: rt.UsualDay, Daily: rt.Daily,
-			ObserversDown: nw.observerNames(rt.ObserversDown), Reach: reachResp(rt.Reach)})
+			ObserversDown: nw.observerNames(rt.ObserversDown), Reach: nw.reachResp(rt.Reach)})
 	}
-	writeJSON(w, resp)
+	if st.Feed.Down {
+		v := hourISO(st.Feed.Since)
+		resp.Feed = NetWatchFeedStatus{Down: true, Since: &v}
+	}
+	for _, n := range st.Nightly {
+		resp.Nightly = append(resp.Nightly, NetWatchNightly{Node: n.Node, Name: nw.node(n.Node).name, DarkFrom: n.DarkFrom, DarkTo: n.DarkTo,
+			Nights: n.Nights, Earlier: n.Earlier, ShiftH: n.ShiftH})
+	}
+	for _, d := range st.Drift {
+		resp.Drift = append(resp.Drift, NetWatchDrift{Node: d.Node, Name: nw.node(d.Node).name, Observer: d.Observer,
+			ObserverName: nw.observerNames([]string{d.Observer})[0], Before: d.Before, Now: d.Now, Since: hourISO(d.Since)})
+	}
+	for _, e := range st.Events {
+		resp.Events = append(resp.Events, nw.event(e))
+	}
+	return resp
+}
+
+// event names an event's repeaters and says it in words.
+func (nw *netWatchService) event(e netwatch.Event) NetWatchEvent {
+	out := NetWatchEvent{Hour: hourISO(e.Hour), Kind: e.Kind, Node: e.Node, Other: e.Other, Where: e.Where, Before: e.Before, After: e.After}
+	if e.Node != "" {
+		out.Name = nw.node(e.Node).name
+	}
+	if e.Other != "" {
+		if e.Kind == "drift" {
+			out.OtherName = nw.observerNames([]string{e.Other})[0]
+		} else {
+			out.OtherName = nw.node(e.Other).name
+		}
+	}
+	pc := func(v float64) string { return fmt.Sprintf("%.0f%%", v*100) }
+	switch e.Kind {
+	case netwatch.KindQuiet:
+		out.Text = out.Name + " went quiet"
+	case netwatch.KindNotRelaying:
+		out.Text = out.Name + " stopped relaying, though it is still heard"
+	case "back":
+		out.Text = out.Name + " is back"
+	case "step":
+		way := "fell"
+		if e.After > e.Before {
+			way = "rose"
+		}
+		out.Text = fmt.Sprintf("%s %s from %s to %s of adverts getting through", e.Where, way, pc(e.Before), pc(e.After))
+	case "reroute":
+		out.Text = fmt.Sprintf("%s rerouted from %s to %s", e.Where, out.Name, out.OtherName)
+	case "drift":
+		out.Text = fmt.Sprintf("%s's signal at %s fell from %.0f dB to %.0f dB", out.Name, out.OtherName, e.Before, e.After)
+	default:
+		out.Text = e.Kind
+	}
+	return out
 }
 
 func (s *Server) handleNetWatchNode(w http.ResponseWriter, r *http.Request) {
@@ -609,7 +876,8 @@ func (s *Server) handleNetWatchNode(w http.ResponseWriter, r *http.Request) {
 	end := nw.watch.Status().Hour
 	ser := nw.watch.NodeSeries(pk, end)
 	writeJSON(w, NetWatchNodeResponse{Node: pk, Name: nw.node(pk).name, End: hourISO(end),
-		Relays: ser.Relays, Adverts: ser.Adverts, Expected: ser.Expected})
+		Relays: ser.Relays, Adverts: ser.Adverts, Expected: ser.Expected,
+		AdvertEveryMin: ser.AdvertEveryMin, AdvertDelivery: ser.AdvertDelivery, Why: nw.watch.Explain(pk, end)})
 }
 
 func (s *Server) handleNetWatchProbe(w http.ResponseWriter, r *http.Request) {
