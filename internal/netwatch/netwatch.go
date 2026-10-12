@@ -318,6 +318,16 @@ func (w *Watch) AddAdvertObservation(tx, h int64, obs, from string, path []strin
 	if w.once(h, seenKey{a: "\x00adv", b: from, tx: tx}) {
 		w.nodeOf(from).adverts.add(w, h, 1)
 	}
+	// Reach counts adverts that entered the mesh: an observation with no
+	// relay on its path says nothing about what the advert could cross (the
+	// same advert relayed elsewhere is counted through that observation).
+	relayed := false
+	for _, pk := range path {
+		relayed = relayed || pk != ""
+	}
+	if !relayed {
+		return
+	}
 	if w.loc != nil {
 		if lat, lon, ok := w.loc.Position(from); ok {
 			for ci, c := range w.corridors {
