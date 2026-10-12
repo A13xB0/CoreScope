@@ -80,3 +80,23 @@
 .h-long { margin-top: 12px; }
 .h-long summary { cursor: pointer; color: var(--text-muted); font-size: var(--fs-sm, 13px); padding: 6px 0; }
 .h-long .h-list { margin-top: 8px; }
+details.h-inc { display: block; padding: 0; }
+details.h-inc > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; cursor: pointer; }
+details.h-inc > summary::-webkit-details-marker { display: none; }
+details.h-inc[open] > summary { border-bottom: 1px solid var(--border); }
+.h-inc-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.h-inc-name a { font-weight: 600; color: var(--text); text-decoration: none; }
+.h-inc-more { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px 10px; font-size: var(--fs-sm, 12px); color: var(--text-muted); }
+.h-inc .h-inc-chart { width: 140px; height: 32px; }
+.h-inc .h-inc-chart svg { width: 140px; height: 32px; }
+.h-how, .h-more { margin-top: 6px; }
+.h-how > summary, .h-more > summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
+.h-how > summary:hover, .h-more > summary:hover { color: var(--text); }
+.h-events-more { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-sm, 13px); }
+.h-events-more li { display: grid; grid-template-columns: 9.5em minmax(0, 1fr); gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); }
+.h-events-more time { color: var(--text-muted); }
+@media (max-width: 640px) {
+  details.h-inc > summary { flex-wrap: wrap; }
+  .h-inc .h-inc-chart, .h-inc .h-inc-chart svg { width: 100%; }
+  .h-events-more li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}

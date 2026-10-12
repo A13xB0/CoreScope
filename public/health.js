@@ -177,13 +177,27 @@
     } else {
       lines.push('Back ' + when(i.end) + ' after ' + (hours >= 48 ? Math.round(hours / 24) + ' days' : hours + ' h'));
     }
-    return '<div class="h-inc' + (open ? ' is-open' : '') + '" data-node="' + esc(i.node) + '">' +
-      '<div class="h-inc-text"><div><a href="#/nodes/' + encodeURIComponent(i.node) + '">' + esc(i.name) + '</a> ' +
-        (open ? '<span class="h-chip ' + chip[1] + '">' + chip[0] + '</span>' : '') +
-        (i.tier ? '<span class="h-chip" title="' + (i.tier === 'core' ? 'Core: usually a packet through it every few minutes, so judged over the last couple of hours' : 'Local: heard now and then, so judged on how long it has gone unheard') + '">' + (i.tier === 'core' ? 'Core' : 'Local') + '</span>' : '') + '</div>' +
-        lines.map(function (l) { return '<span>' + esc(l) + '</span>'; }).join('') +
-        (open ? '<span class="h-deliv"></span>' : '') + '</div>' +
-      '<div class="h-inc-chart" data-chart="' + esc(i.node) + '"></div></div>';
+    var name = '<a href="#/nodes/' + encodeURIComponent(i.node) + '">' + esc(i.name) + '</a> ' +
+      (open ? '<span class="h-chip ' + chip[1] + '">' + chip[0] + '</span>' : '') +
+      (i.tier ? '<span class="h-chip" title="' + (i.tier === 'core' ? 'Core: usually a packet through it every few minutes, so judged over the last couple of hours' : 'Local: heard now and then, so judged on how long it has gone unheard') + '">' + (i.tier === 'core' ? 'Core' : 'Local') + '</span>' : '');
+    var chart = '<span class="h-inc-chart" data-chart="' + esc(i.node) + '"></span>';
+    if (!open) {
+      return '<div class="h-inc" data-node="' + esc(i.node) + '"><div class="h-inc-text"><div>' + name + '</div><span>' + esc(lines[0]) + '</span></div>' + chart + '</div>';
+    }
+    // One line until asked: the evidence is a click away.
+    return '<details class="h-inc is-open" data-node="' + esc(i.node) + '"><summary class="h-inc-row"><span class="h-inc-text"><span class="h-inc-name">' + name + '</span>' +
+      '<span>' + esc(lines[0].split(' · ')[0]) + '</span></span>' + chart + '</summary>' +
+      '<div class="h-inc-more">' + lines.map(function (l) { return '<span>' + esc(l) + '</span>'; }).join('') + '<span class="h-deliv"></span></div></details>';
+  }
+
+  // how folds a section's explanation behind a link.
+  function how(id, text, noteId) {
+    return '<details class="h-how" id="' + id + '"><summary>How this is judged</summary><p class="h-sub"' + (noteId ? ' id="' + noteId + '"' : '') + '>' + text + '</p></details>';
+  }
+  // more shows the first n items and folds the rest.
+  function more(items, n, label) {
+    if (items.length <= n) return items.join('');
+    return items.slice(0, n).join('') + '<details class="h-more"><summary>' + (items.length - n) + ' ' + label + '</summary><div class="h-list">' + items.slice(n).join('') + '</div></details>';
   }
 
   // timeline lists what happened, newest first, under a brief of the last
@@ -200,10 +214,14 @@
     var brief = words.filter(function (w) { return n[w[0]]; }).map(function (w) { return n[w[0]] + ' ' + (n[w[0]] === 1 ? w[1] : w[2]); });
     return '<section class="h-card" id="hTimeline"><h3>What happened</h3>' +
       '<p class="h-sub">Last 7 days: ' + (brief.length ? brief.join(', ') : 'nothing out of the ordinary') + '.</p>' +
-      (st.events.length ? '<ol class="h-events">' + st.events.slice(0, 15).map(function (e) {
-        return '<li class="is-' + esc(e.kind) + '"><time>' + esc(when(e.hour)) + '</time><span>' + esc(e.text) + '</span></li>';
-      }).join('') + '</ol>' : '<p class="h-empty">Nothing has happened in the window.</p>') +
-      '<p class="h-sub">Also as a feed for any feed reader: <a href="/api/netwatch/feed.atom">feed.atom</a>.</p></section>';
+      (st.events.length ? (function () {
+        var li = st.events.slice(0, 30).map(function (e) {
+          return '<li class="is-' + esc(e.kind) + '"><time>' + esc(when(e.hour)) + '</time><span>' + esc(e.text) + '</span></li>';
+        });
+        return '<ol class="h-events">' + li.slice(0, 6).join('') + '</ol>' +
+          (li.length > 6 ? '<details class="h-more"><summary>' + (li.length - 6) + ' earlier</summary><ol class="h-events-more">' + li.slice(6).join('') + '</ol></details>' : '');
+      })() : '<p class="h-empty">Nothing has happened in the window.</p>') +
+      '<p class="h-sub">Also as a feed: <a href="/api/netwatch/feed.atom">feed.atom</a>.</p></section>';
   }
 
   // warnings: signals fading and repeaters that go dark at night, before
@@ -215,9 +233,9 @@
       return '<li><a href="#/nodes/' + encodeURIComponent(n.node) + '">' + esc(n.name) + '</a> goes dark at night (' + ('0' + n.darkFrom).slice(-2) + ':00–' + ('0' + n.darkTo).slice(-2) + ':00 UTC, ' + n.nights + ' of the last 7 nights)' +
         (n.earlier ? ', and now ' + (Math.round(n.shiftH * 10) / 10) + ' h earlier than the nights before: a battery losing ground' : '') + '</li>';
     }));
-    return '<section class="h-card" id="hWarn"><h3>Early warnings</h3>' +
-      (items.length ? '<ul class="h-warn">' + items.join('') + '</ul>' : '<p class="h-empty">No early warnings: no repeater’s signal is fading, and none goes dark at night.</p>') +
-      '<p class="h-sub">A signal is fading when, at the same observer, the last 3 days sit 6 dB or more below the usual.</p></section>';
+    if (!items.length) return '';
+    return '<section class="h-card" id="hWarn"><h3>Early warnings</h3><ul class="h-warn">' + items.join('') + '</ul>' +
+      how('hWarnHow', 'A signal is fading when, at the same observer, the last 3 days sit 6 dB or more below the usual. Going dark at night: a dark spell covering 01:00–03:00 UTC on at least 5 of the last 7 nights.') + '</section>';
   }
 
   function render(st) {
@@ -229,6 +247,10 @@
     var weekAgo = Date.parse(st.hour) - 7 * 86400e3;
     var current = st.open.filter(function (i) { return Date.parse(i.start) >= weekAgo; });
     var long = st.open.filter(function (i) { return Date.parse(i.start) < weekAgo; });
+    // Local repeaters merely not heard are grouped and folded: the core
+    // ones and those whose adverts stopped too come first.
+    var locals = current.filter(function (i) { return i.tier === 'local' && i.kind === 'unheard'; });
+    var main = current.filter(function (i) { return locals.indexOf(i) < 0; });
     var quietObs = st.observers.filter(function (o) { return o.quiet; });
     var worse = st.routes.filter(function (r) { return judgeAny(r).text === 'Worse'; });
     document.getElementById('hSub').textContent = st.judged + ' repeaters judged' + (st.tiers ? ' (' + st.tiers.core + ' core and ' + st.tiers.local + ' local)' : '') + ' · last complete hour ' + when(st.hour) +
@@ -242,20 +264,23 @@
       stat('hRoutes', worse.length, worse.length === 1 ? 'route worse than usual' : 'routes worse than usual', worse.length > 0) +
       '</div>';
     html += '<div class="h-grid">' +
-      '<section class="h-card"><h3>Gone quiet</h3><div class="h-list" id="hOpen">' +
-        (current.length ? current.map(function (i) { return incidentCard(i, true); }).join('') :
-          '<p class="h-empty">Nothing has gone quiet this week. Every judged repeater is passing traffic and sending adverts as usual.</p>') +
+      '<section class="h-card"><h3>Gone quiet</h3><div id="hOpen"><div class="h-list">' +
+        (main.length ? main.map(function (i) { return incidentCard(i, true); }).join('') :
+          '<p class="h-empty">Nothing has gone quiet this week' + (locals.length ? ' apart from the local repeaters below' : '') + '.</p>') +
       '</div>' +
+      (locals.length ? '<details class="h-long" id="hLocal"><summary>Local repeaters not heard lately (' + locals.length + ')</summary><div class="h-list">' +
+        locals.map(function (i) { return incidentCard(i, true); }).join('') + '</div></details>' : '') + '</div>' +
       (long.length ? '<details class="h-long" id="hLong"><summary>Silent for over a week (' + long.length + ')</summary><div class="h-list">' +
         long.map(function (i) { return incidentCard(i, true); }).join('') + '</div></details>' : '') +
       '<h3 class="h-gap">Back recently</h3><div class="h-list" id="hBack">' +
-        (st.recent.length ? st.recent.slice(0, 8).map(function (i) { return incidentCard(i, false); }).join('') : '<p class="h-empty">None in the window.</p>') +
+        (st.recent.length ? more(st.recent.slice(0, 20).map(function (i) { return incidentCard(i, false); }), 3, 'more') : '<p class="h-empty">None in the window.</p>') +
       '</div></section>' +
       '<section class="h-card"><h3>Where</h3><div class="h-map" id="hMap"></div><p class="h-sub">Red: gone quiet. Grey: back recently.</p></section>' +
       '</div>';
-    html += '<div class="h-grid">' + timeline(st) + warnings(st) + '</div>';
+    var warn = warnings(st);
+    html += warn ? '<div class="h-grid">' + timeline(st) + warn + '</div>' : timeline(st);
     if (st.routes.length) {
-      html += '<section class="h-card"><h3>Routes</h3><p class="h-sub">Packets that pass the first repeater and then the second, against usual.</p>' +
+      html += '<section class="h-card"><h3>Routes</h3>' +
         '<div class="h-scroll"><table class="h-table" id="hRoutesTable"><thead><tr><th>Route</th><th>Last day</th><th class="num">Packets</th><th class="num">Last ' + st.slotHours + ' h</th><th>Days</th><th>From → to</th><th></th></tr></thead><tbody>' +
         st.routes.map(function (r, idx) {
           var v = judgeAny(r);
@@ -268,12 +293,12 @@
             '<td>' + (r.reach ? reachBars(r.reach.daily.slice(-14), 140, 34, r.reach, st.hour) : bars(r.daily.slice(-14))) + '</td>' +
             '<td>' + esc(r.fromName) + ' → ' + esc(r.toName) + '</td>' +
             '<td><button type="button" class="btn" data-probe="' + idx + '">Probe</button></td></tr>';
-        }).join('') + '</tbody></table></div><p class="h-sub">Judged on the share of adverts (or channel messages, for routes set to chat) that pass the first repeater and then the second, against the range it falls in on a normal day (from the previous ' + st.days + ' days, wider when they swing or when few adverts were sent). After a step to a new level, the level before stays the usual for two weeks. Packets are the count of everything that took the route. One bar per day, the bright one is yesterday.</p></section>';
+        }).join('') + '</tbody></table></div>' + how('hRoutesHow', 'Judged on the share of adverts (or channel messages, for routes set to chat) that pass the first repeater and then the second, against the range it falls in on a normal day (from the previous ' + st.days + ' days, wider when they swing or when few adverts were sent). After a step to a new level, the level before stays the usual for two weeks. Packets are the count of everything that took the route. One bar per day, the bright one is yesterday.') + '</section>';
     } else {
       html += '<section class="h-card"><h3>Routes</h3><p class="h-empty">No routes configured. Name two repeaters in <code>netWatch.routes</code> in config.json to follow the traffic between them.</p></section>';
     }
     if (st.corridors.length) {
-      html += '<section class="h-card"><h3>Corridors</h3><p class="h-sub" id="hCorrNote">Each way, judged on the share of adverts from repeaters in one zone that reached the other: adverts come on every repeater\u2019s own schedule, so the share is steady where traffic is not. Where a neighbour no longer sends its adverts across, the corridor is set to channel messages instead, counted from the first repeater that relayed them. One bar per day over the window (hover for the day), the bright one is yesterday; the shaded band is the range it usually falls in, and faint stubs are days with too few adverts to say. A worse day names its likely cause: the repeater whose share of the crossings fell away while the ones before it kept carrying.</p><div class="h-corridors">' + st.corridors.map(function (c) {
+      html += '<section class="h-card"><h3>Corridors</h3>' + how('hCorridorsHow', 'Each way, judged on the share of adverts from repeaters in one zone that reached the other: adverts come on every repeater\u2019s own schedule, so the share is steady where traffic is not. Where a neighbour no longer sends its adverts across, the corridor is set to channel messages instead, counted from the first repeater that relayed them. One bar per day over the window (hover for the day), the bright one is yesterday; the shaded band is the range it usually falls in, and faint stubs are days with too few adverts to say. A worse day names its likely cause: the repeater whose share of the crossings fell away while the ones before it kept carrying.', 'hCorrNote') + '<div class="h-corridors">' + st.corridors.map(function (c) {
         var dirs = (c.directions || []).map(function (d) {
           var v = judgeAny(d);
           var head = d.reach
@@ -283,8 +308,10 @@
           return '<div class="h-dir"><div><b>' + esc(d.from) + ' → ' + esc(d.to) + '</b></div>' + head +
             (v.note ? '<div class="h-note">' + esc(v.note) + '</div>' : '') +
             (d.reroute ? '<div class="h-note">Rerouted from ' + esc(d.reroute.fromName) + ' to ' + esc(d.reroute.toName) + ' on ' + esc(day(d.reroute.since)) + '</div>' : '') +
-            (d.reach ? reachBars(d.reach.daily, 260, 36, d.reach, st.hour) + '<div class="h-muted">All packets: ' + d.lastDay + ' yesterday, usually ' + d.usualDay + '</div>' : bars(d.daily, 260, 36)) +
-            (d.carriers.length ? '<div class="h-muted">Carried by ' + d.carriers.map(function (k) { return esc(k.name) + ' (' + k.packets + ')'; }).join(', ') + '</div>' : '') +
+            (d.reach ? reachBars(d.reach.daily, 260, 36, d.reach, st.hour) : bars(d.daily, 260, 36)) +
+            '<details class="h-how"><summary>Traffic</summary>' +
+              (d.reach ? '<div class="h-muted">All packets: ' + d.lastDay + ' yesterday, usually ' + d.usualDay + '</div>' : '') +
+              (d.carriers.length ? '<div class="h-muted">Carried by ' + d.carriers.map(function (k) { return esc(k.name) + ' (' + k.packets + ')'; }).join(', ') + '</div>' : '') + '</details>' +
             '</div>';
         }).join('');
         var total = judge(c.lastDay, c.usualDay);
@@ -296,7 +323,7 @@
       st.observers.slice().sort(function (a, b) { return (b.quiet - a.quiet) || (b.usual - a.usual); }).map(function (o) {
         return '<tr><td>' + esc(o.name) + '</td><td class="num">' + o.now + '</td><td class="num">' + o.usual + '</td><td>' +
           (o.quiet ? '<span class="h-chip is-bad">Quiet</span>' : '<span class="h-chip">Normal</span>') + '</td></tr>';
-      }).join('') + '</tbody></table></div><p class="h-sub">Repeaters are compared only through observers that are up both now and in their usual, so an observer going offline is never blamed on the repeaters it hears.</p></section>';
+      }).join('') + '</tbody></table></div>' + how('hObsHow', 'Repeaters are compared only through observers that are up both now and in their usual, so an observer going offline is never blamed on the repeaters it hears.') + '</section>';
     body.innerHTML = html;
 
     body.querySelectorAll('[data-probe]').forEach(function (b) {
@@ -313,8 +340,8 @@
     fetch('/api/netwatch/node/' + encodeURIComponent(el.getAttribute('data-chart'))).then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
       if (!s || !el.isConnected) return;
       var n = Math.min(72, s.relays.length);
-      el.innerHTML = spark(s.relays.slice(-n), s.expected.slice(-n), 180, 42);
-      var deliv = el.parentNode && el.parentNode.querySelector('.h-deliv'), dl = s.advertDelivery || [];
+      el.innerHTML = spark(s.relays.slice(-n), s.expected.slice(-n), 140, 32);
+      var card = el.closest('.h-inc'), deliv = card && card.querySelector('.h-deliv'), dl = s.advertDelivery || [];
       if (deliv && s.advertEveryMin && dl.length && dl[dl.length - 1] >= 0) {
         deliv.textContent = 'Adverts every ' + every(s.advertEveryMin) + ' · ' + pc(dl[dl.length - 1]) + ' heard yesterday';
       }
