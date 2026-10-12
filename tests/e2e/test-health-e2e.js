@@ -167,6 +167,12 @@ async function openPage(browser, { on, feedDown }) {
     assert((await page.$$('#hTimeline .h-events > li')).length <= 6, 'six events at most up front');
   });
 
+  await step('only quiet observers are listed up front, normal ones folded', async () => {
+    const rows = await page.$$eval('#hObsTable tbody tr', (trs) => trs.map((tr) => tr.textContent));
+    assert(rows.length === 1 && /Caithness Observer/.test(rows[0]), 'quiet ones: ' + rows.join(' | '));
+    assert(/1 observer hearing as usual/.test(await page.textContent('#hObsNormal summary')), await page.textContent('#hObsNormal summary'));
+  });
+
   await step('how each section is judged is folded away', async () => {
     assert(!(await page.isVisible('#hCorrNote')), 'corridor note hidden');
     assert(await page.isVisible('#hCorridorsHow summary'), 'a link to it');
