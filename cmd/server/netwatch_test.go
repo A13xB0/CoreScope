@@ -305,3 +305,37 @@ func TestNetWatchStepEventsNameAnOfflineObserver(t *testing.T) {
 		t.Errorf("text %q", e.Text)
 	}
 }
+
+// With tiers on, Keir Hill (about 20 relays an hour) is core: it is flagged
+// as slowed within the core window, and the counts say how many are in each
+// tier.
+func TestNetWatchTiers(t *testing.T) {
+	db := setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Hour).Add(-time.Minute)
+	seedNetWatch(t, db, now)
+	cfg := &Config{NetWatch: &NetWatchConfig{Enabled: true, Tiers: &NetWatchTiers{CoreEveryMinutes: 10, CoreHours: 2, LocalSilenceHours: 3}}}
+	svc := newNetWatchService(db, cfg)
+	svc.now = func() time.Time { return now }
+	if err := svc.catchUp(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st := svc.response()
+	if st.Tiers == nil || st.Tiers.Core < 2 {
+		t.Fatalf("tiers %+v, want the busy repeaters counted as core", st.Tiers)
+	}
+	var keir *NetWatchIncident
+	for i := range st.Open {
+		if st.Open[i].Node == nwKeir {
+			keir = &st.Open[i]
+		}
+	}
+	if keir == nil || keir.Tier != "core" || keir.WindowH == 0 {
+		t.Fatalf("open %+v, want Keir Hill as a core incident", st.Open)
+	}
+	if e := svc.event(netwatch.Event{Kind: "slowed", Node: nwKeir}); e.Text != "Keir Hill slowed right down" {
+		t.Errorf("slowed text %q", e.Text)
+	}
+	if e := svc.event(netwatch.Event{Kind: "unheard", Node: nwKeir}); e.Text != "Keir Hill has not been heard for longer than usual" {
+		t.Errorf("unheard text %q", e.Text)
+	}
+}
