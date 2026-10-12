@@ -87,6 +87,8 @@
   // is unreachable on phones. Evaluated at lazy build time (first sheet open),
   // by which point MeshConfigReady has resolved window.MC_CLIENT_RX_COVERAGE.
   var COVERAGE_ROUTE = { route: 'rx-coverage', hash: '#/rx-coverage', label: 'Coverage', ph: 'broadcast' };
+  // Health (Network Watch) is opt-in (config `netWatch.enabled`); same reason.
+  var HEALTH_ROUTE = { route: 'health', hash: '#/health', label: 'Health', ph: 'pulse' };
 
   // Optional user management (config `userManagement.enabled`). The top-nav
   // account control is hidden at <=768px, so the entry lives here. The label
@@ -103,6 +105,10 @@
     if (window.MC_CLIENT_RX_COVERAGE) {
       var after = out.findIndex(function (r) { return r.route === 'analytics'; }) + 1;
       out.splice(after, 0, COVERAGE_ROUTE);
+    }
+    if (window.MC_NET_WATCH) {
+      var afterA = out.findIndex(function (r) { return r.route === 'analytics'; }) + 1;
+      out.splice(afterA, 0, HEALTH_ROUTE);
     }
     if (window.MC_USER_MGMT) out.push(accountRoute());
     return out;
