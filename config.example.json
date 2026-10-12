@@ -351,6 +351,18 @@
   },
   "ingestBufferSize": 50000,
   "_comment_ingestBufferSize": "Number of MQTT messages held in memory while the single SQLite writer is blocked by a startup migration/prune (#1608). Drained once the write path is ready; bounded memory (small closure per item). 0 / omit / negative => default 50000 (applied by IngestBufferSizeOrDefault before NewIngestBuffer). A positive value below the default is honored as-is; sub-1 values reaching NewIngestBuffer directly clamp to 1 with a WARN log.",
+  "netWatch": {
+    "_comment": "Optional (off by default). The Health page: repeaters that have gone quiet (their adverts stopped and their relays fell below a fifth of the same 6 hours on the previous 7 days), observers and all traffic against usual, and a hop-by-hop probe between any two repeaters. windowDays is the history kept (default 15; the first 7 days only teach it what is usual). Corridors count packets whose path joins a repeater in zone a and one in zone b. Routes follow packets that pass the 'from' repeater and then the 'to' repeater (public keys) and say whether each is better or worse than usual.",
+    "enabled": false,
+    "windowDays": 15,
+    "pollSeconds": 300,
+    "corridors": [
+      { "name": "Highlands and central belt", "a": { "name": "Highlands", "latMin": 57.3, "latMax": 59.0, "lonMin": -6.0, "lonMax": -3.0 }, "b": { "name": "Central belt", "latMin": 55.5, "latMax": 56.4, "lonMin": -5.0, "lonMax": -2.0 } }
+    ],
+    "routes": [
+      { "name": "North link", "from": "<public key of the first repeater>", "to": "<public key of the last repeater>" }
+    ]
+  },
   "neighborGraph": {
     "maxAgeDays": 5,
     "maxEdgeKm": 500,
