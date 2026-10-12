@@ -32,6 +32,30 @@
     v.pct = pctText(c);
     return v;
   }
+  // judgeReach compares the share of adverts that got through with its usual
+  // share; adverts come on every repeater's own schedule, so it is steady.
+  function judgeReach(r, down) {
+    if (down && down.length) return judge(0, 0, down);
+    var ratio = r.usual > 0 ? r.last / r.usual : 1;
+    if (ratio <= 0.75) return { text: 'Worse', cls: 'is-bad' };
+    if (ratio >= 1.25 && r.usual < 0.8) return { text: 'Better', cls: 'is-good' };
+    return { text: 'Normal', cls: '' };
+  }
+  function pc(x) { return Math.round(x * 100) + '%'; }
+  // judgeAny judges a route or corridor direction on advert reach when it has
+  // it, else on its packet count.
+  function judgeAny(x) { return x.reach ? judgeReach(x.reach, x.observersDown) : judge(x.lastDay, x.usualDay, x.observersDown); }
+  // reachBars draws daily shares (0..1) on a fixed 0–100% scale; days with
+  // too few adverts are a faint stub.
+  function reachBars(daily, w, h) {
+    w = w || 140; h = h || 34;
+    var n = daily.length, bw = w / Math.max(n, 1);
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" aria-hidden="true">' + daily.map(function (v, i) {
+      var bh = v < 0 ? 2 : Math.max(1, v * (h - 2));
+      return '<rect x="' + (i * bw + 1).toFixed(1) + '" y="' + (h - bh).toFixed(1) + '" width="' + Math.max(1, bw - 2).toFixed(1) + '" height="' + bh.toFixed(1) +
+        '" rx="1" fill="' + (v < 0 ? 'var(--border)' : 'var(--accent)') + '" fill-opacity="' + (i === n - 1 ? 1 : 0.45) + '"/>';
+    }).join('') + '</svg>';
+  }
   function verdict(c) {
     if (c == null) return { text: 'Not enough history', cls: '' };
     if (c <= -25) return { text: 'Worse', cls: 'is-bad' };
@@ -105,7 +129,7 @@
     if (!body) return;
     var net = st.networkUsual ? Math.round(st.networkNow / st.networkUsual * 100) : null;
     var quietObs = st.observers.filter(function (o) { return o.quiet; });
-    var worse = st.routes.filter(function (r) { return judge(r.lastDay, r.usualDay, r.observersDown).text === 'Worse'; });
+    var worse = st.routes.filter(function (r) { return judgeAny(r).text === 'Worse'; });
     document.getElementById('hSub').textContent = st.judged + ' repeaters judged · last complete hour ' + when(st.hour) +
       ' · each one compared with the same ' + st.slotHours + ' hours on the previous ' + st.days + ' days';
     var html = '<div class="h-stats">' +
@@ -127,27 +151,31 @@
       html += '<section class="h-card"><h3>Routes</h3><p class="h-sub">Packets that pass the first repeater and then the second, against usual.</p>' +
         '<div class="h-scroll"><table class="h-table" id="hRoutesTable"><thead><tr><th>Route</th><th>Last day</th><th class="num">Packets</th><th class="num">Last ' + st.slotHours + ' h</th><th>Days</th><th>From → to</th><th></th></tr></thead><tbody>' +
         st.routes.map(function (r, idx) {
-          var v = judge(r.lastDay, r.usualDay, r.observersDown);
+          var v = judgeAny(r);
+          var detail = r.reach ? pc(r.reach.last) + ' of adverts got through, usually ' + pc(r.reach.usual) : (v.pct || '');
           return '<tr><td><b>' + esc(r.name) + '</b></td>' +
-            '<td><span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> <span class="h-num">' + v.pct + '</span>' +
+            '<td><span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> <span class="h-num">' + esc(detail) + '</span>' +
               (v.note ? '<div class="h-note">' + esc(v.note) + '</div>' : '') + '</td>' +
             '<td class="num">' + r.lastDay + ' <span class="h-muted">/ ' + r.usualDay + '</span></td>' +
             '<td class="num">' + r.now + ' <span class="h-muted">/ ' + r.usual + '</span></td>' +
-            '<td>' + bars(r.daily.slice(-14)) + '</td>' +
+            '<td>' + (r.reach ? reachBars(r.reach.daily.slice(-14)) : bars(r.daily.slice(-14))) + '</td>' +
             '<td>' + esc(r.fromName) + ' → ' + esc(r.toName) + '</td>' +
             '<td><button type="button" class="btn" data-probe="' + idx + '">Probe</button></td></tr>';
-        }).join('') + '</tbody></table></div><p class="h-sub">Worse or better means at least 25% below or above its usual day (the median of the previous ' + st.days + ').</p></section>';
+        }).join('') + '</tbody></table></div><p class="h-sub">Judged on the share of adverts that pass the first repeater and then the second, against its usual (the median day of the previous ' + st.days + '); Worse below three-quarters of usual. Packets are the count of everything that took the route. One bar per day, the bright one is yesterday.</p></section>';
     } else {
       html += '<section class="h-card"><h3>Routes</h3><p class="h-empty">No routes configured. Name two repeaters in <code>netWatch.routes</code> in config.json to follow the traffic between them.</p></section>';
     }
     if (st.corridors.length) {
-      html += '<section class="h-card"><h3>Corridors</h3><p class="h-sub">Packets whose path joins the two zones, each way: a packet travels from the zone its path reaches first.</p><div class="h-corridors">' + st.corridors.map(function (c) {
+      html += '<section class="h-card"><h3>Corridors</h3><p class="h-sub" id="hCorrNote">Each way, judged on the share of adverts from repeaters in one zone that reached the other: adverts come on every repeater\u2019s own schedule, so the share is steady where traffic is not. One bar per day over the window, the bright one is yesterday; faint stubs are days with too few adverts to say.</p><div class="h-corridors">' + st.corridors.map(function (c) {
         var dirs = (c.directions || []).map(function (d) {
-          var v = judge(d.lastDay, d.usualDay, d.observersDown);
-          return '<div class="h-dir"><div><b>' + esc(d.from) + ' → ' + esc(d.to) + '</b></div>' +
-            '<div>' + d.lastDay + ' yesterday, usually ' + d.usualDay + ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> ' + v.pct + '</div>' +
+          var v = judgeAny(d);
+          var head = d.reach
+            ? '<div><b>' + pc(d.reach.last) + ' of ' + d.reach.lastAdverts + ' adverts</b> from ' + esc(d.from) + ' got through yesterday, usually ' + pc(d.reach.usual) +
+              ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span></div>'
+            : '<div>' + d.lastDay + ' yesterday, usually ' + d.usualDay + ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> ' + v.pct + '</div>';
+          return '<div class="h-dir"><div><b>' + esc(d.from) + ' → ' + esc(d.to) + '</b></div>' + head +
             (v.note ? '<div class="h-note">' + esc(v.note) + '</div>' : '') +
-            bars(d.daily, 260, 36) +
+            (d.reach ? reachBars(d.reach.daily, 260, 36) + '<div class="h-muted">All packets: ' + d.lastDay + ' yesterday, usually ' + d.usualDay + '</div>' : bars(d.daily, 260, 36)) +
             (d.carriers.length ? '<div class="h-muted">Carried by ' + d.carriers.map(function (k) { return esc(k.name) + ' (' + k.packets + ')'; }).join(', ') + '</div>' : '') +
             '</div>';
         }).join('');
