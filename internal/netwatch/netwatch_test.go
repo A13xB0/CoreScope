@@ -1057,3 +1057,108 @@ func TestAnOldRerouteIsNoLongerReported(t *testing.T) {
 		t.Fatalf("reroute %+v from 12 days ago still reported", r)
 	}
 }
+
+// tierWatch has the core and local tiers on, with the defaults.
+func tierWatch() *feed {
+	return &feed{w: New(Options{Days: 14, Tiers: &Tiers{}}, nil), start: 500016}
+}
+
+// openFor is the open incident of node, if any. (The feed's stand-in
+// neighbours, "zz"+observer, relay alongside and may be flagged too.)
+func openFor(st Status, node string) *Incident {
+	for i := range st.Open {
+		if st.Open[i].Node == node {
+			return &st.Open[i]
+		}
+	}
+	return nil
+}
+
+// A core repeater (usually a packet through it every few minutes) that slows
+// right down is flagged within a couple of hours, even while its adverts
+// still arrive.
+func TestACoreRepeaterThatSlowsDownIsFlaggedWithinHours(t *testing.T) {
+	f := tierWatch()
+	stop := int64(10 * day)
+	for h := int64(0); h < 10*day+6; h++ {
+		rate := 30
+		if h >= stop {
+			rate = 1
+		}
+		f.hour(h, "obs1", map[string]int{"core": rate}, []string{"core"}, 60)
+		f.hour(h, "obs2", map[string]int{"core": rate / 3}, []string{"core"}, 60)
+		f.w.Evaluate(f.start + h)
+	}
+	st := f.w.Status()
+	i := openFor(st, "core")
+	if i == nil || i.Kind != KindSlowed || i.Tier != TierCore {
+		t.Fatalf("open %+v, want core slowed", st.Open)
+	}
+	if lag := i.Flagged - (f.start + stop); lag > 2 {
+		t.Errorf("flagged %d h after it slowed, want within 2", lag)
+	}
+	if i.Start != f.start+stop {
+		t.Errorf("start %d, want %d", i.Start-f.start, stop)
+	}
+}
+
+// A local repeater (heard now and then) is flagged when it has not been
+// heard for 3 hours, or for longer than its usual longest gap if that is
+// more.
+func TestALocalRepeaterUnheardForHoursIsFlagged(t *testing.T) {
+	f := tierWatch()
+	stop := int64(10 * day)
+	for h := int64(0); h < 10*day+8; h++ {
+		rel := map[string]int{}
+		var adv []string
+		if h < stop {
+			rel["hourly"] = 1 // heard every hour
+			if h%5 == 0 {
+				rel["fively"] = 1 // heard every 5 hours
+			}
+		}
+		if h%2 == 0 {
+			adv = []string{"other"}
+		}
+		f.hour(h, "obs1", rel, adv, 60)
+		f.w.Evaluate(f.start + h)
+		if h == stop+3 {
+			st := f.w.Status()
+			if i := openFor(st, "hourly"); i == nil || i.Kind != KindUnheard || i.Tier != TierLocal || openFor(st, "fively") != nil {
+				t.Fatalf("after 3 h: open %+v, want hourly unheard and not fively yet", st.Open)
+			}
+		}
+	}
+	if openFor(f.w.Status(), "fively") == nil {
+		t.Errorf("open %+v, want fively once its usual 5 h gap has passed", f.w.Status().Open)
+	}
+}
+
+// A local repeater whose only observer has gone offline is not flagged.
+func TestALocalRepeaterIsNotFlaggedForItsObserver(t *testing.T) {
+	f := tierWatch()
+	stop := int64(10 * day)
+	for h := int64(0); h < 10*day+8; h++ {
+		if h < stop {
+			f.hour(h, "obs1", map[string]int{"hourly": 1}, nil, 60)
+		}
+		f.hour(h, "obs2", nil, nil, 60)
+		f.w.Evaluate(f.start + h)
+	}
+	if st := f.w.Status(); len(st.Open) != 0 {
+		t.Fatalf("open %+v, want none: its observer went", st.Open)
+	}
+}
+
+// Status says how many repeaters are in each tier.
+func TestStatusCountsTheTiers(t *testing.T) {
+	f := tierWatch()
+	for h := int64(0); h < 9*day; h++ {
+		f.hour(h, "obs1", map[string]int{"core1": 20, "core2": 12, "local1": 1}, nil, 0)
+		f.w.Evaluate(f.start + h)
+	}
+	st := f.w.Status()
+	if st.Tiers.Core != 3 || st.Tiers.Local != 1 { // and zzobs1, which relays all of them
+		t.Fatalf("tiers %+v, want 3 core and 1 local", st.Tiers)
+	}
+}
