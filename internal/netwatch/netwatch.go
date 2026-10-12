@@ -42,6 +42,26 @@ type Options struct {
 type Route struct {
 	Name     string
 	From, To string
+	Basis    Basis
+}
+
+// Basis is the steady traffic a corridor or route's reach is judged on.
+type Basis string
+
+const (
+	// BasisAdverts (the default) follows adverts from their repeater.
+	BasisAdverts Basis = "adverts"
+	// BasisChat follows channel messages from the first repeater that
+	// relayed them: for links a neighbouring network no longer floods
+	// adverts across.
+	BasisChat Basis = "chat"
+)
+
+func (b Basis) orDefault() Basis {
+	if b == BasisChat {
+		return b
+	}
+	return BasisAdverts
 }
 
 func (o Options) withDefaults() Options {
@@ -92,8 +112,9 @@ func (z Zone) contains(lat, lon float64) bool {
 
 // Corridor counts packets whose path joins a repeater in A and one in B.
 type Corridor struct {
-	Name string
-	A, B Zone
+	Name  string
+	A, B  Zone
+	Basis Basis
 }
 
 // Locator places a repeater by its key; nil places nothing (no corridors).
@@ -325,12 +346,33 @@ func (w *Watch) AddAdvertObservation(tx, h int64, obs, from string, path []strin
 	for _, pk := range path {
 		relayed = relayed || pk != ""
 	}
-	if !relayed {
+	if relayed {
+		w.countReach(tx, h, BasisAdverts, from, path)
+	}
+}
+
+// AddChatObservation counts one observation of a channel message: as an
+// observation, and towards the reach of chat-based corridors and routes,
+// taking the first repeater that relayed it as where it came from.
+func (w *Watch) AddChatObservation(tx, h int64, obs string, path []string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.addObservation(tx, h, obs, path)
+	if len(path) == 0 || path[0] == "" || h <= w.newest-int64(w.opt.WindowHours) {
 		return
 	}
+	w.countReach(tx, h, BasisChat, path[0], path)
+}
+
+// countReach counts a packet that came from origin towards the reach of the
+// corridors and routes judged on basis.
+func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []string) {
 	if w.loc != nil {
-		if lat, lon, ok := w.loc.Position(from); ok {
+		if lat, lon, ok := w.loc.Position(origin); ok {
 			for ci, c := range w.corridors {
+				if c.Basis.orDefault() != basis {
+					continue
+				}
 				for di, zones := range [2][2]Zone{{c.A, c.B}, {c.B, c.A}} {
 					if !zones[0].contains(lat, lon) {
 						continue
@@ -348,7 +390,10 @@ func (w *Watch) AddAdvertObservation(tx, h int64, obs, from string, path []strin
 		}
 	}
 	for ri, r := range w.routes {
-		via := from == r.From
+		if r.Basis.orDefault() != basis {
+			continue
+		}
+		via := origin == r.From
 		for _, pk := range path {
 			via = via || pk == r.From
 		}
@@ -360,7 +405,7 @@ func (w *Watch) AddAdvertObservation(tx, h int64, obs, from string, path []strin
 			r.reach.den.add(w, h, 1)
 		}
 		reached := passes(path, r.From, r.To)
-		if from == r.From {
+		if origin == r.From {
 			for _, pk := range path {
 				reached = reached || pk == r.To
 			}
@@ -737,9 +782,10 @@ type Carrier struct {
 // Reach is the share of adverts that crossed, by day. Days with fewer than
 // minReachAdverts adverts that could cross are left out (-1 in Daily).
 type Reach struct {
-	Last        float64   `json:"last"`  // the last complete day, 0..1
-	Usual       float64   `json:"usual"` // median of the previous Days days that have enough adverts
-	LastAdverts int       `json:"lastAdverts"`
+	Last        float64   `json:"last"`        // the last complete day, 0..1
+	Usual       float64   `json:"usual"`       // median of the previous Days days that have enough adverts
+	Basis       Basis     `json:"basis"`       // what was counted: adverts, or channel messages
+	LastAdverts int       `json:"lastAdverts"` // adverts (or messages) that could cross on the last day
 	LastReached int       `json:"lastReached"`
 	Daily       []float64 `json:"daily"`
 }
@@ -748,7 +794,7 @@ const minReachAdverts = 10
 
 // reachStatus is nil when there is not enough to say: too few adverts on
 // the last day, or fewer than three usable days before it.
-func (w *Watch) reachStatus(r reach, t int64) *Reach {
+func (w *Watch) reachStatus(r reach, basis Basis, t int64) *Reach {
 	den, _, _ := w.daily(r.den, t)
 	num, _, _ := w.daily(r.num, t)
 	if len(den) == 0 {
@@ -779,7 +825,7 @@ func (w *Watch) reachStatus(r reach, t int64) *Reach {
 	if len(prev)%2 == 0 {
 		usual = (prev[len(prev)/2-1] + prev[len(prev)/2]) / 2
 	}
-	return &Reach{Last: rates[n-1], Usual: usual, LastAdverts: den[n-1], LastReached: num[n-1], Daily: rates}
+	return &Reach{Last: rates[n-1], Usual: usual, Basis: basis.orDefault(), LastAdverts: den[n-1], LastReached: num[n-1], Daily: rates}
 }
 
 // CorridorDirection is one direction of a corridor, against its usual.
@@ -881,7 +927,7 @@ func (w *Watch) Status() Status {
 		rs := RouteStatus{Name: r.Name, From: r.From, To: r.To, ObserversDown: w.observersDown(r.byObs, t, quiet)}
 		rs.Now, rs.Usual = w.slot(r.count, t)
 		rs.Daily, rs.LastDay, rs.UsualDay = w.daily(r.count, t)
-		rs.Reach = w.reachStatus(r.reach, t)
+		rs.Reach = w.reachStatus(r.reach, r.Basis, t)
 		st.Routes = append(st.Routes, rs)
 	}
 	return st
@@ -935,7 +981,7 @@ func (w *Watch) corridorStatus(c *corridorState, t int64) CorridorStatus {
 		d := CorridorDirection{From: names[i][0], To: names[i][1], ObserversDown: w.observersDown(cd.byObs, t, quiet)}
 		d.Daily, d.LastDay, d.UsualDay = w.daily(cd.count, t)
 		d.Carriers = topCarriers(cd.carriers[lastDay])
-		d.Reach = w.reachStatus(cd.reach, t)
+		d.Reach = w.reachStatus(cd.reach, c.Basis, t)
 		cs.Directions = append(cs.Directions, d)
 	}
 	return cs
