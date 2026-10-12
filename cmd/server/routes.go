@@ -368,6 +368,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/netwatch", s.handleNetWatch).Methods("GET")
 	r.HandleFunc("/api/netwatch/node/{pubkey}", s.handleNetWatchNode).Methods("GET")
 	r.HandleFunc("/api/netwatch/probe", s.handleNetWatchProbe).Methods("GET")
+	r.HandleFunc("/api/netwatch/feed.atom", s.handleNetWatchFeed).Methods("GET")
 	r.HandleFunc("/api/analytics/subpaths", s.handleAnalyticsSubpaths).Methods("GET")
 	r.HandleFunc("/api/analytics/subpaths-bulk", s.handleAnalyticsSubpathsBulk).Methods("GET")
 	r.HandleFunc("/api/analytics/subpath-detail", s.handleAnalyticsSubpathDetail).Methods("GET")
