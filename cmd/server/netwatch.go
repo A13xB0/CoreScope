@@ -49,17 +49,23 @@ type NetWatchZone struct {
 }
 
 // NetWatchCorridor counts packets whose path joins a repeater in A and one in B.
+// Basis picks the steady traffic its reach is judged on: "adverts" (the
+// default) or "chat" (channel messages, from the first repeater that relayed
+// them) where adverts no longer cross.
 type NetWatchCorridor struct {
-	Name string       `json:"name"`
-	A    NetWatchZone `json:"a"`
-	B    NetWatchZone `json:"b"`
+	Name  string       `json:"name"`
+	A     NetWatchZone `json:"a"`
+	B     NetWatchZone `json:"b"`
+	Basis string       `json:"basis,omitempty"`
 }
 
-// NetWatchRoute follows packets that pass From and later To (repeater public keys).
+// NetWatchRoute follows packets that pass From and later To (repeater public
+// keys); Basis is as for NetWatchCorridor.
 type NetWatchRoute struct {
-	Name string `json:"name"`
-	From string `json:"from"`
-	To   string `json:"to"`
+	Name  string `json:"name"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Basis string `json:"basis,omitempty"`
 }
 
 const (
@@ -113,11 +119,12 @@ func newNetWatchService(db *DB, cfg *Config) *netWatchService {
 	}
 	for _, cr := range c.Corridors {
 		opt.Corridors = append(opt.Corridors, netwatch.Corridor{Name: cr.Name,
-			A: netwatch.Zone{Name: cr.A.Name, LatMin: cr.A.LatMin, LatMax: cr.A.LatMax, LonMin: cr.A.LonMin, LonMax: cr.A.LonMax, Polygon: cr.A.Polygon},
-			B: netwatch.Zone{Name: cr.B.Name, LatMin: cr.B.LatMin, LatMax: cr.B.LatMax, LonMin: cr.B.LonMin, LonMax: cr.B.LonMax, Polygon: cr.B.Polygon}})
+			A:     netwatch.Zone{Name: cr.A.Name, LatMin: cr.A.LatMin, LatMax: cr.A.LatMax, LonMin: cr.A.LonMin, LonMax: cr.A.LonMax, Polygon: cr.A.Polygon},
+			B:     netwatch.Zone{Name: cr.B.Name, LatMin: cr.B.LatMin, LatMax: cr.B.LatMax, LonMin: cr.B.LonMin, LonMax: cr.B.LonMax, Polygon: cr.B.Polygon},
+			Basis: netwatch.Basis(strings.ToLower(cr.Basis))})
 	}
 	for _, r := range c.Routes {
-		opt.Routes = append(opt.Routes, netwatch.Route{Name: r.Name, From: strings.ToLower(r.From), To: strings.ToLower(r.To)})
+		opt.Routes = append(opt.Routes, netwatch.Route{Name: r.Name, From: strings.ToLower(r.From), To: strings.ToLower(r.To), Basis: netwatch.Basis(strings.ToLower(r.Basis))})
 	}
 	s.watch = netwatch.New(opt, s)
 	return s
@@ -332,6 +339,8 @@ func (s *netWatchService) readBatch(q string, after int64) (int, int64, error) {
 		}
 		if typ == 4 && from != "" {
 			s.watch.AddAdvertObservation(tx, h, observer, strings.ToLower(from), path)
+		} else if typ == 5 { // GRP_TXT: a channel message
+			s.watch.AddChatObservation(tx, h, observer, path)
 		} else {
 			s.watch.AddObservation(tx, h, observer, path)
 		}
@@ -371,10 +380,12 @@ type NetWatchCarrier struct {
 	Packets int    `json:"packets"`
 }
 
-// NetWatchReach is the share of adverts that crossed (0..1), by day.
+// NetWatchReach is the share of adverts (or channel messages, by Basis) that
+// crossed (0..1), by day.
 type NetWatchReach struct {
 	Last        float64   `json:"last"`
 	Usual       float64   `json:"usual"`
+	Basis       string    `json:"basis"` // adverts or chat
 	LastAdverts int       `json:"lastAdverts"`
 	LastReached int       `json:"lastReached"`
 	Daily       []float64 `json:"daily"` // -1 where a day had too few adverts
@@ -384,7 +395,7 @@ func reachResp(r *netwatch.Reach) *NetWatchReach {
 	if r == nil {
 		return nil
 	}
-	return &NetWatchReach{Last: r.Last, Usual: r.Usual, LastAdverts: r.LastAdverts, LastReached: r.LastReached, Daily: r.Daily}
+	return &NetWatchReach{Last: r.Last, Usual: r.Usual, Basis: string(r.Basis), LastAdverts: r.LastAdverts, LastReached: r.LastReached, Daily: r.Daily}
 }
 
 // NetWatchCorridorDirection is one direction of a corridor against usual.
