@@ -660,6 +660,7 @@ func TestARepeaterHeardButNotRelayingIsFlagged(t *testing.T) {
 			rate = 0
 		}
 		f.hour(h, "obs1", map[string]int{"deaf": rate, "nb1": 30, "nb2": 30}, []string{"deaf", "nb1", "nb2"}, 60)
+		f.hour(h, "obs2", map[string]int{"deaf": rate / 3, "nb1": 10, "nb2": 10}, []string{"deaf"}, 60)
 		for i := 0; i < 20; i++ { // deaf usually passes traffic between its neighbours
 			f.tx++
 			path := []string{"nb1", "deaf", "nb2"}

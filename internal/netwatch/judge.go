@@ -178,7 +178,7 @@ func (w *Watch) nightly(nd *node, t int64) (Nightly, bool) {
 		if b <= w.newest-int64(w.opt.WindowHours) {
 			return Nightly{}, false
 		}
-		bestS, bestL, curS, curL, active := int64(0), 0, int64(0), 0, 0
+		bestS, bestL, curS, curL := int64(0), 0, int64(0), 0
 		for h := b; h <= e; h++ {
 			if nd.relays.at(w, h) == 0 && nd.adverts.at(w, h) == 0 {
 				if curL == 0 {
@@ -191,11 +191,20 @@ func (w *Watch) nightly(nd *node, t int64) (Nightly, bool) {
 				continue
 			}
 			curL = 0
-			if nd.relays.at(w, h) > 0 {
+		}
+		// Night: it covers 01:00-03:00 UTC, and it relays in most hours
+		// outside it (a sparse repeater has quiet hours any time of day).
+		active, small := 0, 0
+		for h := b; h <= e; h++ {
+			if h >= bestS && h < bestS+int64(bestL) {
+				if hh := h % 24; hh >= 1 && hh <= 3 {
+					small++
+				}
+			} else if nd.relays.at(w, h) > 0 {
 				active++
 			}
 		}
-		if bestL >= 4 && bestL <= 18 && active >= 4 {
+		if bestL >= 4 && bestL <= 18 && small == 3 && active*10 >= (24-bestL)*7 {
 			got = append(got, night{rel: int(bestS - b), length: bestL})
 			if k == 0 {
 				newest = &got[len(got)-1]
@@ -203,6 +212,13 @@ func (w *Watch) nightly(nd *node, t int64) (Nightly, bool) {
 		}
 	}
 	if len(got) < 5 || newest == nil {
+		return Nightly{}, false
+	}
+	lo, hi := 24, 0
+	for _, g := range got {
+		lo, hi = min(lo, g.rel), max(hi, g.rel)
+	}
+	if hi-lo > 5 { // it goes dark at no particular time
 		return Nightly{}, false
 	}
 	n := Nightly{Nights: len(got), DarkFrom: (12 + newest.rel) % 24, DarkTo: (12 + newest.rel + newest.length) % 24, minRel: 24}
@@ -246,14 +262,17 @@ func mean(a []float64) float64 {
 	return s / float64(len(a))
 }
 
-// lastActive is the last hour at or before t in which r counted anything.
-func (w *Watch) lastActive(r ring, t int64) int64 {
-	for h := t; h > w.newest-int64(w.opt.WindowHours); h-- {
-		if r.at(w, h) > 0 {
-			return h
-		}
+// advertsDuring says whether the repeater's adverts kept arriving through
+// the quiet slot ending at t: at least half of those due every gap hours, and
+// at least two. Positive evidence it is still on air, not merely a silence
+// too short yet to count.
+func (w *Watch) advertsDuring(nd *node, t int64, gap int) bool {
+	s := int64(w.opt.Slot)
+	due := 2
+	if gap > 0 && int(s)/gap/2 > due {
+		due = int(s) / gap / 2
 	}
-	return w.newest - int64(w.opt.WindowHours)
+	return nd.adverts.sum(w, t-s+1, t) >= due
 }
 
 // duringIncident says whether pk had an incident open at any hour in [from, to].
