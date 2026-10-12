@@ -56,3 +56,15 @@ func TestStepChangeFindsWhenAShareDroppedAndStayedDown(t *testing.T) {
 		t.Errorf("days with too little to say are skipped: at %d ok %v", at, ok)
 	}
 }
+
+// A slot that grew from tens to hundreds over two weeks varies by multiples;
+// a slot with nothing in it is still far outside that.
+func TestASilentSlotStandsOutEvenWhereTrafficVariesByMultiples(t *testing.T) {
+	growing := []float64{13, 125, 71, 48, 53, 127, 80, 132, 232, 379, 257, 333}
+	if p := lowerTail(0, 150, growing); p > 1e-4 {
+		t.Errorf("0 in a slot that held 13 to 379: p=%g, want under 1e-4", p)
+	}
+	if p := lowerTail(40, 150, growing); p < 1e-3 {
+		t.Errorf("40 in a slot that held 13 to 379: p=%g, want ordinary", p)
+	}
+}
