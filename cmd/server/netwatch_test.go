@@ -71,6 +71,13 @@ func seedNetWatch(t *testing.T, db *DB, now time.Time) {
 				add(at.Add(30*time.Minute), 4, nwKeir, []string{})
 			}
 		}
+		// Inverness adverts every hour; through Keir they reach Edinburgh,
+		// once Keir is silent they stop at Goyle Hill.
+		if at.Before(silentFrom) {
+			add(at.Add(40*time.Minute), 4, nwNorth, []string{nwKeir, nwSouth})
+		} else {
+			add(at.Add(40*time.Minute), 4, nwNorth, []string{nwMid})
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
@@ -144,6 +151,9 @@ func TestNetWatchFlagsARepeaterThatWentQuiet(t *testing.T) {
 	}
 	if d := st.Corridors[0].Directions; len(d) != 2 || d[0].From != "Highlands" || d[0].LastDay == 0 || d[1].LastDay != 0 {
 		t.Errorf("corridor directions %+v, want all of it Highlands → central belt", d)
+	}
+	if r := st.Corridors[0].Directions[0].Reach; r == nil || r.Usual != 1 || r.Last != 0 || r.LastAdverts != 24 {
+		t.Errorf("Highlands adverts reaching the central belt %+v, want none of 24 yesterday against all of them usually", r)
 	}
 	if len(st.Routes) != 1 || st.Routes[0].FromName != "Inverness" || st.Routes[0].ToName != "Edinburgh" {
 		t.Fatalf("routes %+v", st.Routes)
