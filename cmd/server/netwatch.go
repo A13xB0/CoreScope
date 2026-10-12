@@ -331,9 +331,10 @@ func (s *netWatchService) readBatch(q string, after int64) (int, int64, error) {
 			}
 		}
 		if typ == 4 && from != "" {
-			s.watch.AddAdvert(tx, h, strings.ToLower(from))
+			s.watch.AddAdvertObservation(tx, h, observer, strings.ToLower(from), path)
+		} else {
+			s.watch.AddObservation(tx, h, observer, path)
 		}
-		s.watch.AddObservation(tx, h, observer, path)
 	}
 	return n, last, rows.Err()
 }
@@ -370,6 +371,22 @@ type NetWatchCarrier struct {
 	Packets int    `json:"packets"`
 }
 
+// NetWatchReach is the share of adverts that crossed (0..1), by day.
+type NetWatchReach struct {
+	Last        float64   `json:"last"`
+	Usual       float64   `json:"usual"`
+	LastAdverts int       `json:"lastAdverts"`
+	LastReached int       `json:"lastReached"`
+	Daily       []float64 `json:"daily"` // -1 where a day had too few adverts
+}
+
+func reachResp(r *netwatch.Reach) *NetWatchReach {
+	if r == nil {
+		return nil
+	}
+	return &NetWatchReach{Last: r.Last, Usual: r.Usual, LastAdverts: r.LastAdverts, LastReached: r.LastReached, Daily: r.Daily}
+}
+
 // NetWatchCorridorDirection is one direction of a corridor against usual.
 type NetWatchCorridorDirection struct {
 	From          string            `json:"from"`
@@ -379,6 +396,8 @@ type NetWatchCorridorDirection struct {
 	Daily         []int             `json:"daily"`
 	Carriers      []NetWatchCarrier `json:"carriers"`
 	ObserversDown []string          `json:"observersDown,omitempty"`
+	// Reach is the share of adverts from repeaters in From that reached To.
+	Reach *NetWatchReach `json:"reach,omitempty"`
 }
 
 // NetWatchCorridorStatus is a corridor's last day against usual.
@@ -408,6 +427,8 @@ type NetWatchRouteStatus struct {
 	Daily    []int  `json:"daily"`
 	// ObserversDown names quiet observers that usually hear most of it.
 	ObserversDown []string `json:"observersDown,omitempty"`
+	// Reach is the share of adverts passing From that then passed To.
+	Reach *NetWatchReach `json:"reach,omitempty"`
 }
 
 // NetWatchResponse is GET /api/netwatch.
@@ -552,7 +573,7 @@ func (s *Server) handleNetWatch(w http.ResponseWriter, r *http.Request) {
 		cs.Directions = []NetWatchCorridorDirection{}
 		for _, d := range c.Directions {
 			nd := NetWatchCorridorDirection{From: d.From, To: d.To, LastDay: d.LastDay, UsualDay: d.UsualDay, Daily: d.Daily,
-				Carriers: []NetWatchCarrier{}, ObserversDown: nw.observerNames(d.ObserversDown)}
+				Carriers: []NetWatchCarrier{}, ObserversDown: nw.observerNames(d.ObserversDown), Reach: reachResp(d.Reach)}
 			for _, k := range d.Carriers {
 				nd.Carriers = append(nd.Carriers, NetWatchCarrier{Node: k.Node, Name: nw.node(k.Node).name, Packets: k.Packets})
 			}
@@ -563,7 +584,7 @@ func (s *Server) handleNetWatch(w http.ResponseWriter, r *http.Request) {
 	for _, rt := range st.Routes {
 		resp.Routes = append(resp.Routes, NetWatchRouteStatus{Name: rt.Name, From: rt.From, FromName: nw.node(rt.From).name,
 			To: rt.To, ToName: nw.node(rt.To).name, Now: rt.Now, Usual: rt.Usual, LastDay: rt.LastDay, UsualDay: rt.UsualDay, Daily: rt.Daily,
-			ObserversDown: nw.observerNames(rt.ObserversDown)})
+			ObserversDown: nw.observerNames(rt.ObserversDown), Reach: reachResp(rt.Reach)})
 	}
 	writeJSON(w, resp)
 }
