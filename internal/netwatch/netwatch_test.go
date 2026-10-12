@@ -542,3 +542,44 @@ func TestAdvertsNobodyRelayedDoNotCountTowardsReach(t *testing.T) {
 		t.Fatalf("reach %+v, want every relayed advert counted and none of the direct ones", r)
 	}
 }
+
+// Where adverts no longer cross (a neighbouring network that stopped
+// flooding them), a corridor or route can be judged on channel messages
+// instead: their origin is the first repeater that relayed them.
+func TestChatBasedReachIgnoresAdverts(t *testing.T) {
+	pos := grid{"ne1": {54.9, -1.6}, "bord": {55.6, -2.0}, "s1": {55.9, -3.2}}
+	ne := Zone{Name: "North East", LatMin: 54.5, LatMax: 55.5, LonMin: -2.5, LonMax: -1}
+	sc := Zone{Name: "Scotland", LatMin: 55.55, LatMax: 59, LonMin: -6, LonMax: -1.9}
+	w := New(Options{
+		Corridors: []Corridor{{Name: "NE and S", A: ne, B: sc, Basis: BasisChat}},
+		Routes:    []Route{{Name: "Border", From: "ne1", To: "s1", Basis: BasisChat}},
+	}, pos)
+	var id int64
+	for h := int64(0); h < 17*day; h++ {
+		broken := h >= 16*day
+		for i := 0; i < 4; i++ {
+			id++
+			path := []string{"ne1", "bord", "s1"}
+			if broken && i > 0 {
+				path = []string{"ne1", "bord"} // three in four die at the border
+			}
+			w.AddChatObservation(id, 1008+h, "o", path)
+		}
+		if h < 8*day { // NE adverts stop crossing half way through
+			id++
+			w.AddAdvertObservation(id, 1008+h, "o", "ne1", []string{"bord", "s1"})
+		}
+		id++
+		w.AddChatObservation(id, 1008+h, "o", []string{"", "s1"}) // first relay unknown: no origin
+		w.Evaluate(1008 + h)
+	}
+	st := w.Status()
+	r := st.Corridors[0].Directions[0].Reach
+	if r == nil || r.Basis != BasisChat || r.Usual != 1 || r.Last != 0.25 || r.LastAdverts != 96 {
+		t.Errorf("NE → Scotland chat reach %+v, want a quarter of 96 messages yesterday against all of them usually", r)
+	}
+	rr := st.Routes[0].Reach
+	if rr == nil || rr.Basis != BasisChat || rr.Usual != 1 || rr.Last != 0.25 {
+		t.Errorf("border route chat reach %+v", rr)
+	}
+}
