@@ -724,3 +724,28 @@ func TestNightlyDropOutsAreRecognisedAndAnEarlierStartIsWarned(t *testing.T) {
 		t.Fatalf("nightly %+v, want solar going dark earlier, from 18:00", st.Nightly)
 	}
 }
+
+// A repeater that appeared a week ago is judged on the days it has been on
+// air, not on the zeros before it existed.
+func TestANewRepeaterIsJudgedOnTheDaysItHasBeenOnAir(t *testing.T) {
+	f := &feed{w: New(Options{Days: 14}, nil), start: 500000}
+	for h := int64(0); h < 18*day; h++ {
+		rel, adv := map[string]int{"old": 30}, []string{}
+		if h%2 == 0 {
+			adv = append(adv, "old")
+		}
+		if h >= 9*day && h < 17*day { // "new" appears on day 9, dies on day 17
+			rel["new"] = 30
+			if h%2 == 0 {
+				adv = append(adv, "new")
+			}
+		}
+		f.hour(h, "obs1", rel, adv, 60)
+		f.hour(h, "obs2", map[string]int{"new": rel["new"] / 3, "old": 10}, adv, 60)
+		f.w.Evaluate(f.start + h)
+	}
+	st := f.w.Status()
+	if len(st.Open) != 1 || st.Open[0].Node != "new" {
+		t.Fatalf("open %+v, want new flagged", st.Open)
+	}
+}
