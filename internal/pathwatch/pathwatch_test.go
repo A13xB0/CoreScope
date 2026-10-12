@@ -240,3 +240,21 @@ func TestAFlagCanBeKeptForTwoWeeks(t *testing.T) {
 		t.Fatalf("flag %+v days %d, want the change of 10 days ago flagged and 7 days shown", fortnight.Flag, len(fortnight.Days))
 	}
 }
+
+// When the usual range is wide (half the fortnight was before a drop, half
+// after), a share under half its usual is still worse, never normal.
+func TestAShareUnderHalfItsUsualIsWorseEvenWhenTheRangeIsWide(t *testing.T) {
+	in := feed(100, func(i int) float64 {
+		switch {
+		case i == 0:
+			return 0.01
+		case i <= 6:
+			return 0.05
+		}
+		return 0.55
+	}, func(int) []string { return []string{"keir"} })
+	r := Analyse(in, activity{}, Options{})
+	if r.Verdict != "worse" {
+		t.Fatalf("share %v usual %v range %v-%v verdict %q, want worse", r.Share, r.Usual, r.Low, r.High, r.Verdict)
+	}
+}
