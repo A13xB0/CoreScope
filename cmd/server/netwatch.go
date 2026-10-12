@@ -370,6 +370,17 @@ type NetWatchCarrier struct {
 	Packets int    `json:"packets"`
 }
 
+// NetWatchCorridorDirection is one direction of a corridor against usual.
+type NetWatchCorridorDirection struct {
+	From          string            `json:"from"`
+	To            string            `json:"to"`
+	LastDay       int               `json:"lastDay"`
+	UsualDay      int               `json:"usualDay"`
+	Daily         []int             `json:"daily"`
+	Carriers      []NetWatchCarrier `json:"carriers"`
+	ObserversDown []string          `json:"observersDown,omitempty"`
+}
+
 // NetWatchCorridorStatus is a corridor's last day against usual.
 type NetWatchCorridorStatus struct {
 	Name     string            `json:"name"`
@@ -379,6 +390,8 @@ type NetWatchCorridorStatus struct {
 	UsualDay int               `json:"usualDay"`
 	Daily    []int             `json:"daily"`
 	Carriers []NetWatchCarrier `json:"carriers"`
+	// Directions are A to B, then B to A.
+	Directions []NetWatchCorridorDirection `json:"directions"`
 }
 
 // NetWatchRouteStatus is a configured route against its usual.
@@ -535,6 +548,15 @@ func (s *Server) handleNetWatch(w http.ResponseWriter, r *http.Request) {
 		cs := NetWatchCorridorStatus{Name: c.Name, A: c.A, B: c.B, LastDay: c.LastDay, UsualDay: c.UsualDay, Daily: c.Daily, Carriers: []NetWatchCarrier{}}
 		for _, k := range c.Carriers {
 			cs.Carriers = append(cs.Carriers, NetWatchCarrier{Node: k.Node, Name: nw.node(k.Node).name, Packets: k.Packets})
+		}
+		cs.Directions = []NetWatchCorridorDirection{}
+		for _, d := range c.Directions {
+			nd := NetWatchCorridorDirection{From: d.From, To: d.To, LastDay: d.LastDay, UsualDay: d.UsualDay, Daily: d.Daily,
+				Carriers: []NetWatchCarrier{}, ObserversDown: nw.observerNames(d.ObserversDown)}
+			for _, k := range d.Carriers {
+				nd.Carriers = append(nd.Carriers, NetWatchCarrier{Node: k.Node, Name: nw.node(k.Node).name, Packets: k.Packets})
+			}
+			cs.Directions = append(cs.Directions, nd)
 		}
 		resp.Corridors = append(resp.Corridors, cs)
 	}

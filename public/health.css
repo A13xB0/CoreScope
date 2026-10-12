@@ -36,6 +36,7 @@
 .h-chip.is-good { background: color-mix(in srgb, var(--status-green, #22c55e) 16%, transparent); color: var(--status-green, #22c55e); border-color: transparent; }
 .h-corridors { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .h-corr { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; font-size: var(--fs-sm, 13px); }
+.h-dir { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px solid var(--border); }
 .h-probe-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 10px; }
 .h-probe-form label { font-size: var(--fs-sm, 13px); color: var(--text-muted); }
 .h-probe-form input { flex: 1 1 220px; min-width: 0; font: inherit; padding: 8px 10px; min-height: 40px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg, var(--card-bg)); color: var(--text); }

@@ -142,6 +142,9 @@ func TestNetWatchFlagsARepeaterThatWentQuiet(t *testing.T) {
 	if len(st.Corridors) != 1 || st.Corridors[0].UsualDay < 24*30 || st.Corridors[0].LastDay > st.Corridors[0].UsualDay {
 		t.Errorf("corridor %+v", st.Corridors)
 	}
+	if d := st.Corridors[0].Directions; len(d) != 2 || d[0].From != "Highlands" || d[0].LastDay == 0 || d[1].LastDay != 0 {
+		t.Errorf("corridor directions %+v, want all of it Highlands → central belt", d)
+	}
 	if len(st.Routes) != 1 || st.Routes[0].FromName != "Inverness" || st.Routes[0].ToName != "Edinburgh" {
 		t.Fatalf("routes %+v", st.Routes)
 	}
