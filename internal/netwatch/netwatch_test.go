@@ -521,3 +521,24 @@ func TestAdvertReachIsSteadyWhereTrafficIsNot(t *testing.T) {
 		t.Errorf("route reach %+v, want about 0.25 against 1.0", r.Reach)
 	}
 }
+
+// An advert no repeater relayed never entered the mesh, so it could not
+// cross anything: it is not counted towards reach.
+func TestAdvertsNobodyRelayedDoNotCountTowardsReach(t *testing.T) {
+	pos := grid{"n1": {57.5, -4.2}, "s1": {55.9, -3.2}}
+	w := New(Options{Corridors: []Corridor{{Name: "H and C", A: Zone{Name: "Highlands", LatMin: 57.3, LatMax: 59, LonMin: -6, LonMax: -3}, B: Zone{Name: "Central belt", LatMin: 55.5, LatMax: 56.4, LonMin: -5, LonMax: -2}}}}, pos)
+	var id int64
+	for h := int64(0); h < 9*day; h++ {
+		for i := 0; i < 4; i++ {
+			id++
+			w.AddAdvertObservation(id, 1008+h, "o", "n1", []string{"s1"}) // relayed, got through
+			id++
+			w.AddAdvertObservation(id, 1008+h, "o", "n1", nil) // heard directly, never relayed
+		}
+		w.Evaluate(1008 + h)
+	}
+	r := w.Status().Corridors[0].Directions[0].Reach
+	if r == nil || r.Last != 1 || r.LastAdverts != 4*24 {
+		t.Fatalf("reach %+v, want every relayed advert counted and none of the direct ones", r)
+	}
+}
