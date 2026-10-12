@@ -44,16 +44,16 @@ func (w *Watch) reachStatus(r reach, basis Basis, target float64, t int64) *Reac
 		}
 	}
 	// The days the usual is taken from: the last Days usable days before the
-	// last one, or, after a recent step, the Days before the step.
-	upto := n - 1
+	// last one, or, after a recent step, the week before the step.
+	upto, take := n-1, w.opt.Days
 	var since *int64
 	if at, _, _, ok := stepChange(rates, den); ok && n-1-at < acceptDays {
-		upto = at
+		upto, take = at, min(stepWeek, w.opt.Days)
 		h := (firstDay + int64(at)) * 24
 		since = &h
 	}
 	var idx []int
-	for i := upto - 1; i >= 0 && len(idx) < w.opt.Days; i-- {
+	for i := upto - 1; i >= 0 && len(idx) < take; i-- {
 		if rates[i] >= 0 {
 			idx = append(idx, i)
 		}
@@ -75,7 +75,11 @@ func (w *Watch) reachStatus(r reach, basis Basis, target float64, t int64) *Reac
 		out.Verdict = "new"
 	case last < out.Low:
 		out.Verdict = "worse"
-		out.Cause = cause(r.via, den, idx, n, firstDay, usual, last)
+		out.candidates = causes(r, den, idx, n, firstDay, usual, last)
+		if len(out.candidates) > 0 && out.candidates[0].Explains >= 0.5 {
+			c := out.candidates[0]
+			out.Cause = &c
+		}
 	case last > out.High:
 		out.Verdict = "better"
 	default:
@@ -87,10 +91,14 @@ func (w *Watch) reachStatus(r reach, basis Basis, target float64, t int64) *Reac
 	return out
 }
 
-// cause finds the repeater whose crossings fell furthest below what its
-// usual share of the adverts would give on the last day, and keeps it when
-// that accounts for at least half of the drop.
-func cause(via map[int64]map[string]int, den []int, usualDays []int, n int, firstDay int64, usual, last float64) *Cause {
+// causes ranks the repeaters whose crossings fell furthest below what their
+// usual share of the adverts would give on the last day, keeping those that
+// account for at least 30% of the drop, most first. A repeater still seen
+// carrying the adverts that did not get across (at least half its usual
+// share of all of them) is evidently working, and is left out: the break is
+// further along.
+func causes(r reach, den []int, usualDays []int, n int, firstDay int64, usual, last float64) []Cause {
+	via := r.via
 	total := (usual - last) * float64(den[n-1])
 	if total <= 0 {
 		return nil
@@ -102,36 +110,40 @@ func cause(via map[int64]map[string]int, den []int, usualDays []int, n int, firs
 		}
 	}
 	lastVia := via[firstDay+int64(n-1)]
-	var best *Cause
-	bestDrop := 0.0
-	keys := make([]string, 0, len(nodes))
+	var out []Cause
 	for pk := range nodes {
-		keys = append(keys, pk)
-	}
-	sort.Strings(keys)
-	for _, pk := range keys {
 		shares := make([]float64, 0, len(usualDays))
 		for _, i := range usualDays {
 			shares = append(shares, float64(via[firstDay+int64(i)][pk])/float64(den[i]))
 		}
 		share := medianF(shares)
 		lastShare := float64(lastVia[pk]) / float64(den[n-1])
-		if drop := (share - lastShare) * float64(den[n-1]); drop > bestDrop {
-			bestDrop = drop
-			best = &Cause{Node: pk, Usual: share, Last: lastShare}
+		ex := (share - lastShare) * float64(den[n-1]) / total
+		if ex < 0.3 {
+			continue
 		}
+		carried := make([]float64, 0, len(usualDays))
+		for _, i := range usualDays {
+			carried = append(carried, float64(r.denVia[firstDay+int64(i)][pk])/float64(den[i]))
+		}
+		if float64(r.denVia[firstDay+int64(n-1)][pk])/float64(den[n-1]) >= 0.5*medianF(carried) {
+			continue
+		}
+		out = append(out, Cause{Node: pk, Usual: share, Last: lastShare, Explains: ex})
 	}
-	if best == nil {
-		return nil
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Explains != out[j].Explains {
+			return out[i].Explains > out[j].Explains
+		}
+		return out[i].Node < out[j].Node
+	})
+	if len(out) > 5 {
+		out = out[:5]
 	}
-	best.Explains = bestDrop / total
-	if best.Explains > 1 {
-		best.Explains = 1
+	for i := range out {
+		out[i].Explains = min(out[i].Explains, 1)
 	}
-	if best.Explains < 0.5 {
-		return nil
-	}
-	return best
+	return out
 }
 
 // burn compares the share over the last 6, 24 and 72 hours with the target.

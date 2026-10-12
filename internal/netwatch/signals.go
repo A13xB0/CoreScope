@@ -202,8 +202,37 @@ func where(c CorridorStatus, d CorridorDirection) string {
 	return fmt.Sprintf("%s: %s → %s", c.Name, d.From, d.To)
 }
 
-// explainedBy fills each open incident's Affects, and builds the timeline.
+// preferQuiet names, as a worse reach's cause, a candidate that has itself
+// gone quiet: a repeater downstream of it lost the same crossings, but kept
+// relaying everything else.
+func preferQuiet(r *Reach, open map[string]bool) {
+	if r == nil {
+		return
+	}
+	for _, c := range r.candidates {
+		if open[c.Node] {
+			c := c
+			r.Cause = &c
+			return
+		}
+	}
+}
+
+// explainedBy settles causes, fills each open incident's Affects, and builds
+// the timeline.
 func (w *Watch) explainedBy(st *Status) {
+	open := map[string]bool{}
+	for _, i := range st.Open {
+		open[i.Node] = true
+	}
+	for ci := range st.Corridors {
+		for di := range st.Corridors[ci].Directions {
+			preferQuiet(st.Corridors[ci].Directions[di].Reach, open)
+		}
+	}
+	for ri := range st.Routes {
+		preferQuiet(st.Routes[ri].Reach, open)
+	}
 	for i := range st.Open {
 		pk := st.Open[i].Node
 		for _, c := range st.Corridors {
