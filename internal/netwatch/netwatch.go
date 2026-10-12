@@ -166,7 +166,8 @@ type node struct {
 	adverts ring
 	byObs   map[string]ring
 	open    *Incident
-	gray    int // consecutive hours it has looked like it stopped relaying
+	gray    int     // consecutive hours it has looked like it stopped relaying
+	sent    []int64 // the send times its adverts carry, sorted, unix seconds
 }
 
 type corridorState struct {
@@ -245,13 +246,15 @@ type Watch struct {
 	closed    []Incident
 	evaluated int64
 	feed      FeedStatus
+	signal    map[[2]string]*snrDays // [repeater, observer]
 }
 
 // New starts an empty watch.
 func New(opt Options, loc Locator) *Watch {
 	opt = opt.withDefaults()
 	w := &Watch{opt: opt, loc: loc, nodes: map[string]*node{}, observers: map[string]ring{},
-		links: map[[2]string]ring{}, total: make(ring, opt.WindowHours), seen: map[int64]map[seenKey]struct{}{}}
+		links: map[[2]string]ring{}, total: make(ring, opt.WindowHours), seen: map[int64]map[seenKey]struct{}{},
+		signal: map[[2]string]*snrDays{}}
 	for _, c := range opt.Corridors {
 		cs := &corridorState{Corridor: c, count: make(ring, opt.WindowHours), carriers: map[int64]map[string]int{}}
 		for i := range cs.dir {
@@ -641,6 +644,9 @@ type Incident struct {
 	Chance    float64 `json:"chance"`
 	Observers int     `json:"observers"`
 	Repeats   int     `json:"repeats"` // the how-many-th time in the window it went quiet
+	// Affects names the corridor directions and routes it explains (it is
+	// their likely cause, or the carrier they were rerouted from).
+	Affects []string `json:"affects,omitempty"`
 	// matchedUsual is the like-for-like usual at flag time, for closing.
 	matchedUsual int
 }
@@ -969,6 +975,8 @@ type Status struct {
 	Routes    []RouteStatus    `json:"routes"`
 	Feed      FeedStatus       `json:"feed"`
 	Nightly   []Nightly        `json:"nightly"`
+	Drift     []Drift          `json:"drift"`
+	Events    []Event          `json:"events"` // newest first
 }
 
 // Status reports the watch at its last evaluated hour.
@@ -1013,6 +1021,8 @@ func (w *Watch) Status() Status {
 		rs.Reach = w.reachStatus(r.reach, r.Basis, r.Target, t)
 		st.Routes = append(st.Routes, rs)
 	}
+	st.Drift = w.drifts(t)
+	w.explainedBy(&st)
 	return st
 }
 
@@ -1077,6 +1087,10 @@ type Series struct {
 	Relays   []int     `json:"relays"`
 	Adverts  []int     `json:"adverts"`
 	Expected []float64 `json:"expected"` // median of the same hour on the previous Days days; -1 where unknown
+	// AdvertEveryMin is how often it adverts, from the times its adverts
+	// carry; AdvertDelivery the share of them heard, per complete day.
+	AdvertEveryMin int       `json:"advertEveryMin"`
+	AdvertDelivery []float64 `json:"advertDelivery"`
 }
 
 func (w *Watch) series(r ring, end int64) ([]int, []float64) {
@@ -1109,6 +1123,8 @@ func (w *Watch) NodeSeries(pk string, end int64) Series {
 	}
 	s.Relays, s.Expected = w.series(nd.relays, end)
 	s.Adverts, _ = w.series(nd.adverts, end)
+	every, daily := w.advertDelivery(nd, end)
+	s.AdvertEveryMin, s.AdvertDelivery = int(every/60), daily
 	return s
 }
 
@@ -1244,6 +1260,15 @@ func (w *Watch) Prune() {
 	for k, r := range w.observers {
 		if r.sum(w, lo, hi) == 0 {
 			delete(w.observers, k)
+		}
+	}
+	for k, sd := range w.signal {
+		recent := false
+		for _, d := range sd.day {
+			recent = recent || d >= lo/24
+		}
+		if !recent {
+			delete(w.signal, k)
 		}
 	}
 }
