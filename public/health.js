@@ -19,6 +19,16 @@
     return Math.round((now / usual - 1) * 100);
   }
   function pctText(c) { return c == null ? '—' : (c > 0 ? '+' : c < 0 ? '−' : '') + Math.abs(c) + '%'; }
+  // judge compares a last day with its usual one; with almost no usual traffic
+  // a percentage means nothing, so new traffic is called new.
+  function judge(last, usual) {
+    if (usual < 10) {
+      return last >= 30 ? { text: 'New', cls: 'is-good', pct: '' } : { text: 'Too little traffic', cls: '', pct: '' };
+    }
+    var c = change(last, usual), v = verdict(c);
+    v.pct = pctText(c);
+    return v;
+  }
   function verdict(c) {
     if (c == null) return { text: 'Not enough history', cls: '' };
     if (c <= -25) return { text: 'Worse', cls: 'is-bad' };
@@ -92,7 +102,7 @@
     if (!body) return;
     var net = st.networkUsual ? Math.round(st.networkNow / st.networkUsual * 100) : null;
     var quietObs = st.observers.filter(function (o) { return o.quiet; });
-    var worse = st.routes.filter(function (r) { return verdict(change(r.lastDay, r.usualDay)).text === 'Worse'; });
+    var worse = st.routes.filter(function (r) { return judge(r.lastDay, r.usualDay).text === 'Worse'; });
     document.getElementById('hSub').textContent = st.judged + ' repeaters judged · last complete hour ' + when(st.hour) +
       ' · each one compared with the same ' + st.slotHours + ' hours on the previous ' + st.days + ' days';
     var html = '<div class="h-stats">' +
@@ -114,11 +124,11 @@
       html += '<section class="h-card"><h3>Routes</h3><p class="h-sub">Packets that pass the first repeater and then the second, against usual.</p>' +
         '<div class="h-scroll"><table class="h-table" id="hRoutesTable"><thead><tr><th>Route</th><th>From → to</th><th class="num">Last ' + st.slotHours + ' h</th><th class="num">Last day</th><th>Change</th><th>Days</th><th></th></tr></thead><tbody>' +
         st.routes.map(function (r, idx) {
-          var c = change(r.lastDay, r.usualDay), v = verdict(c);
+          var v = judge(r.lastDay, r.usualDay);
           return '<tr><td><b>' + esc(r.name) + '</b></td><td>' + esc(r.fromName) + ' → ' + esc(r.toName) + '</td>' +
             '<td class="num">' + r.now + ' <span class="h-muted">/ ' + r.usual + '</span></td>' +
             '<td class="num">' + r.lastDay + ' <span class="h-muted">/ ' + r.usualDay + '</span></td>' +
-            '<td><span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> <span class="h-num">' + pctText(c) + '</span></td>' +
+            '<td><span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> <span class="h-num">' + v.pct + '</span></td>' +
             '<td>' + bars(r.daily.slice(-14)) + '</td>' +
             '<td><button type="button" class="btn" data-probe="' + idx + '">Probe</button></td></tr>';
         }).join('') + '</tbody></table></div><p class="h-sub">Worse or better means at least 25% below or above its usual day (the median of the previous ' + st.days + ').</p></section>';
@@ -127,9 +137,9 @@
     }
     if (st.corridors.length) {
       html += '<section class="h-card"><h3>Corridors</h3><div class="h-corridors">' + st.corridors.map(function (c) {
-        var ch = change(c.lastDay, c.usualDay), v = verdict(ch);
+        var v = judge(c.lastDay, c.usualDay);
         return '<div class="h-corr"><div><b>' + esc(c.name) + '</b><span class="h-muted"> ' + esc(c.a) + ' and ' + esc(c.b) + '</span></div>' +
-          '<div>' + c.lastDay + ' packets yesterday, usually ' + c.usualDay + ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> ' + pctText(ch) + '</div>' +
+          '<div>' + c.lastDay + ' packets yesterday, usually ' + c.usualDay + ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> ' + v.pct + '</div>' +
           bars(c.daily, 260, 46) +
           (c.carriers.length ? '<div class="h-muted">Carried by ' + c.carriers.map(function (k) { return esc(k.name) + ' (' + k.packets + ')'; }).join(', ') + '</div>' : '') +
           '</div>';
