@@ -41,6 +41,8 @@ type NetWatchZone struct {
 	LatMax float64 `json:"latMax"`
 	LonMin float64 `json:"lonMin"`
 	LonMax float64 `json:"lonMax"`
+	// Polygon, when given (three or more [lat, lon] points), replaces the box.
+	Polygon [][2]float64 `json:"polygon,omitempty"`
 }
 
 // NetWatchCorridor counts packets whose path joins a repeater in A and one in B.
@@ -104,8 +106,8 @@ func newNetWatchService(db *DB, cfg *Config) *netWatchService {
 	opt := netwatch.Options{WindowHours: s.window}
 	for _, cr := range c.Corridors {
 		opt.Corridors = append(opt.Corridors, netwatch.Corridor{Name: cr.Name,
-			A: netwatch.Zone{Name: cr.A.Name, LatMin: cr.A.LatMin, LatMax: cr.A.LatMax, LonMin: cr.A.LonMin, LonMax: cr.A.LonMax},
-			B: netwatch.Zone{Name: cr.B.Name, LatMin: cr.B.LatMin, LatMax: cr.B.LatMax, LonMin: cr.B.LonMin, LonMax: cr.B.LonMax}})
+			A: netwatch.Zone{Name: cr.A.Name, LatMin: cr.A.LatMin, LatMax: cr.A.LatMax, LonMin: cr.A.LonMin, LonMax: cr.A.LonMax, Polygon: cr.A.Polygon},
+			B: netwatch.Zone{Name: cr.B.Name, LatMin: cr.B.LatMin, LatMax: cr.B.LatMax, LonMin: cr.B.LonMin, LonMax: cr.B.LonMax, Polygon: cr.B.Polygon}})
 	}
 	for _, r := range c.Routes {
 		opt.Routes = append(opt.Routes, netwatch.Route{Name: r.Name, From: strings.ToLower(r.From), To: strings.ToLower(r.To)})

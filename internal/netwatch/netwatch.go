@@ -64,13 +64,25 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// Zone is a box on the map, in degrees.
+// Zone is an area on the map: a polygon of [lat, lon] points when it has
+// three or more, else a box, in degrees.
 type Zone struct {
 	Name                           string
 	LatMin, LatMax, LonMin, LonMax float64
+	Polygon                        [][2]float64
 }
 
 func (z Zone) contains(lat, lon float64) bool {
+	if len(z.Polygon) >= 3 {
+		in := false
+		p := z.Polygon
+		for i, j := 0, len(p)-1; i < len(p); j, i = i, i+1 {
+			if (p[i][0] > lat) != (p[j][0] > lat) && lon < (p[j][1]-p[i][1])*(lat-p[i][0])/(p[j][0]-p[i][0])+p[i][1] {
+				in = !in
+			}
+		}
+		return in
+	}
 	return lat >= z.LatMin && lat <= z.LatMax && lon >= z.LonMin && lon <= z.LonMax
 }
 
