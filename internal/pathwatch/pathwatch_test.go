@@ -221,3 +221,22 @@ func TestARerouteThatTurnsOutQuietIsOneChange(t *testing.T) {
 		t.Fatalf("keir changes %+v, want one, quiet, dated the day it dropped out", keir)
 	}
 }
+
+// A flag can be kept for longer than a week, and changes are looked for over
+// that long even when fewer days are shown.
+func TestAFlagCanBeKeptForTwoWeeks(t *testing.T) {
+	in := feed(100, func(int) float64 { return 0.6 }, func(i int) []string {
+		if i <= 10 {
+			return []string{"goyle"}
+		}
+		return []string{"keir"}
+	})
+	week := Analyse(in, activity{}, Options{WindowDays: 7})
+	if week.Flag != nil {
+		t.Fatalf("a change 10 days back flagged with the default week: %+v", week.Flag)
+	}
+	fortnight := Analyse(in, activity{}, Options{WindowDays: 7, FlagDays: 14})
+	if fortnight.Flag == nil || !fortnight.Flag.Day.Equal(day(10)) || len(fortnight.Days) != 7 {
+		t.Fatalf("flag %+v days %d, want the change of 10 days ago flagged and 7 days shown", fortnight.Flag, len(fortnight.Days))
+	}
+}
