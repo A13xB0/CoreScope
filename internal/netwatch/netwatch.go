@@ -776,8 +776,8 @@ func (w *Watch) Evaluate(t int64) {
 		switch {
 		case known && silent:
 			inc.Kind, inc.Start = KindQuiet, last+1
-		case known && w.neighboursCarryOn(pk, t, quietObs):
-			inc.Kind, inc.Start = KindNotRelaying, w.lastActive(nd.relays, t)+1
+		case known && m.observers >= 2 && w.advertsDuring(nd, t, gap) && w.neighboursCarryOn(pk, t, quietObs):
+			inc.Kind, inc.Start = KindNotRelaying, t-int64(w.opt.Slot)+1
 		default:
 			continue
 		}
