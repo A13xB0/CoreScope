@@ -30,6 +30,14 @@ type Options struct {
 	MinGaps       int     // advert gaps needed before its rhythm is known [5]
 	ObserverShare float64 // a repeater mostly heard through quiet observers is not blamed [0.5]
 	Corridors     []Corridor
+	Routes        []Route
+}
+
+// Route is a named pair of repeaters whose traffic the watch follows: packets
+// whose path passes From and later To.
+type Route struct {
+	Name     string
+	From, To string
 }
 
 func (o Options) withDefaults() Options {
@@ -122,6 +130,11 @@ type corridorState struct {
 	carriers map[int64]map[string]int // day -> carrier -> packets
 }
 
+type routeState struct {
+	Route
+	count ring
+}
+
 type seenKey struct {
 	a, b string
 	tx   int64
@@ -138,6 +151,7 @@ type Watch struct {
 	links     map[[2]string]ring
 	total     ring
 	corridors []*corridorState
+	routes    []*routeState
 	seen      map[int64]map[seenKey]struct{} // hour -> keys already counted
 	closed    []Incident
 	evaluated int64
@@ -150,6 +164,9 @@ func New(opt Options, loc Locator) *Watch {
 		links: map[[2]string]ring{}, total: make(ring, opt.WindowHours), seen: map[int64]map[seenKey]struct{}{}}
 	for _, c := range opt.Corridors {
 		w.corridors = append(w.corridors, &corridorState{Corridor: c, count: make(ring, opt.WindowHours), carriers: map[int64]map[string]int{}})
+	}
+	for _, r := range opt.Routes {
+		w.routes = append(w.routes, &routeState{Route: r, count: make(ring, opt.WindowHours)})
 	}
 	return w
 }
@@ -183,6 +200,9 @@ func (w *Watch) advance(h int64) {
 		clear(r)
 	}
 	clear(w.total)
+	for _, r := range w.routes {
+		clear(r.count)
+	}
 	for _, c := range w.corridors {
 		clear(c.count)
 		for d := range c.carriers {
@@ -273,6 +293,24 @@ func (w *Watch) AddObservation(tx, h int64, obs string, path []string) {
 	if w.loc != nil && len(w.corridors) > 0 {
 		w.countCorridors(tx, h, path)
 	}
+	for ri, r := range w.routes {
+		if passes(path, r.From, r.To) && w.once(h, seenKey{a: "\x00route", b: r.Name, tx: tx + int64(ri)<<48}) {
+			r.count.add(w, h, 1)
+		}
+	}
+}
+
+// passes reports whether path visits from and later to.
+func passes(path []string, from, to string) bool {
+	seenFrom := false
+	for _, pk := range path {
+		if pk == from {
+			seenFrom = true
+		} else if seenFrom && pk == to {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *Watch) countCorridors(tx, h int64, path []string) {
@@ -494,6 +532,19 @@ type CorridorStatus struct {
 	Carriers []Carrier `json:"carriers"` // on the last complete day, busiest first
 }
 
+// RouteStatus is a configured route's traffic against its usual: over the
+// last slot, and over the last complete day.
+type RouteStatus struct {
+	Name     string `json:"name"`
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Now      int    `json:"now"`
+	Usual    int    `json:"usual"`
+	LastDay  int    `json:"lastDay"`
+	UsualDay int    `json:"usualDay"`
+	Daily    []int  `json:"daily"`
+}
+
 // NetworkStatus is all traffic over the last slot against usual.
 type NetworkStatus struct {
 	Now   int `json:"now"`
@@ -509,6 +560,7 @@ type Status struct {
 	Observers []ObserverStatus `json:"observers"`
 	Network   NetworkStatus    `json:"network"`
 	Corridors []CorridorStatus `json:"corridors"`
+	Routes    []RouteStatus    `json:"routes"`
 }
 
 // Status reports the watch at its last evaluated hour.
@@ -516,7 +568,7 @@ func (w *Watch) Status() Status {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	t := w.evaluated
-	st := Status{Hour: t, Open: []Incident{}, Recent: []Incident{}, Observers: []ObserverStatus{}, Corridors: []CorridorStatus{}}
+	st := Status{Hour: t, Open: []Incident{}, Recent: []Incident{}, Observers: []ObserverStatus{}, Corridors: []CorridorStatus{}, Routes: []RouteStatus{}}
 	if t == 0 {
 		return st
 	}
@@ -543,24 +595,39 @@ func (w *Watch) Status() Status {
 	for _, c := range w.corridors {
 		st.Corridors = append(st.Corridors, w.corridorStatus(c, t))
 	}
+	for _, r := range w.routes {
+		rs := RouteStatus{Name: r.Name, From: r.From, To: r.To}
+		rs.Now, rs.Usual = w.slot(r.count, t)
+		rs.Daily, rs.LastDay, rs.UsualDay = w.daily(r.count, t)
+		st.Routes = append(st.Routes, rs)
+	}
 	return st
 }
 
-func (w *Watch) corridorStatus(c *corridorState, t int64) CorridorStatus {
-	cs := CorridorStatus{Name: c.Name, A: c.A.Name, B: c.B.Name, Daily: []int{}, Carriers: []Carrier{}}
-	lastDay := (t+1)/24 - 1 // the last complete day
+// daily is a ring's packets per complete day over the window, the last of
+// them, and the median of the Days before it.
+func (w *Watch) daily(r ring, t int64) (days []int, last, usual int) {
+	days = []int{}
+	lastDay := (t+1)/24 - 1
 	firstDay := (w.newest-int64(w.opt.WindowHours))/24 + 1
 	for d := firstDay; d <= lastDay; d++ {
-		cs.Daily = append(cs.Daily, c.count.sum(w, d*24, d*24+23))
+		days = append(days, r.sum(w, d*24, d*24+23))
 	}
-	if n := len(cs.Daily); n > 0 {
-		cs.LastDay = cs.Daily[n-1]
+	if n := len(days); n > 0 {
+		last = days[n-1]
 		lo := n - 1 - w.opt.Days
 		if lo < 0 {
 			lo = 0
 		}
-		cs.UsualDay = median(cs.Daily[lo : n-1])
+		usual = median(days[lo : n-1])
 	}
+	return days, last, usual
+}
+
+func (w *Watch) corridorStatus(c *corridorState, t int64) CorridorStatus {
+	cs := CorridorStatus{Name: c.Name, A: c.A.Name, B: c.B.Name, Carriers: []Carrier{}}
+	lastDay := (t+1)/24 - 1 // the last complete day
+	cs.Daily, cs.LastDay, cs.UsualDay = w.daily(c.count, t)
 	for pk, n := range c.carriers[lastDay] {
 		cs.Carriers = append(cs.Carriers, Carrier{Node: pk, Packets: n})
 	}
