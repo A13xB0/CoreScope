@@ -209,6 +209,7 @@ type Watch struct {
 	seen      map[int64]map[seenKey]struct{} // hour -> keys already counted
 	closed    []Incident
 	evaluated int64
+	feed      FeedStatus
 }
 
 // New starts an empty watch.
@@ -589,12 +590,20 @@ func (w *Watch) AddAdvert(tx, h int64, pk string) {
 // Incident is a repeater that went quiet. End is nil while it lasts.
 type Incident struct {
 	Node         string `json:"node"`
-	Start        int64  `json:"start"`   // the hour after its last advert
+	Kind         string `json:"kind"`    // KindQuiet or KindNotRelaying
+	Start        int64  `json:"start"`   // the hour after its last advert (or last relay)
 	Flagged      int64  `json:"flagged"` // the hour the watch raised it
 	End          *int64 `json:"end,omitempty"`
 	Usual        int    `json:"usual"`        // relays usually in the slot
 	Now          int    `json:"now"`          // relays in the slot when flagged
 	AdvertEveryH int    `json:"advertEveryH"` // its usual advert gap, hours (90th percentile)
+	// Chance is how likely the quiet slot was by chance, judged through
+	// Observers observers that were up both now and in the usual.
+	Chance    float64 `json:"chance"`
+	Observers int     `json:"observers"`
+	Repeats   int     `json:"repeats"` // the how-many-th time in the window it went quiet
+	// matchedUsual is the like-for-like usual at flag time, for closing.
+	matchedUsual int
 }
 
 func median(a []int) int {
@@ -706,27 +715,42 @@ func (w *Watch) observersDown(byObs map[string]ring, t int64, quiet map[string]b
 
 // Evaluate judges every repeater at hour t (normally the last complete hour),
 // opening and closing incidents. Hours are evaluated in order; earlier hours
-// already evaluated are skipped.
+// already evaluated are skipped. An hour with no packets at all is still
+// judged: that silence is the news.
+//
+// A repeater is flagged when, through the observers up both now and in its
+// usual, its last Slot hours would happen by chance less than once in
+// 1/surpriseChance and hold at most QuietRatio of usual; and either its
+// adverts have stopped too (quiet) or they still arrive while its neighbours
+// carry on (not relaying).
 func (w *Watch) Evaluate(t int64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if t <= w.evaluated || t > w.newest || !w.covered(t) {
-		if t > w.evaluated && t <= w.newest {
+	if t > w.newest {
+		w.advance(t)
+	}
+	if t <= w.evaluated || !w.covered(t) {
+		if t > w.evaluated {
 			w.evaluated = t
 		}
 		return
 	}
 	w.evaluated = t
 	quietObs := w.quietObservers(t)
-	s := int64(w.opt.Slot)
+	w.checkFeed(t, quietObs)
 	for pk, nd := range w.nodes {
 		now, usual := w.slot(nd.relays, t)
-		silent, gap, last, known := w.advertSilence(nd, t)
 		if nd.open != nil {
-			// Back once it relays half of what was usual when it was flagged.
-			// Adverts are not required: a repeater far from every observer
-			// may have them heard only now and then.
-			if float64(now) >= w.opt.BackRatio*float64(nd.open.Usual) {
+			// Back once it relays half of what was usual when it was flagged,
+			// counted as it was then or like for like. Adverts are not
+			// required: a repeater far from every observer may have them heard
+			// only now and then.
+			back := float64(now) >= w.opt.BackRatio*float64(nd.open.Usual)
+			if !back && nd.open.matchedUsual > 0 {
+				m := w.matched(nd.byObs, t, quietObs, pk)
+				back = float64(m.now) >= w.opt.BackRatio*float64(nd.open.matchedUsual)
+			}
+			if back {
 				end := t
 				nd.open.End = &end
 				w.closed = append(w.closed, *nd.open)
@@ -734,26 +758,34 @@ func (w *Watch) Evaluate(t int64) {
 			}
 			continue
 		}
-		if !known || !silent || usual < w.opt.MinUsual || float64(now) > w.opt.QuietRatio*float64(usual) || !w.judged(pk) {
+		// Cheap screen first: most repeaters are nowhere near quiet.
+		if w.feed.Down || usual == 0 || float64(now) > 0.5*float64(usual) || !w.judged(pk) {
 			continue
 		}
-		// Not blamed when most of what it relays reached us through
-		// observers that have gone quiet themselves.
-		if len(quietObs) > 0 {
-			base, viaQuiet := 0, 0
-			from, to := t-24*int64(w.opt.Days)-s+1, t-s
-			for obs, r := range nd.byObs {
-				n := r.sum(w, from, to)
-				base += n
-				if quietObs[obs] {
-					viaQuiet += n
-				}
-			}
-			if base > 0 && float64(viaQuiet) >= w.opt.ObserverShare*float64(base) {
-				continue
-			}
+		m := w.matched(nd.byObs, t, quietObs, pk)
+		if m.observers == 0 || float64(m.now) > w.opt.QuietRatio*float64(m.usual) {
+			continue
 		}
-		nd.open = &Incident{Node: pk, Start: last + 1, Flagged: t, Usual: usual, Now: now, AdvertEveryH: gap}
+		p := quietChance(usual, m)
+		if p >= surpriseChance {
+			continue
+		}
+		silent, gap, last, known := w.advertSilence(nd, t)
+		inc := &Incident{Node: pk, Flagged: t, Usual: usual, Now: now, AdvertEveryH: gap,
+			Chance: p, Observers: m.observers, matchedUsual: m.usual}
+		switch {
+		case known && silent:
+			inc.Kind, inc.Start = KindQuiet, last+1
+		case known && w.neighboursCarryOn(pk, t, quietObs):
+			inc.Kind, inc.Start = KindNotRelaying, w.lastActive(nd.relays, t)+1
+		default:
+			continue
+		}
+		if n, ok := w.nightly(nd, t); ok && n.inItsNight(inc.Start, t) {
+			continue
+		}
+		inc.Repeats = w.repeats(pk)
+		nd.open = inc
 	}
 	// Forget closed incidents that have left the window.
 	keep := w.closed[:0]
@@ -888,6 +920,8 @@ type Status struct {
 	Network   NetworkStatus    `json:"network"`
 	Corridors []CorridorStatus `json:"corridors"`
 	Routes    []RouteStatus    `json:"routes"`
+	Feed      FeedStatus       `json:"feed"`
+	Nightly   []Nightly        `json:"nightly"`
 }
 
 // Status reports the watch at its last evaluated hour.
@@ -900,7 +934,7 @@ func (w *Watch) Status() Status {
 		return st
 	}
 	for pk, nd := range w.nodes {
-		if _, usual := w.slot(nd.relays, t); usual >= w.opt.MinUsual && w.judged(pk) {
+		if _, usual := w.slot(nd.relays, t); judgeable(usual) && w.judged(pk) {
 			st.Judged++
 		}
 		if nd.open != nil {
@@ -919,6 +953,8 @@ func (w *Watch) Status() Status {
 	}
 	sort.Slice(st.Observers, func(i, j int) bool { return st.Observers[i].ID < st.Observers[j].ID })
 	st.Network.Now, st.Network.Usual = w.slot(w.total, t)
+	st.Feed = w.feed
+	st.Nightly = w.nightlyList(t)
 	for _, c := range w.corridors {
 		st.Corridors = append(st.Corridors, w.corridorStatus(c, t))
 	}
