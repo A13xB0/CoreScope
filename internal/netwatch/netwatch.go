@@ -148,6 +148,7 @@ type corridorState struct {
 type routeState struct {
 	Route
 	count ring
+	byObs map[string]ring
 }
 
 type seenKey struct {
@@ -181,7 +182,7 @@ func New(opt Options, loc Locator) *Watch {
 		w.corridors = append(w.corridors, &corridorState{Corridor: c, count: make(ring, opt.WindowHours), carriers: map[int64]map[string]int{}})
 	}
 	for _, r := range opt.Routes {
-		w.routes = append(w.routes, &routeState{Route: r, count: make(ring, opt.WindowHours)})
+		w.routes = append(w.routes, &routeState{Route: r, count: make(ring, opt.WindowHours), byObs: map[string]ring{}})
 	}
 	return w
 }
@@ -217,6 +218,9 @@ func (w *Watch) advance(h int64) {
 	clear(w.total)
 	for _, r := range w.routes {
 		clear(r.count)
+		for _, o := range r.byObs {
+			clear(o)
+		}
 	}
 	for _, c := range w.corridors {
 		clear(c.count)
@@ -309,8 +313,19 @@ func (w *Watch) AddObservation(tx, h int64, obs string, path []string) {
 		w.countCorridors(tx, h, path)
 	}
 	for ri, r := range w.routes {
-		if passes(path, r.From, r.To) && w.once(h, seenKey{a: "\x00route", b: r.Name, tx: tx + int64(ri)<<48}) {
+		if !passes(path, r.From, r.To) {
+			continue
+		}
+		if w.once(h, seenKey{a: "\x00route", b: r.Name, tx: tx + int64(ri)<<48}) {
 			r.count.add(w, h, 1)
+		}
+		if obs != "" && w.once(h, seenKey{a: "\x00route-obs" + r.Name, b: obs, tx: tx}) {
+			o := r.byObs[obs]
+			if o == nil {
+				o = make(ring, w.opt.WindowHours)
+				r.byObs[obs] = o
+			}
+			o.add(w, h, 1)
 		}
 	}
 }
@@ -474,6 +489,32 @@ func (w *Watch) quietObservers(t int64) map[string]bool {
 	return q
 }
 
+// observersDown names the quiet observers that, over the baseline before
+// the slot ending at t, heard at least ObserverShare of what byObs counts.
+// Traffic seen mostly through them says nothing about the mesh.
+func (w *Watch) observersDown(byObs map[string]ring, t int64, quiet map[string]bool) []string {
+	if len(quiet) == 0 || len(byObs) == 0 {
+		return nil
+	}
+	s := int64(w.opt.Slot)
+	from, to := t-24*int64(w.opt.Days)-s+1, t-s
+	base, viaQuiet := 0, 0
+	var names []string
+	for obs, r := range byObs {
+		n := r.sum(w, from, to)
+		base += n
+		if quiet[obs] && n > 0 {
+			viaQuiet += n
+			names = append(names, obs)
+		}
+	}
+	if base == 0 || float64(viaQuiet) < w.opt.ObserverShare*float64(base) {
+		return nil
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Evaluate judges every repeater at hour t (normally the last complete hour),
 // opening and closing incidents. Hours are evaluated in order; earlier hours
 // already evaluated are skipped.
@@ -571,6 +612,9 @@ type RouteStatus struct {
 	LastDay  int    `json:"lastDay"`
 	UsualDay int    `json:"usualDay"`
 	Daily    []int  `json:"daily"`
+	// ObserversDown names quiet observers that usually hear most of it: a
+	// drop then says nothing about the mesh.
+	ObserversDown []string `json:"observersDown,omitempty"`
 }
 
 // NetworkStatus is all traffic over the last slot against usual.
@@ -623,8 +667,9 @@ func (w *Watch) Status() Status {
 	for _, c := range w.corridors {
 		st.Corridors = append(st.Corridors, w.corridorStatus(c, t))
 	}
+	quiet := w.quietObservers(t)
 	for _, r := range w.routes {
-		rs := RouteStatus{Name: r.Name, From: r.From, To: r.To}
+		rs := RouteStatus{Name: r.Name, From: r.From, To: r.To, ObserversDown: w.observersDown(r.byObs, t, quiet)}
 		rs.Now, rs.Usual = w.slot(r.count, t)
 		rs.Daily, rs.LastDay, rs.UsualDay = w.daily(r.count, t)
 		st.Routes = append(st.Routes, rs)
@@ -714,13 +759,16 @@ func (w *Watch) NodeSeries(pk string, end int64) Series {
 
 // Hop is one link on a probed route, against its usual.
 type Hop struct {
-	From     string    `json:"from"`
-	To       string    `json:"to"`
-	Now      int       `json:"now"`   // packets over the last slot
-	Usual    int       `json:"usual"` // usually in that slot
-	Quiet    bool      `json:"quiet"`
-	Series   []int     `json:"series"` // the last 72 hours, oldest first
-	Expected []float64 `json:"expected"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Now   int    `json:"now"`   // packets over the last slot
+	Usual int    `json:"usual"` // usually in that slot
+	Quiet bool   `json:"quiet"`
+	// ObserversDown names quiet observers that usually hear most of what
+	// passes this hop; it is then not called quiet.
+	ObserversDown []string  `json:"observersDown,omitempty"`
+	Series        []int     `json:"series"` // the last 72 hours, oldest first
+	Expected      []float64 `json:"expected"`
 }
 
 // ProbeResult is the usual route between two repeaters, hop by hop.
@@ -803,8 +851,13 @@ func (w *Watch) Probe(a, b string, t int64) ProbeResult {
 			break
 		}
 	}
+	quiet := w.quietObservers(t)
 	for i := 0; i+1 < len(res.Route); i++ {
 		k := [2]string{res.Route[i], res.Route[i+1]}
+		var down []string
+		if nd := w.nodes[k[1]]; nd != nil {
+			down = w.observersDown(nd.byObs, t, quiet)
+		}
 		r := w.links[k]
 		now, usual := w.slot(r, t)
 		ser, exp := w.series(r, t)
@@ -812,8 +865,8 @@ func (w *Watch) Probe(a, b string, t int64) ProbeResult {
 			ser, exp = ser[len(ser)-72:], exp[len(exp)-72:]
 		}
 		res.Hops = append(res.Hops, Hop{From: k[0], To: k[1], Now: now, Usual: usual,
-			Quiet:  usual >= w.opt.MinUsual && float64(now) <= w.opt.QuietRatio*float64(usual),
-			Series: ser, Expected: exp})
+			Quiet:         len(down) == 0 && usual >= w.opt.MinUsual && float64(now) <= w.opt.QuietRatio*float64(usual),
+			ObserversDown: down, Series: ser, Expected: exp})
 	}
 	return res
 }
