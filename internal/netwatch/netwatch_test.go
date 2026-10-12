@@ -1039,3 +1039,21 @@ func TestRepeatersBeyondTheCrossingAreNotCauses(t *testing.T) {
 		t.Fatalf("cause %+v, want keir, not ayr beyond the crossing", c)
 	}
 }
+
+// A reroute is news for a week; after that the new carrier is simply the
+// carrier.
+func TestAnOldRerouteIsNoLongerReported(t *testing.T) {
+	w := New(Options{Days: 14, WindowHours: 22 * day, Corridors: reachZones}, reachGrid)
+	var id int64
+	for h := int64(0); h < 22*day; h++ {
+		via := "keir"
+		if h >= 10*day {
+			via = "goyle"
+		}
+		reachFeed(w, &id, 1008+h, "n1", 10, 0.9, via, "")
+		w.Evaluate(1008 + h)
+	}
+	if r := w.Status().Corridors[0].Directions[0].Reroute; r != nil {
+		t.Fatalf("reroute %+v from 12 days ago still reported", r)
+	}
+}
