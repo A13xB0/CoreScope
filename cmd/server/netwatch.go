@@ -28,10 +28,13 @@ import (
 // NetWatchConfig is the netWatch block of config.json.
 type NetWatchConfig struct {
 	Enabled     bool               `json:"enabled"`
-	WindowDays  int                `json:"windowDays,omitempty"`  // history kept (default 15; the first 7 days only teach it what is usual)
+	WindowDays  int                `json:"windowDays,omitempty"`  // history kept (default 22; the first 14 days only teach it what is usual)
 	PollSeconds int                `json:"pollSeconds,omitempty"` // how often new packets are read (default 300)
 	Corridors   []NetWatchCorridor `json:"corridors,omitempty"`
 	Routes      []NetWatchRoute    `json:"routes,omitempty"`
+	// Area, when set, limits judging to repeaters placed inside it (those
+	// with no position are still judged); others are counted, never flagged.
+	Area *NetWatchZone `json:"area,omitempty"`
 }
 
 // NetWatchZone is a box on the map, in degrees.
@@ -61,7 +64,8 @@ type NetWatchRoute struct {
 
 const (
 	netWatchBatch       = 5000
-	netWatchDefaultDays = 15
+	netWatchDefaultDays = 22
+	netWatchBaseDays    = 14 // each hour is compared with the same hours on this many days
 	netWatchDefaultPoll = 300
 )
 
@@ -98,12 +102,15 @@ func newNetWatchService(db *DB, cfg *Config) *netWatchService {
 	if days <= 0 {
 		days = netWatchDefaultDays
 	}
-	if days < 9 {
-		days = 9 // a week to learn from, and a day or two to judge
+	if days < netWatchBaseDays+2 {
+		days = netWatchBaseDays + 2 // two weeks to learn from, and a day or two to judge
 	}
 	s := &netWatchService{db: db, cfg: c, now: time.Now, window: days * 24,
 		nodes: map[string]nwNode{}, obsByIdx: map[int64]string{}, obsNames: map[string]string{}}
-	opt := netwatch.Options{WindowHours: s.window}
+	opt := netwatch.Options{WindowHours: s.window, Days: netWatchBaseDays}
+	if a := c.Area; a != nil {
+		opt.Area = &netwatch.Zone{Name: a.Name, LatMin: a.LatMin, LatMax: a.LatMax, LonMin: a.LonMin, LonMax: a.LonMax, Polygon: a.Polygon}
+	}
 	for _, cr := range c.Corridors {
 		opt.Corridors = append(opt.Corridors, netwatch.Corridor{Name: cr.Name,
 			A: netwatch.Zone{Name: cr.A.Name, LatMin: cr.A.LatMin, LatMax: cr.A.LatMax, LonMin: cr.A.LonMin, LonMax: cr.A.LonMax, Polygon: cr.A.Polygon},
@@ -484,7 +491,7 @@ func (s *Server) handleNetWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := nw.watch.Status()
-	resp := NetWatchResponse{Ready: nw.isReady() || st.Hour > 0, Hour: hourISO(st.Hour), SlotHours: 6, Days: 7, Judged: st.Judged,
+	resp := NetWatchResponse{Ready: nw.isReady() || st.Hour > 0, Hour: hourISO(st.Hour), SlotHours: 6, Days: netWatchBaseDays, Judged: st.Judged,
 		Open: []NetWatchIncident{}, Recent: []NetWatchIncident{}, Observers: []NetWatchObserver{},
 		NetworkNow: st.Network.Now, NetworkUsual: st.Network.Usual, Corridors: []NetWatchCorridorStatus{}, Routes: []NetWatchRouteStatus{}}
 	for _, i := range st.Open {
