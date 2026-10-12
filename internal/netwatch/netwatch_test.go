@@ -465,3 +465,59 @@ func TestCorridorsAreJudgedInEachDirection(t *testing.T) {
 		t.Errorf("carriers one way %+v", ba.Carriers)
 	}
 }
+
+// Corridors and routes are also judged on adverts, which every repeater
+// sends on its own schedule: of the adverts from one zone (or passing the
+// route's first repeater), the share that reach the other zone (or pass its
+// last). Chat bursts do not move it.
+func TestAdvertReachIsSteadyWhereTrafficIsNot(t *testing.T) {
+	pos := grid{"n1": {57.5, -4.2}, "n2": {57.6, -4.0}, "mid": {56.9, -2.6}, "s1": {55.9, -3.2}}
+	w := New(Options{
+		Corridors: []Corridor{{Name: "H and C", A: Zone{Name: "Highlands", LatMin: 57.3, LatMax: 59, LonMin: -6, LonMax: -3}, B: Zone{Name: "Central belt", LatMin: 55.5, LatMax: 56.4, LonMin: -5, LonMax: -2}}},
+		Routes:    []Route{{Name: "North link", From: "mid", To: "s1"}},
+	}, pos)
+	var id int64
+	for h := int64(0); h < 17*day; h++ {
+		broken := h >= 16*day // on the last day only a quarter of the adverts get through
+		for _, origin := range []string{"n1", "n2"} {
+			for i := 0; i < 4; i++ { // four adverts an hour from each Highland repeater
+				id++
+				path := []string{"mid", "s1"}
+				if broken && i > 0 {
+					path = []string{"mid"} // it dies at mid
+				}
+				w.AddAdvertObservation(id, 1008+h, "o", origin, path)
+			}
+		}
+		chat := 10 // chat across the corridor, bursty, unrelated to the link
+		if h%24 == 20 {
+			chat = 200
+		}
+		for i := 0; i < chat; i++ {
+			id++
+			w.AddObservation(id, 1008+h, "o", []string{"n1", "mid", "s1"})
+		}
+		w.Evaluate(1008 + h)
+	}
+	st := w.Status()
+	d := st.Corridors[0].Directions[0]
+	if d.Reach == nil {
+		t.Fatalf("no advert reach on %+v", d)
+	}
+	if d.Reach.Usual < 0.99 || d.Reach.Last > 0.3 || d.Reach.Last < 0.2 {
+		t.Errorf("Highlands → central belt reach last %.2f usual %.2f, want about 0.25 against 1.0", d.Reach.Last, d.Reach.Usual)
+	}
+	if d.Reach.LastAdverts != 2*4*24 {
+		t.Errorf("adverts from the Highlands yesterday = %d, want %d", d.Reach.LastAdverts, 2*4*24)
+	}
+	if len(d.Reach.Daily) == 0 {
+		t.Error("no daily reach for a chart")
+	}
+	if back := st.Corridors[0].Directions[1]; back.Reach != nil {
+		t.Errorf("no adverts start in the central belt, so no reach the other way: %+v", back.Reach)
+	}
+	r := st.Routes[0]
+	if r.Reach == nil || r.Reach.Usual < 0.99 || r.Reach.Last > 0.3 {
+		t.Errorf("route reach %+v, want about 0.25 against 1.0", r.Reach)
+	}
+}
