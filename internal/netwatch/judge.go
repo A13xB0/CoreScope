@@ -309,6 +309,19 @@ func (w *Watch) advertsDuring(nd *node, t int64, gap int) bool {
 	return nd.adverts.sum(w, t-s+1, t) >= due
 }
 
+// quietSince is the first hour of the slot ending at t after the last hour
+// that still held half its usual share of the slot's usual count.
+func (w *Watch) quietSince(r ring, t int64, usual int) int64 {
+	s := int64(w.opt.Slot)
+	half := float64(usual) / float64(s) / 2
+	for h := t; h > t-s; h-- {
+		if float64(r.at(w, h)) >= half {
+			return h + 1
+		}
+	}
+	return t - s + 1
+}
+
 // lookedOut says whether the slot ending at e looks like an outage of nd
 // that was never flagged: no adverts in it, though it adverts often enough
 // to expect two, and next to no relays (at most a fifth of the hours'
