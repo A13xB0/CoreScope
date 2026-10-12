@@ -93,7 +93,7 @@ func netWatchRouter(t *testing.T, enabled bool) (*mux.Router, time.Time) {
 		Name: "Highlands ⇄ central belt",
 		A:    NetWatchZone{Name: "Highlands", LatMin: 57.3, LatMax: 59, LonMin: -6, LonMax: -3},
 		B:    NetWatchZone{Name: "Central belt", LatMin: 55.5, LatMax: 56.4, LonMin: -5, LonMax: -2},
-	}}, Routes: []NetWatchRoute{{Name: "North link", From: nwNorth, To: nwSouth}}}}
+	}}, Routes: []NetWatchRoute{{Name: "North link", From: nwNorth, To: nwSouth}, {Name: "North chat", From: nwNorth, To: nwSouth, Basis: "chat"}}}}
 	srv := &Server{db: db, cfg: cfg}
 	if svc := newNetWatchService(db, cfg); svc != nil {
 		svc.now = func() time.Time { return now }
@@ -155,11 +155,14 @@ func TestNetWatchFlagsARepeaterThatWentQuiet(t *testing.T) {
 	if r := st.Corridors[0].Directions[0].Reach; r == nil || r.Usual != 1 || r.Last != 0 || r.LastAdverts != 24 {
 		t.Errorf("Highlands adverts reaching the central belt %+v, want none of 24 yesterday against all of them usually", r)
 	}
-	if len(st.Routes) != 1 || st.Routes[0].FromName != "Inverness" || st.Routes[0].ToName != "Edinburgh" {
+	if len(st.Routes) != 2 || st.Routes[0].FromName != "Inverness" || st.Routes[0].ToName != "Edinburgh" {
 		t.Fatalf("routes %+v", st.Routes)
 	}
 	if r := st.Routes[0]; r.LastDay != 15*24 || r.UsualDay != 35*24 {
 		t.Errorf("north link last day %d usual %d, want %d and %d (Keir carried 20 of 35 an hour)", r.LastDay, r.UsualDay, 15*24, 35*24)
+	}
+	if r := st.Routes[1].Reach; r == nil || r.Basis != "chat" || r.LastAdverts != 15*24 || r.Last != 1 {
+		t.Errorf("north chat reach %+v, want every one of the 360 channel messages via Goyle Hill", r)
 	}
 }
 
