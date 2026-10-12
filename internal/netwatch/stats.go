@@ -7,32 +7,27 @@ import (
 
 // lowerTail is the chance of seeing k or fewer when about mean are expected
 // and the samples (the same hours on earlier days) say how much it usually
-// varies. Counts that vary more than chance alone use a negative binomial,
-// else Poisson. The spread is taken from the middle half of the samples, so
-// a few earlier outages do not blunt it, while a repeater that is often near
-// nothing still reads as bursty.
+// varies. Traffic varies by multiples (a slot holds 50 one day and 300 the
+// next as the mesh grows), so it is judged on log(1+count): how many
+// spreads below the samples' median k falls, the spread taken from their
+// middle half and never below what Poisson sampling alone gives at that
+// level. The result is never more certain than Poisson itself allows.
 func lowerTail(k int, mean float64, samples []float64) float64 {
 	if mean <= 0 {
 		return 1
 	}
-	if sd := spread(samples); sd*sd > mean {
-		v := sd * sd
-		r := mean * mean / (v - mean)
-		return negBinCDF(k, r, r/(r+mean))
+	p := poissonCDF(k, mean)
+	if len(samples) == 0 {
+		return p
 	}
-	return poissonCDF(k, mean)
-}
-
-func variance(x []float64) float64 {
-	if len(x) < 2 {
-		return 0
+	ls := make([]float64, len(samples))
+	for i, v := range samples {
+		ls[i] = math.Log1p(v)
 	}
-	m := mean(x)
-	s := 0.0
-	for _, v := range x {
-		s += (v - m) * (v - m)
-	}
-	return s / float64(len(x)-1)
+	centre := medianF(ls)
+	sd := math.Max(spread(ls), 1/math.Sqrt(mean+1))
+	z := (math.Log1p(float64(k)) - centre) / sd
+	return math.Max(p, 0.5*math.Erfc(-z/math.Sqrt2))
 }
 
 func poissonCDF(k int, m float64) float64 {
@@ -45,21 +40,6 @@ func poissonCDF(k int, m float64) float64 {
 			term *= m / float64(i)
 		}
 		sum += term
-	}
-	return math.Min(sum, 1)
-}
-
-// negBinCDF is P(X <= k) for failures before r successes of chance p.
-func negBinCDF(k int, r, p float64) float64 {
-	if k < 0 {
-		return 0
-	}
-	lgR, _ := math.Lgamma(r)
-	sum := 0.0
-	for i := 0; i <= k; i++ {
-		a, _ := math.Lgamma(float64(i) + r)
-		b, _ := math.Lgamma(float64(i) + 1)
-		sum += math.Exp(a - b - lgR + r*math.Log(p) + float64(i)*math.Log1p(-p))
 	}
 	return math.Min(sum, 1)
 }
