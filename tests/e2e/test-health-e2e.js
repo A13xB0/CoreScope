@@ -37,6 +37,7 @@ const STATUS = {
   routes: [
     { name: 'North link', from: K('d'), fromName: 'Inverness', to: K('e'), toName: 'Edinburgh', now: 40, usual: 120, lastDay: 300, usualDay: 900, daily: [880, 900, 910, 300] },
     { name: 'Ireland gateway', from: K('f'), fromName: 'Galloway', to: K('e'), toName: 'Edinburgh', now: 60, usual: 50, lastDay: 260, usualDay: 200, daily: [190, 200, 210, 260] },
+    { name: 'Gateway to Ayr', from: K('f'), fromName: 'Galloway', to: K('g'), toName: 'Ayr', now: 9, usual: 157, lastDay: 17, usualDay: 738, daily: [700, 740, 738, 17], observersDown: ['AYR-Observer'] },
   ],
 };
 const PROBE = {
@@ -102,7 +103,8 @@ async function openPage(browser, { on }) {
 
   await step('routes say whether they are better or worse than usual', async () => {
     const rows = await page.$$eval('#hRoutesTable tbody tr', (trs) => trs.map((tr) => tr.textContent.replace(/\s+/g, ' ')));
-    assert(rows.length === 2, 'two routes');
+    assert(rows.length === 3, 'three routes');
+    assert(/Gateway to Ayr/.test(rows[2]) && /Observer offline/.test(rows[2]) && /AYR-Observer/.test(rows[2]) && !/Worse/.test(rows[2]), 'observer down: ' + rows[2]);
     assert(/North link/.test(rows[0]) && /−67%/.test(rows[0]) && /Worse/.test(rows[0]), 'north link: ' + rows[0]);
     assert(/Ireland gateway/.test(rows[1]) && /\+30%/.test(rows[1]) && /Better/.test(rows[1]), 'gateway: ' + rows[1]);
   });
