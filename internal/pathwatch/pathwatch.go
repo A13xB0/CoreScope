@@ -225,9 +225,11 @@ func Analyse(in Input, act Activity, opt Options) Result {
 		switch {
 		case r.Usual < 0.02:
 			r.Verdict = "new"
-		case r.Share < r.Low:
+		case r.Share < r.Low || r.Share < r.Usual/2:
+			// Under half its usual is worse even when the range is wide
+			// (a fortnight that straddles a drop spreads it to nothing).
 			r.Verdict = "worse"
-		case r.Share > r.High:
+		case r.Share > r.High || (r.Share > 2*r.Usual && r.Share-r.Usual >= 0.05):
 			r.Verdict = "better"
 		default:
 			r.Verdict = "normal"
