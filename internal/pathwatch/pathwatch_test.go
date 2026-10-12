@@ -197,3 +197,27 @@ func TestTheMainRouteKeepingItsPlaceButLosingShareIsAShareChange(t *testing.T) {
 		t.Fatalf("flag %+v, want the main route's share falling", r.Flag)
 	}
 }
+
+// A repeater that drops out of the path halfway through its last busy day
+// first looks rerouted (it relayed elsewhere earlier that day); once it has
+// plainly stopped everywhere, the same change becomes "quiet" rather than a
+// second entry.
+func TestARerouteThatTurnsOutQuietIsOneChange(t *testing.T) {
+	route := func(i int) []string {
+		if i <= 3 {
+			return []string{"other"}
+		}
+		return []string{"keir"}
+	}
+	in := feed(100, func(int) float64 { return 0.6 }, route)
+	r := Analyse(in, activity{quietFrom: map[string]time.Time{"keir": day(2)}}, Options{})
+	var keir []Change
+	for _, c := range r.Changes {
+		if c.Node == "keir" {
+			keir = append(keir, c)
+		}
+	}
+	if len(keir) != 1 || keir[0].Kind != KindRepeaterQuiet || !keir[0].Day.Equal(day(3)) {
+		t.Fatalf("keir changes %+v, want one, quiet, dated the day it dropped out", keir)
+	}
+}
