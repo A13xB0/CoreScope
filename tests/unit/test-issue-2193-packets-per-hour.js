@@ -93,8 +93,8 @@ c = card(quietStart, { window: '30d' });
 assert(bars(c.html) === 91 && !/since/.test(c.html), 'in a picked window nothing is cropped: 91 daily bars (got ' + bars(c.html) + ')');
 
 // Under "All data" a crop is said on the card, so it is never invisible.
-c = card(hours(44 * 24, (k, back) => (back < 8 * 24 ? 300 + (k % 140) : k % 24 === 9 ? 1 + (k % 30) : 0)), { window: '' });
-assert(/since 10-04/.test(c.html), 'a cropped chart says where it starts (since 10-04)');
+c = cardIn('en-GB')(hours(44 * 24, (k, back) => (back < 8 * 24 ? 300 + (k % 140) : k % 24 === 9 ? 1 + (k % 30) : 0)), { window: '' });
+assert(/since 04\/10/.test(c.html), 'a cropped chart says where it starts, in the viewer\'s date format (since 04/10)');
 c = card(hours(2932), { window: '' });
 assert(!/since/.test(c.html), 'and an uncropped one says nothing');
 
