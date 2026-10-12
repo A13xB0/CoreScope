@@ -329,7 +329,15 @@ func LoadDataDashboards(cfg *Config, configDir string) (*DataDashboards, error) 
 
 // builtInDashboards are generic: they need an areas file at most. Without
 // areas (places false) they keep to kind, type, channel, scope and routing.
+// The last, Path, follows any two repeaters picked at the top.
 func builtInDashboards(places bool) []Dashboard {
+	return append(builtInCubeDashboards(places), Dashboard{Schema: 1, ID: "path", Title: "Path between two repeaters", Window: "7d",
+		Description: "How much of what passes the first repeater gets to the second, the routes it takes and when they change. Pick the two at the top.",
+		Variables:   []DashboardVariable{{Name: "from", Kind: "repeater", Label: "From"}, {Name: "to", Kind: "repeater", Label: "To"}},
+		Panels:      []DashboardPanel{{ID: "watch", Title: "$from to $to", Type: "watch", Query: DashboardQuery{From: "$from", To: "$to"}, Layout: DashboardLayout{W: 12, H: 8}}}})
+}
+
+func builtInCubeDashboards(places bool) []Dashboard {
 	lay := func(x, y, w, h int) DashboardLayout { return DashboardLayout{X: x, Y: y, W: w, H: h} }
 	notChannel := dataindex.Filter{D: "channel", N: 1, V: []string{""}}
 	adverts := dataindex.Filter{D: "kind", V: []string{"adverts"}}
