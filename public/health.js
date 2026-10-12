@@ -39,7 +39,9 @@
   function sentOf(r) { return r.basis === 'chat' ? 'channel messages' : 'adverts'; }
   function judgeReach(r, down) {
     if (down && down.length) return judge(0, 0, down);
-    var ratio = r.usual > 0 ? r.last / r.usual : 1;
+    // almost nothing used to get across: the link is new, not a big change
+    if (r.usual < 0.02) return { text: 'New', cls: '' };
+    var ratio = r.last / r.usual;
     if (ratio <= 0.75) return { text: 'Worse', cls: 'is-bad' };
     if (ratio >= 1.25 && r.usual < 0.8) return { text: 'Better', cls: 'is-good' };
     return { text: 'Normal', cls: '' };
