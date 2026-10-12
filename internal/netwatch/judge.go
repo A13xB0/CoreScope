@@ -41,18 +41,21 @@ type matchedSlot struct {
 }
 
 // Baseline days whose slot fell inside one of the repeater's own incidents
-// (pk; "" for none) are left out: an outage does not teach what is normal.
+// (pk; "" for none), or looks like one that was never flagged (before it
+// existed, or before the watch started), are left out: an outage does not
+// teach what is normal.
 func (w *Watch) matched(byObs map[string]ring, t int64, quiet map[string]bool, pk string) matchedSlot {
 	s := int64(w.opt.Slot)
+	nd := w.nodes[pk]
 	var use []int64 // the end hour of each baseline day's slot that counts
 	for d := 1; d <= w.baseDays(t); d++ {
 		e := t - 24*int64(d)
-		if !w.duringIncident(pk, e-s+1, e) {
+		if !w.duringIncident(pk, e-s+1, e) && !w.lookedOut(nd, e, t) {
 			use = append(use, e)
 		}
 	}
 	m := matchedSlot{days: make([]float64, len(use)), onAir: make([]bool, len(use))}
-	if nd := w.nodes[pk]; nd != nil {
+	if nd != nil {
 		for i, e := range use {
 			m.onAir[i] = nd.adverts.sum(w, e-s+1, e) > 0
 		}
@@ -101,16 +104,18 @@ func quietChance(rawUsual int, m matchedSlot) float64 {
 		days[i] = v / f
 	}
 	p := lowerTail(int(float64(m.now)/f), float64(m.usual)/f, days)
-	// If it was this quiet on days it was plainly on air, that is how often
-	// it happens.
+	// A repeater that is often this quiet while plainly on air (its adverts
+	// heard) is bursty: at least a fifth of days, that is how often it
+	// happens. Fewer is left to the model, so the odd day an advert came
+	// back before its relays does not excuse the next outage.
 	same := 0
 	for i, v := range m.days {
 		if m.onAir[i] && v <= float64(m.now) {
 			same++
 		}
 	}
-	if len(m.days) > 0 {
-		p = math.Max(p, float64(same)/float64(len(m.days)))
+	if n := len(m.days); n > 0 && same*5 >= n {
+		p = math.Max(p, float64(same)/float64(n))
 	}
 	return p
 }
@@ -302,6 +307,39 @@ func (w *Watch) advertsDuring(nd *node, t int64, gap int) bool {
 		due = int(s) / gap / 2
 	}
 	return nd.adverts.sum(w, t-s+1, t) >= due
+}
+
+// lookedOut says whether the slot ending at e looks like an outage of nd
+// that was never flagged: no adverts in it, though it adverts often enough
+// to expect two, and next to no relays (at most a fifth of the hours'
+// median over the window up to t); or nothing at all from it that day.
+func (w *Watch) lookedOut(nd *node, e, t int64) bool {
+	if nd == nil {
+		return false
+	}
+	s := int64(w.opt.Slot)
+	if nd.relays.sum(w, e-23, e) == 0 && nd.adverts.sum(w, e-23, e) == 0 {
+		return true
+	}
+	if nd.adverts.sum(w, e-s+1, e) > 0 {
+		return false
+	}
+	_, gap, _, known := w.advertSilence(nd, t)
+	if !known || gap*2 > int(s) {
+		return false
+	}
+	return nd.relays.sum(w, e-s+1, e)*5 <= w.typicalSlot(nd.relays, t)
+}
+
+// typicalSlot is the median Slot-hour count over the window up to t, a
+// rough level for what next to nothing means.
+func (w *Watch) typicalSlot(r ring, t int64) int {
+	s := int64(w.opt.Slot)
+	var v []int
+	for e := t; e-s+1 > w.newest-int64(w.opt.WindowHours); e -= s {
+		v = append(v, r.sum(w, e-s+1, e))
+	}
+	return median(v)
 }
 
 // duringIncident says whether pk had an incident open at any hour in [from, to].
