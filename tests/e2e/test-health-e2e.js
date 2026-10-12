@@ -34,14 +34,16 @@ const STATUS = {
   networkNow: 1900, networkUsual: 2000,
   corridors: [{ name: 'Highlands ⇄ central belt', a: 'Highlands', b: 'Central belt', lastDay: 724, usualDay: 822, daily: [800, 822, 850, 724], carriers: [{ node: K('c'), name: 'Goyle Hill', packets: 500 }],
     directions: [
-      { from: 'Highlands', to: 'Central belt', lastDay: 109, usualDay: 165, daily: [160, 170, 165, 109], carriers: [{ node: K('c'), name: 'Goyle Hill', packets: 100 }] },
+      { from: 'Highlands', to: 'Central belt', lastDay: 109, usualDay: 165, daily: [160, 170, 165, 109], carriers: [{ node: K('c'), name: 'Goyle Hill', packets: 100 }],
+        reach: { last: 0.48, usual: 0.85, lastAdverts: 94, lastReached: 45, daily: [0.84, 0.86, -1, 0.85, 0.48] } },
       { from: 'Central belt', to: 'Highlands', lastDay: 615, usualDay: 840, daily: [850, 840, 900, 615], carriers: [{ node: K('a'), name: 'Keir Hill', packets: 3 }] }] },
     { name: 'Scotland and North East England', a: 'Scotland', b: 'North East England', lastDay: 612, usualDay: 2, daily: [0, 0, 0, 0, 0, 0, 40, 612], carriers: [],
       directions: [
         { from: 'Scotland', to: 'North East England', lastDay: 400, usualDay: 1, daily: [0, 0, 0, 0, 0, 0, 25, 400], carriers: [] },
         { from: 'North East England', to: 'Scotland', lastDay: 212, usualDay: 1, daily: [0, 0, 0, 0, 0, 0, 15, 212], carriers: [] }] }],
   routes: [
-    { name: 'North link', from: K('d'), fromName: 'Inverness', to: K('e'), toName: 'Edinburgh', now: 40, usual: 120, lastDay: 300, usualDay: 900, daily: [880, 900, 910, 300] },
+    { name: 'North link', from: K('d'), fromName: 'Inverness', to: K('e'), toName: 'Edinburgh', now: 40, usual: 120, lastDay: 300, usualDay: 900, daily: [880, 900, 910, 300],
+      reach: { last: 0.3, usual: 0.9, lastAdverts: 120, lastReached: 36, daily: [0.9, 0.91, 0.89, 0.3] } },
     { name: 'Ireland gateway', from: K('f'), fromName: 'Galloway', to: K('e'), toName: 'Edinburgh', now: 60, usual: 50, lastDay: 260, usualDay: 200, daily: [190, 200, 210, 260] },
     { name: 'Gateway to Ayr', from: K('f'), fromName: 'Galloway', to: K('g'), toName: 'Ayr', now: 9, usual: 157, lastDay: 17, usualDay: 738, daily: [700, 740, 738, 17], observersDown: ['AYR-Observer'] },
   ],
@@ -111,7 +113,7 @@ async function openPage(browser, { on }) {
     const rows = await page.$$eval('#hRoutesTable tbody tr', (trs) => trs.map((tr) => tr.textContent.replace(/\s+/g, ' ')));
     assert(rows.length === 3, 'three routes');
     assert(/Gateway to Ayr/.test(rows[2]) && /Observer offline/.test(rows[2]) && /AYR-Observer/.test(rows[2]) && !/Worse/.test(rows[2]), 'observer down: ' + rows[2]);
-    assert(/North link/.test(rows[0]) && /−67%/.test(rows[0]) && /Worse/.test(rows[0]), 'north link: ' + rows[0]);
+    assert(/North link/.test(rows[0]) && /30%/.test(rows[0]) && /usually 90%/.test(rows[0]) && /Worse/.test(rows[0]), 'north link on advert reach: ' + rows[0]);
     assert(/Ireland gateway/.test(rows[1]) && /\+30%/.test(rows[1]) && /Better/.test(rows[1]), 'gateway: ' + rows[1]);
   });
 
@@ -119,7 +121,11 @@ async function openPage(browser, { on }) {
     const card = (await page.$$eval('.h-corr', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' '))))[0];
     assert(/Highlands → Central belt/.test(card) && /Central belt → Highlands/.test(card), 'both directions: ' + card);
     const dirs = await page.$$eval('.h-corr:first-child .h-dir', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')));
-    assert(dirs.length === 2 && /Worse/.test(dirs[0]) && /−34%/.test(dirs[0]) && /Worse/.test(dirs[1]) && /−27%/.test(dirs[1]), 'directions: ' + dirs.join(' | '));
+    assert(dirs.length === 2 && /Worse/.test(dirs[1]) && /−27%/.test(dirs[1]), 'without adverts, the packet count decides: ' + dirs.join(' | '));
+    // with adverts, the share of them that crossed decides, the packet count is context
+    assert(/48% of 94 adverts/.test(dirs[0]) && /usually 85%/.test(dirs[0]) && /Worse/.test(dirs[0]), 'advert reach: ' + dirs[0]);
+    assert(/All packets: 109 yesterday, usually 165/.test(dirs[0]), 'packet count as context: ' + dirs[0]);
+    assert(/one bar per day/i.test(await page.textContent('#hCorrNote')), 'the bars say what they are');
   });
 
   await step('a corridor with almost no history says it is new, not a huge percentage', async () => {
