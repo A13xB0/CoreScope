@@ -974,3 +974,41 @@ func TestTimelineAndWhatAnIncidentAffects(t *testing.T) {
 		}
 	}
 }
+
+// When the repeater a corridor lost has itself gone quiet, it is named as the
+// cause, even if a repeater downstream of it lost as many crossings.
+func TestTheQuietRepeaterIsPreferredAsTheCause(t *testing.T) {
+	w := New(Options{Days: 14, WindowHours: 20 * day, Corridors: reachZones}, reachGrid)
+	var id int64
+	for h := int64(0); h < 20*day; h++ {
+		if h < 19*day {
+			for i := 0; i < 15; i++ { // 9 via keir and goyle, 5 via goyle alone, 1 lost
+				id++
+				path := []string{"mid", "keir", "goyle", "s1"}
+				if i >= 9 {
+					path = []string{"mid", "goyle", "s1"}
+				}
+				if i == 14 {
+					path = []string{"mid"}
+				}
+				w.AddAdvertObservation(id, 1008+h, "o", "n1", path)
+			}
+			for i := 0; i < 30; i++ {
+				id++
+				w.AddObservation(id, 1008+h, "o", []string{"keir", "s1"})
+			}
+			if h%2 == 0 {
+				id++
+				w.AddAdvertObservation(id, 1008+h, "o", "keir", []string{"s1"})
+			}
+		} else { // keir gone; goyle drops out of these paths too
+			reachFeed(w, &id, 1008+h, "n1", 15, 0.3, "", "")
+		}
+		w.Evaluate(1008 + h)
+	}
+	st := w.Status()
+	c := st.Corridors[0].Directions[0].Reach.Cause
+	if c == nil || c.Node != "keir" {
+		t.Fatalf("cause %+v, want keir (quiet) rather than goyle (which lost more)", c)
+	}
+}
