@@ -224,6 +224,12 @@ jobs:
           cd ../mailer && go test -race ./...
           echo "--- users + mailer tests passed ---"
 
+      - name: Test network watch (internal/netwatch)
+        run: |
+          set -e -o pipefail
+          cd internal/netwatch && go test -race ./...
+          echo "--- netwatch tests passed ---"
+
       - name: Test migrate CLI + dbschema
         run: |
           set -e -o pipefail

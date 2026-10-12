@@ -68,6 +68,7 @@ COPY internal/lora/ ../../internal/lora/
 COPY internal/users/ ../../internal/users/
 COPY internal/channel/ ../../internal/channel/
 COPY internal/mailer/ ../../internal/mailer/
+COPY internal/netwatch/ ../../internal/netwatch/
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/tmp/zig-cache \

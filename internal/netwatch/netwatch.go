@@ -705,20 +705,30 @@ type ProbeResult struct {
 	Note  string   `json:"note,omitempty"`
 }
 
-// Probe finds the route packets usually take from a to b (judged on the week
-// before the last slot, so a broken hop does not hide its own route) and
-// reports every hop against its usual. The route maximises its weakest hop's
-// usual traffic, then prefers fewer hops.
+// Probe finds the route packets usually take from a to b (judged on each
+// link's median day in the week before the last slot, so a broken hop does
+// not hide its own route) and reports every hop against its usual. The route
+// maximises its weakest hop's usual traffic, then prefers fewer hops.
 func (w *Watch) Probe(a, b string, t int64) ProbeResult {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	res := ProbeResult{From: a, To: b, Hour: t, Route: []string{}, Hops: []Hop{}}
 	s := int64(w.opt.Slot)
 	from, to := t-24*int64(w.opt.Days)-s+1, t-s
+	// A link's weight is its median day over the week before the slot, so a
+	// few bad days (the outage being probed) do not hide its usual route.
 	weight := map[[2]string]int{}
 	adj := map[string][]string{}
 	for k, r := range w.links {
-		if n := r.sum(w, from, to); n >= w.opt.Days { // at least about once a day
+		if r.sum(w, from, to) < w.opt.Days { // seen less than about once a day
+			continue
+		}
+		days := make([]int, 0, w.opt.Days)
+		for d := int64(0); d < int64(w.opt.Days); d++ {
+			e := to - 24*d
+			days = append(days, r.sum(w, e-23, e))
+		}
+		if n := median(days); n > 0 {
 			weight[k] = n
 			adj[k[0]] = append(adj[k[0]], k[1])
 		}

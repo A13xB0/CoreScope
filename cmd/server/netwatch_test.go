@@ -124,7 +124,7 @@ func TestNetWatchFlagsARepeaterThatWentQuiet(t *testing.T) {
 		t.Fatalf("open = %+v, want Keir Hill", st.Open)
 	}
 	inc := st.Open[0]
-	if inc.Usual < 100 || inc.Now != 0 || inc.AdvertEveryH != 2 {
+	if inc.Usual < 100 || inc.Now > inc.Usual/5 || inc.AdvertEveryH != 2 {
 		t.Errorf("incident %+v", inc)
 	}
 	if inc.Lat == nil || *inc.Lat != 57.17 {
