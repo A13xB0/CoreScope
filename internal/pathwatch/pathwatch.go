@@ -157,8 +157,12 @@ type bucket struct {
 // Analyse works out a watch from a path's packets.
 func Analyse(in Input, act Activity, opt Options) Result {
 	o := opt.withDefaults()
+	span := o.WindowDays // days looked over for route changes: at least those shown
+	if o.FlagDays > span {
+		span = o.FlagDays
+	}
 	n := o.WindowDays + o.BaseDays
-	if m := o.WindowDays + 7; m > n {
+	if m := span + 14; m > n { // a week more to find changes already under way, and a week before each
 		n = m
 	}
 	b := make([]bucket, n) // b[0] is the last 24 hours
@@ -264,9 +268,16 @@ func Analyse(in Input, act Activity, opt Options) Result {
 		}
 	}
 
-	// Route changes, day by day over the window shown, each day against the
-	// week before it; a change already seen in that week is not repeated.
-	for i := show - 1; i >= 0; i-- {
+	// Route changes, day by day over the days shown (or as far back as a flag
+	// lasts, if further), each day against the week before it; a change
+	// already seen in that week is not repeated.
+	// Looked for a week further back than reported, so a change already under
+	// way then is recognised as old rather than reported again.
+	look := span + 7
+	if look > have {
+		look = have
+	}
+	for i := look - 1; i >= 0; i-- {
 		if i+7 >= have {
 			continue
 		}
@@ -285,6 +296,13 @@ func Analyse(in Input, act Activity, opt Options) Result {
 			}
 		}
 	}
+	reported := r.Changes[:0]
+	for _, c := range r.Changes {
+		if !c.Day.Before(start(span - 1)) {
+			reported = append(reported, c)
+		}
+	}
+	r.Changes = reported
 	for k := range r.Changes {
 		c := r.Changes[k]
 		if in.Now.Sub(c.Day) > time.Duration(o.FlagDays)*24*time.Hour {
