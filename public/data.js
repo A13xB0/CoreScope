@@ -40,8 +40,12 @@
     ['stat', 'Stat', 'One number with its trend'],
     ['table', 'Table', 'Rows by columns, with totals'],
     ['top', 'Top list', 'The biggest values of one dimension'],
-    ['text', 'Text', 'A short note for readers']
+    ['text', 'Text', 'A short note for readers'],
+    ['watch', 'Path watch', 'The path between two repeaters: how much gets through, the routes it takes, and when they change'],
+    ['watchlist', 'Watch list', 'Several paths, one line each, flagged when one changes']
   ];
+  // Panels drawn from the path watch API rather than the cube.
+  var NO_CUBE = { text: true, watch: true, watchlist: true };
   var STORE_KEY = 'corescope-data-dashboards';
 
   var nf = new Intl.NumberFormat();
@@ -174,7 +178,7 @@
       var v = varOf(d, k);
       if (!v) return m;
       var val = varValue(v);
-      return v.kind === 'area' ? areaName(val) : val;
+      return v.kind === 'area' ? areaName(val) : v.kind === 'repeater' ? repeaterName(val) : val;
     });
   }
   function panelFilters(p, d) {
@@ -197,6 +201,16 @@
       var f = q.filters[k];
       if (!f || !DIMS[f.d] || !Array.isArray(f.v)) return 'Unknown filter dimension "' + (f && f.d) + '".';
     }
+    if (q.basis && q.basis !== 'all' && q.basis !== 'adverts') return 'Panel "' + p.id + '": basis must be all or adverts.';
+    if (p.type === 'watch' && (!WATCH_END_RE.test(q.from || '') || !WATCH_END_RE.test(q.to || '') || q.from === q.to)) return 'Panel "' + p.id + '": a path watch needs two different repeaters.';
+    if (p.type === 'watchlist') {
+      var ws = (p.options && p.options.watches) || [];
+      if (!ws.length || ws.length > MAX_WATCHES) return 'Panel "' + p.id + '": a watch list needs 1 to ' + MAX_WATCHES + ' watches.';
+      for (var wi = 0; wi < ws.length; wi++) {
+        var wt = ws[wi];
+        if (!wt || !wt.name || wt.name.length > 80 || !KEY_RE.test(wt.from || '') || !KEY_RE.test(wt.to || '') || wt.from === wt.to) return 'Watch "' + (wt && wt.name) + '" needs a name and two different repeater keys.';
+      }
+    }
     var dims = [q.split, q.facet, q.rows, q.cols, q.dim, q.x === 'time' ? '' : q.x];
     for (var m = 0; m < dims.length; m++) if (dims[m] && !DIMS[dims[m]]) return 'Unknown dimension "' + dims[m] + '".';
     var l = p.layout || {};
@@ -214,7 +228,7 @@
     var vn = {};
     for (var i = 0; i < (d.variables || []).length; i++) {
       var v = d.variables[i];
-      if (!v || !VAR_RE.test(v.name || '') || ['area', 'scope', 'channel', 'text'].indexOf(v.kind) < 0 || vn[v.name]) return 'Variable "' + (v && v.name) + '" needs a unique lower-case name and a kind of area, scope, channel or text.';
+      if (!v || !VAR_RE.test(v.name || '') || ['area', 'scope', 'channel', 'repeater', 'text'].indexOf(v.kind) < 0 || vn[v.name]) return 'Variable "' + (v && v.name) + '" needs a unique lower-case name and a kind of area, scope, channel, repeater or text.';
       vn[v.name] = true;
     }
     var ids = {};
@@ -325,8 +339,13 @@
     });
   }
   function windowsNeeded(d) {
-    var need = {}, keys = windowKeys(); need[state.window] = true;
-    d.panels.forEach(function (p) { if (p.query && keys.indexOf(p.query.window) >= 0) need[p.query.window] = true; });
+    var need = {}, keys = windowKeys(), any = false;
+    d.panels.forEach(function (p) {
+      if (NO_CUBE[p.type]) return;
+      any = true;
+      if (p.query && keys.indexOf(p.query.window) >= 0) need[p.query.window] = true;
+    });
+    if (any || !d.panels.length) need[state.window] = true;
     return Object.keys(need);
   }
   function ensureCubes(d) {
@@ -746,6 +765,8 @@
     body.textContent = '';
     var oldLeg = frame.querySelector('.dt-legend'); if (oldLeg) oldLeg.remove();
     if (p.type === 'text') { body.appendChild(md(substTitle((p.options && p.options.text) || '', d))); return; }
+    if (p.type === 'watch') return drawWatch(p, d, body, frame);
+    if (p.type === 'watchlist') return drawWatchlist(p, d, body);
     if (!places() && panelPlaceUse(p)) { empty(body, 'This panel needs areas, which this CoreScope does not have (it ' + panelPlaceUse(p) + ').'); return; }
     var w = panelWindow(p), c = cubes[w];
     if (!c) { empty(body, 'Loading…'); return; }
@@ -775,6 +796,278 @@
     wirePanelEditing(p, frame, handle, rz);
     redrawers.push(function () { drawPanelBody(p, d, body, frame); });
     return frame;
+  }
+
+  // ---- path watch -------------------------------------------------------
+  // "watch" and "watchlist" panels follow the path between two repeaters
+  // through /api/data/path(s), not the cube.
+  var KEY_RE = /^[0-9a-f]{64}$/, WATCH_END_RE = /^([0-9a-f]{64}|\$[a-z][a-z0-9_]{0,31})$/, MAX_WATCHES = 24;
+  var repeaters = null, repeaterLoad = null, pathNames = {}, pathCache = {};
+  var FLAGS = {
+    'repeater-quiet': ['Repeater quiet', 'bad'], rerouted: ['Rerouted', ''], 'new-repeater': ['New repeater', 'good'],
+    sharing: ['Sharing the load', 'good'], 'route-changed': ['Route changed', 'warn']
+  };
+  function loadRepeaters() {
+    if (repeaters) return Promise.resolve(repeaters);
+    if (!repeaterLoad) {
+      repeaterLoad = getJSON('/api/nodes?limit=5000').then(function (r) {
+        repeaters = ((r && r.nodes) || []).filter(function (x) { return x.role === 'repeater' || x.role === 'room'; })
+          .map(function (x) { return { key: String(x.public_key || '').toLowerCase(), name: x.name || String(x.public_key || '').slice(0, 8) }; })
+          .sort(function (a, b) { return a.name.localeCompare(b.name); });
+        repeaters.forEach(function (x) { pathNames[x.key] = x.name; });
+        return repeaters;
+      }, function () { repeaters = []; return repeaters; });
+    }
+    return repeaterLoad;
+  }
+  function cssVar(name, fallback) {
+    var v = getComputedStyle(root || document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+  function repeaterName(k) { return k ? (pathNames[k] || String(k).slice(0, 8)) : 'a repeater'; }
+  function repLabel(r) { return r.name + ' · ' + r.key.slice(0, 8); }
+  function keyFromLabel(text) {
+    var t = String(text || '').trim();
+    if (KEY_RE.test(t.toLowerCase())) return t.toLowerCase();
+    var hit = (repeaters || []).filter(function (r) { return repLabel(r) === t || r.name === t; })[0];
+    return hit ? hit.key : '';
+  }
+  function pct(v) { return Math.round(v * 100) + '%'; }
+  function chip(text, cls) { return el('span', { 'class': 'dt-chip-s' + (cls ? ' dt-' + cls : ''), text: text }); }
+  function dayName(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); }
+  function remember(resp) { [resp.from, resp.to].forEach(function (x) { if (x && x.key) pathNames[x.key] = x.name; }); }
+  function getPath(from, to, w, basis) {
+    var url = '/api/data/path?from=' + from + '&to=' + to + '&window=' + encodeURIComponent(w || '7d') + (basis === 'adverts' ? '&basis=adverts' : '');
+    var hit = pathCache[url];
+    if (hit && Date.now() - hit.at < 60000) return hit.p;
+    var p = getJSON(url).then(function (r) { remember(r); return r; });
+    pathCache[url] = { at: Date.now(), p: p };
+    p.catch(function () { delete pathCache[url]; });
+    return p;
+  }
+  function postPaths(pairs, w, basis) {
+    var key = JSON.stringify([pairs, w, basis]), hit = pathCache[key];
+    if (hit && Date.now() - hit.at < 60000) return hit.p;
+    var p = fetch('/api/data/paths', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ window: w || '7d', basis: basis || 'all', pairs: pairs }) })
+      .then(function (r) { if (!r.ok) throw new Error('status ' + r.status); return r.json(); })
+      .then(function (r) { (r.paths || []).forEach(remember); return r; });
+    pathCache[key] = { at: Date.now(), p: p };
+    p.catch(function () { delete pathCache[key]; });
+    return p;
+  }
+  // tag is the one marker a watch carries: its route-change flag, else how
+  // the last 24 hours sit against the usual range.
+  function tag(resp) {
+    if (resp.flag && FLAGS[resp.flag.kind]) return chip(FLAGS[resp.flag.kind][0], FLAGS[resp.flag.kind][1]);
+    if (resp.verdict === 'worse') return chip('Below usual', 'bad');
+    if (resp.verdict === 'better') return chip('Above usual', 'good');
+    return null;
+  }
+  // shareBars draws the daily share on a 0-100% scale with the usual range
+  // as a band; every bar is dated.
+  function shareBars(days, resp, w, h) {
+    var col = cssVar, nb = Math.max(days.length, 1), bw = w / nb;
+    var svg = svgEl('svg', { viewBox: '0 0 ' + w + ' ' + h, width: '100%', height: h, preserveAspectRatio: 'none', 'class': 'dt-watch-bars', role: 'img', 'aria-label': 'Share that got through, by day' });
+    var y = function (v) { return h - Math.max(0, v) * (h - 2); };
+    if (resp && resp.verdict && resp.verdict !== 'new') svg.appendChild(svgEl('rect', { x: 0, y: y(resp.high).toFixed(1), width: w, height: Math.max(1, y(resp.low) - y(resp.high)).toFixed(1), fill: col('--accent', '#4a9df5'), 'fill-opacity': '0.13' }));
+    days.forEach(function (dd, i) {
+      var bh = dd.share < 0 ? 2 : Math.max(1, dd.share * (h - 2));
+      var r = svgEl('rect', { x: (i * bw + 1).toFixed(1), y: (h - bh).toFixed(1), width: Math.max(1, bw - 2).toFixed(1), height: bh.toFixed(1), rx: 1.5,
+        fill: dd.share < 0 ? col('--border', '#888') : col('--accent', '#4a9df5'), 'fill-opacity': i === days.length - 1 ? 1 : 0.45 });
+      var t = svgEl('title', {});
+      t.textContent = dayName(dd.day) + ': ' + (dd.share < 0 ? 'too few to say' : pct(dd.share) + ' (' + n(dd.reached) + ' of ' + n(dd.passed) + ')');
+      r.appendChild(t);
+      svg.appendChild(r);
+    });
+    return svg;
+  }
+  function viaNames(via) { return via.length ? 'via ' + via.map(function (x) { return x.name; }).join(', ') : 'straight across'; }
+  // watchBody draws one watch: the last 24 hours against usual, the daily
+  // share, the routes taken and the route history.
+  function watchBody(box, resp) {
+    box.textContent = '';
+    var last = resp.days.length ? resp.days[resp.days.length - 1] : null;
+    var head = el('div', { 'class': 'dt-watch-head' }, [el('b', { text: resp.from.name + ' → ' + resp.to.name }), tag(resp)]);
+    box.appendChild(head);
+    if (!last || !resp.days.some(function (x) { return x.passed > 0; })) {
+      box.appendChild(el('p', { 'class': 'dt-empty', text: 'Nothing has passed ' + resp.from.name + ' in this period, so there is no path to follow yet.' }));
+      return;
+    }
+    var main = resp.routes[0];
+    var stats = el('div', { 'class': 'dt-watch-stats' }, [
+      el('div', {}, [el('span', { text: 'Got through, last 24 h' }), el('b', { text: last.share < 0 ? '—' : pct(last.share) }),
+        el('span', { text: resp.verdict ? 'usually ' + pct(resp.usual) + (resp.verdict !== 'new' ? ' (' + Math.round(resp.low * 100) + '–' + pct(resp.high) + ')' : '') : 'too little history yet' })]),
+      el('div', {}, [el('span', { text: 'Made it' }), el('b', { text: n(last.reached) }), el('span', { text: 'of ' + n(last.passed) + ' that passed ' + resp.from.name })]),
+      el('div', {}, [el('span', { text: 'Hops' }), el('b', { text: String(resp.hops.median || '—') }), el('span', { text: resp.hops.max ? resp.hops.min + '–' + resp.hops.max + ' seen' : '' })]),
+      el('div', {}, [el('span', { text: 'Main route' }), el('b', { 'class': 'dt-watch-route', text: main ? viaNames(main.via) : '—' }), el('span', { text: main ? pct(main.share) + ' of them' : '' })])
+    ]);
+    box.appendChild(stats);
+    box.appendChild(el('div', { 'class': 'dt-watch-sec' }, [el('h4', { text: 'Share that got through, by day' }), shareBars(resp.days, resp, 520, 70)]));
+    var routes = el('div', { 'class': 'dt-watch-sec' }, [el('h4', { text: 'Routes taken' })]);
+    resp.routes.forEach(function (r) {
+      var meter = el('div', { 'class': 'dt-meter' }, [el('i', {})]);
+      meter.firstChild.style.width = Math.round(r.share * 100) + '%';
+      var moved = Math.round((r.share - r.usual) * 100);
+      routes.appendChild(el('div', { 'class': 'dt-watch-rt' }, [el('div', {}, [el('span', { text: viaNames(r.via) }), meter]), el('b', { text: pct(r.share) }),
+        el('span', { 'class': 'dt-muted', text: Math.abs(moved) >= 5 ? (moved > 0 ? '+' : '−') + Math.abs(moved) + ' pts' : 'steady' })]));
+    });
+    if (!resp.routes.length) routes.appendChild(el('p', { 'class': 'dt-muted', text: 'Nothing reached ' + resp.to.name + ' in this period.' }));
+    var hist = el('div', { 'class': 'dt-watch-sec' }, [el('h4', { text: 'Route history' })]);
+    resp.changes.slice().reverse().forEach(function (c) {
+      hist.appendChild(el('div', { 'class': 'dt-watch-ch' }, [el('span', { 'class': 'dt-muted', text: dayName(c.day) }), el('span', { text: c.text }), FLAGS[c.kind] ? chip(FLAGS[c.kind][0], FLAGS[c.kind][1]) : null]));
+    });
+    if (!resp.changes.length) hist.appendChild(el('p', { 'class': 'dt-muted', text: 'No route changes in this period.' }));
+    box.appendChild(el('div', { 'class': 'dt-watch-two' }, [routes, hist]));
+  }
+  function drawWatch(p, d, body, frame) {
+    var q = p.query || {}, from = subst(q.from || '', d).toLowerCase(), to = subst(q.to || '', d).toLowerCase();
+    if (!KEY_RE.test(from) || !KEY_RE.test(to) || from === to) { empty(body, 'Pick two repeaters above to follow the path between them.'); return; }
+    if (!body.firstChild) empty(body, 'Loading…');
+    getPath(from, to, panelWindow(p), q.basis).then(function (resp) {
+      if (!body.isConnected) return;
+      watchBody(body, resp);
+      var h = frame && frame.querySelector('h3'); if (h) h.textContent = substTitle(p.title, d);
+    }, function () { if (body.isConnected) empty(body, 'The path could not be loaded. Try again shortly.'); });
+  }
+  function watchPairs(ws) {
+    var pairs = [];
+    ws.forEach(function (w) { pairs.push({ from: w.from, to: w.to }); if (w.both) pairs.push({ from: w.to, to: w.from }); });
+    return pairs;
+  }
+  function spark(days) {
+    var w = 96, h = 24, nb = Math.max(days.length, 1), bw = w / nb, col = cssVar;
+    var svg = svgEl('svg', { viewBox: '0 0 ' + w + ' ' + h, width: w, height: h, 'aria-hidden': 'true' });
+    days.forEach(function (dd, i) {
+      var bh = dd.share < 0 ? 1 : Math.max(1, dd.share * (h - 1));
+      svg.appendChild(svgEl('rect', { x: (i * bw + 0.5).toFixed(1), y: (h - bh).toFixed(1), width: Math.max(1, bw - 1.2).toFixed(1), height: bh.toFixed(1), rx: 1, fill: dd.share < 0 ? col('--border', '#888') : col('--accent', '#4a9df5'), 'fill-opacity': i === days.length - 1 ? 1 : 0.45 }));
+    });
+    return svg;
+  }
+  function drawWatchlist(p, d, body) {
+    var ws = (p.options && p.options.watches) || [], q = p.query || {};
+    if (!body.firstChild) empty(body, 'Loading…');
+    var addBtn = el('button', { type: 'button', 'class': 'dt-btn dt-wl-add', text: '+ Add watch' });
+    addBtn.addEventListener('click', function (e) { e.stopPropagation(); openAddWatch(p, 'watchlist'); });
+    if (!ws.length) { body.textContent = ''; body.appendChild(el('p', { 'class': 'dt-empty', text: 'No watches yet.' })); body.appendChild(addBtn); return; }
+    postPaths(watchPairs(ws), panelWindow(p), q.basis).then(function (r) {
+      if (!body.isConnected) return;
+      body.textContent = '';
+      var list = el('div', { 'class': 'dt-wl' }), k = 0;
+      ws.forEach(function (w) {
+        var there = r.paths[k++], back = w.both ? r.paths[k++] : null;
+        var last = there.days.length ? there.days[there.days.length - 1] : null;
+        var row = el('button', { type: 'button', 'class': 'dt-wl-row', 'aria-label': 'Open ' + w.name }, [
+          el('span', { 'class': 'dt-wl-name' }, [el('b', { text: w.name }), el('span', { text: there.from.name + ' → ' + there.to.name })]),
+          el('span', { 'class': 'dt-wl-dir' }, [el('span', { text: '→' }), spark(there.days)].concat(back ? [el('span', { text: '←' }), spark(back.days)] : [])),
+          el('span', { 'class': 'dt-wl-v' }, [el('b', { text: last && last.share >= 0 ? pct(last.share) : '—' }), el('span', { 'class': 'dt-muted', text: there.verdict ? 'usually ' + pct(there.usual) : '' })]),
+          el('span', { 'class': 'dt-wl-tag' }, [tag(there) || (back && tag(back))])
+        ]);
+        row.addEventListener('click', function () { openWatchDetail(w, there, back); });
+        list.appendChild(row);
+      });
+      body.appendChild(list);
+      body.appendChild(el('div', { 'class': 'dt-wl-foot' }, [el('span', { 'class': 'dt-muted', text: 'Share of packets that passed the first repeater and reached the second, last 24 hours. Select a watch to see its routes and history.' }), addBtn]));
+    }, function () { if (body.isConnected) empty(body, 'The watches could not be loaded. Try again shortly.'); });
+  }
+  function openWatchDetail(w, there, back) {
+    dialog(function (box, close) {
+      box.appendChild(el('h3', { id: 'dtModalTitle', text: w.name }));
+      var holder = el('div', { 'class': 'dt-watch' });
+      box.appendChild(holder);
+      var showing = there;
+      var draw = function () { watchBody(holder, showing); };
+      draw();
+      var kids = [];
+      if (back) {
+        var sw = el('button', { type: 'button', 'class': 'dt-btn', text: 'Show the way back' });
+        sw.addEventListener('click', function () { showing = showing === there ? back : there; sw.textContent = showing === there ? 'Show the way back' : 'Show the way there'; draw(); });
+        kids.push(sw);
+      }
+      var link = el('a', { 'class': 'dt-btn', href: '#/data?dash=path&v.from=' + there.from.key + '&v.to=' + there.to.key, text: 'Open as a dashboard' });
+      link.addEventListener('click', function () { close(); });
+      kids.push(link, closeBtn(close));
+      box.appendChild(acts(kids));
+    });
+  }
+  // openAddWatch adds a watch: to the watch list p, or as a new panel of
+  // type `type`. A dashboard that is not yours is copied first, as editing
+  // does; a pair nothing has passed between asks before it is kept.
+  function openAddWatch(p, type) {
+    loadRepeaters().then(function () {
+      var warned = '';
+      dialog(function (box, close) {
+        box.appendChild(el('h3', { id: 'dtModalTitle', text: 'Add a watch' }));
+        var dl = el('datalist', { id: 'dtWList' });
+        (repeaters || []).forEach(function (r) { dl.appendChild(el('option', { value: repLabel(r) })); });
+        box.appendChild(dl);
+        var from = el('input', { id: 'dtWFrom', 'class': 'dt-inp', list: 'dtWList', autocomplete: 'off', placeholder: 'Repeater name' });
+        var to = el('input', { id: 'dtWTo', 'class': 'dt-inp', list: 'dtWList', autocomplete: 'off', placeholder: 'Repeater name' });
+        var name = el('input', { id: 'dtWName', 'class': 'dt-inp', maxlength: '80', placeholder: 'North link' });
+        var both = el('input', { id: 'dtWBoth', type: 'checkbox' });
+        box.appendChild(field('From', from));
+        box.appendChild(field('To', to));
+        box.appendChild(field('Name', name));
+        box.appendChild(el('label', { 'class': 'dt-check' }, [both, el('span', { text: 'Show the way back too' })]));
+        var msg = el('p', { 'class': 'dt-modal-sum', 'aria-live': 'polite' });
+        box.appendChild(msg);
+        var add = el('button', { type: 'button', id: 'dtWAdd', 'class': 'dt-btn dt-btn-primary', text: 'Add' });
+        add.addEventListener('click', function () {
+          var a = keyFromLabel(from.value), b = keyFromLabel(to.value), nm = name.value.trim() || ((repeaterName(a)) + ' to ' + repeaterName(b));
+          if (!a || !b || a === b) { msg.textContent = 'Pick two different repeaters from the list.'; return; }
+          var keep = function () {
+            close();
+            var w = { name: nm.slice(0, 80), from: a, to: b, both: !!both.checked };
+            var d = cur();
+            if (!editable(d)) { copyToMine(d); toast('Saved to your copy. The original stays as it is for everyone else.'); d = cur(); }
+            change(function () {
+              var target = p && d.panels.filter(function (x) { return x.id === p.id; })[0];
+              if (target) { target.options = target.options || {}; (target.options.watches = target.options.watches || []).push(w); return; }
+              if (d.panels.length >= MAX_PANELS) return;
+              var def = ADD_DEFAULTS[type || 'watch'];
+              var np = { id: newPanelId(d), title: type === 'watchlist' ? 'Watches' : w.name, type: type || 'watch', query: {}, layout: { x: 0, y: nextFreeY(d.panels), w: def[2], h: def[3] } };
+              if (np.type === 'watchlist') np.options = { watches: [w] };
+              else { np.query.from = a; np.query.to = b; }
+              d.panels.push(np); resolveLayout(d.panels, np);
+            });
+            toast('Watch added');
+          };
+          if (warned === a + b) return keep();
+          getPath(a, b, '7d').then(function (r) {
+            if (r.days.some(function (x) { return x.reached > 0; })) return keep();
+            warned = a + b;
+            msg.textContent = 'Nothing has passed from ' + repeaterName(a) + ' to ' + repeaterName(b) + ' in the last 7 days. Press Add again to keep it anyway.';
+          }, function () { warned = a + b; msg.textContent = 'The path could not be checked. Press Add again to keep it anyway.'; });
+        });
+        box.appendChild(acts([closeBtn(close, 'Cancel'), add]));
+      });
+    });
+  }
+  // watchRail edits a watch or watch list panel in the editor.
+  function watchRail(rail, p, d) {
+    var q = p.query = p.query || {};
+    if (p.type === 'watch') {
+      railSection(rail, 'Repeaters');
+      rail.appendChild(el('p', { 'class': 'dt-hint', text: 'A repeater key, or a $variable of the repeater kind so one dashboard works for any pair.' }));
+      var fi = el('input', { id: 'dtPFrom', 'class': 'dt-inp', value: q.from || '' }), ti = el('input', { id: 'dtPTo', 'class': 'dt-inp', value: q.to || '' });
+      fi.addEventListener('change', function () { change(function () { q.from = keyFromLabel(fi.value) || fi.value.trim(); }); });
+      ti.addEventListener('change', function () { change(function () { q.to = keyFromLabel(ti.value) || ti.value.trim(); }); });
+      rail.appendChild(el('div', { 'class': 'dt-two' }, [field('From', fi), field('To', ti)]));
+    } else {
+      railSection(rail, 'Watches');
+      var ws = (p.options && p.options.watches) || [];
+      var chips = el('div', { 'class': 'dt-chips' });
+      ws.forEach(function (w, i) {
+        var x = el('button', { type: 'button', 'class': 'dt-fchip-x', 'aria-label': 'Remove watch ' + w.name, text: '×' });
+        x.addEventListener('click', function () { change(function () { ws.splice(i, 1); }); });
+        chips.appendChild(el('span', { 'class': 'dt-fchip' }, [el('span', { 'class': 'dt-fchip-edit', text: w.name }), x]));
+      });
+      var add = el('button', { type: 'button', 'class': 'dt-chip dt-add', text: '+ Add watch' });
+      add.addEventListener('click', function () { openAddWatch(p, 'watchlist'); });
+      chips.appendChild(add);
+      rail.appendChild(chips);
+    }
+    rail.appendChild(field('Count', selectOf('dtPBasis', [['all', 'Every packet'], ['adverts', 'Adverts only (steadier)']], q.basis || 'all', function (v) { change(function () { if (v === 'all') delete q.basis; else q.basis = v; }); })));
+    rail.appendChild(field('Period', selectOf('dtPWin', [['', 'The dashboard’s']].concat((cfg.windows || []).map(function (w) { return [w.key, w.label]; })), q.window || '', function (v) { change(function () { if (v) q.window = v; else delete q.window; }); })));
   }
 
   // ---- editing on the grid ------------------------------------------------
@@ -858,6 +1151,7 @@
     if (v.kind === 'area') return (cfg.areas || []).map(function (a) { return [a.code, a.label]; });
     if (v.kind === 'scope' && c) return c.scopes.map(function (s) { return [s.key, s.key]; });
     if (v.kind === 'channel' && c) return c.channels.filter(Boolean).map(function (ch) { return [ch, DIMS.channel.name(ch)]; });
+    if (v.kind === 'repeater') return [['', 'Pick a repeater']].concat((repeaters || []).map(function (r) { return [r.key, repLabel(r)]; }));
     return null;
   }
   function renderBar(d) {
@@ -878,6 +1172,7 @@
       b.addEventListener('click', function () { if (state.window === w.key) return; state.window = w.key; syncHash(); render(); });
       wb.appendChild(b);
     });
+    if (!repeaters && dashVars(d).some(function (v) { return v.kind === 'repeater'; })) loadRepeaters().then(function () { if (root) render(); });
     var vb = $('dtVars'); vb.textContent = '';
     dashVars(d).forEach(function (v) {
       var id = 'dtVar-' + v.name, control, options = varOptions(v), cv = varValue(v);
@@ -931,6 +1226,7 @@
     rail.appendChild(field('Type', selectOf('dtPType', PANEL_TYPES.map(function (t) { return [t[0], t[1]]; }), p.type, function (v) {
       change(function () { p.type = v; if (v === 'text' && !p.options) p.options = { text: 'Write a note for readers of this dashboard.' }; if ((v === 'line' || v === 'area') && q.x && q.x !== 'time') q.x = 'time'; });
     })));
+    if (p.type === 'watch' || p.type === 'watchlist') return watchRail(rail, p, d);
     if (p.type !== 'text') {
       rail.appendChild(field('Period', selectOf('dtPWin', [['', 'The dashboard’s']].concat((cfg.windows || []).map(function (w) { return [w.key, w.label]; })), q.window || '', function (v) { change(function () { if (v) q.window = v; else delete q.window; }); })));
       railSection(rail, 'Filters');
@@ -1018,7 +1314,7 @@
     });
     rail.appendChild(vchips);
     var vname = el('input', { id: 'dtVarName', 'class': 'dt-inp', placeholder: 'home', maxlength: '32' });
-    var vkinds = (places() ? [['area', 'Area']] : []).concat([['scope', 'Scope'], ['channel', 'Channel'], ['text', 'Text']]);
+    var vkinds = (places() ? [['area', 'Area']] : []).concat([['scope', 'Scope'], ['channel', 'Channel'], ['repeater', 'Repeater'], ['text', 'Text']]);
     var vkind = selectOf('dtVarKind', vkinds, vkinds[0][0], function () { /* read on add */ });
     var vadd = el('button', { type: 'button', 'class': 'dt-btn', text: 'Add variable' });
     vadd.addEventListener('click', function () {
@@ -1188,7 +1484,9 @@
     stat: [{}, 'Packets heard', 3, 2],
     table: [{ x: 'origin', split: 'kind' }, 'Packets by start and kind', 6, 4, 'Packets by scope and kind'],
     top: [{ dim: 'scope', top: 8 }, 'Busiest scopes', 4, 4],
-    text: [{}, 'Note', 4, 2]
+    text: [{}, 'Note', 4, 2],
+    watch: [{}, 'Path watch', 12, 6],
+    watchlist: [{}, 'Watches', 12, 5]
   };
   // addDefaults: the query a new panel starts with, on dimensions that exist.
   function addDefaults(type) {
@@ -1211,6 +1509,7 @@
         var b = el('button', { type: 'button' }, [el('b', { text: t[1] }), el('span', { text: t[2] })]);
         b.addEventListener('click', function () {
           close();
+          if (t[0] === 'watch' || t[0] === 'watchlist') return openAddWatch(null, t[0]);
           var def = ADD_DEFAULTS[t[0]];
           change(function () {
             var p = { id: newPanelId(d), title: places() ? def[1] : def[4] || def[1], type: t[0], query: addDefaults(t[0]), layout: { x: 0, y: nextFreeY(d.panels), w: def[2], h: def[3] } };
@@ -1471,6 +1770,7 @@
       resolveLayout: resolveLayout, seriesQuery: seriesQuery, passes: passes,
       b64urlEncode: b64urlEncode, b64urlDecode: b64urlDecode,
       setConfig: function (c) { cfg = c; },
+      changeText: function (c) { return c.text; },
       subst: subst
     };
   }
