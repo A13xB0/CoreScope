@@ -302,3 +302,25 @@ func TestConfiguredRoutesShowBetterOrWorse(t *testing.T) {
 		t.Errorf("reverse route counted packets going the other way: %+v", back)
 	}
 }
+
+// Boxes cannot follow a border (any box round the Borders takes in
+// Northumberland too), so a zone may be a polygon of [lat, lon] points.
+func TestPolygonZonesFollowABorder(t *testing.T) {
+	scotland := Zone{Name: "Scotland", Polygon: [][2]float64{{61, -8}, {61, -0.7}, {55.81, -0.7}, {55.81, -2.03}, {55.6, -2.2}, {55.36, -2.48}, {55.17, -2.75}, {54.98, -3.06}, {54.6, -3.6}, {54.6, -5.3}, {55.5, -5.3}, {55.5, -8}}}
+	for _, c := range []struct {
+		name     string
+		lat, lon float64
+		in       bool
+	}{
+		{"Edinburgh", 55.95, -3.19, true},
+		{"Kelso, in the Borders", 55.6, -2.43, true},
+		{"Galloway", 54.85, -4.4, true},
+		{"Berwick, in England", 55.77, -2.0, false},
+		{"Newcastle", 54.97, -1.61, false},
+		{"Carlisle", 54.89, -2.93, false},
+	} {
+		if got := scotland.contains(c.lat, c.lon); got != c.in {
+			t.Errorf("%s: in Scotland = %v, want %v", c.name, got, c.in)
+		}
+	}
+}
