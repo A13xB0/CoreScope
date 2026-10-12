@@ -944,6 +944,12 @@
     });
     return svg;
   }
+  // backTag is the way back's tag, marked as such.
+  function backTag(back) {
+    var t = back && tag(back);
+    if (t) t.textContent = '← ' + t.textContent;
+    return t;
+  }
   function drawWatchlist(p, d, body) {
     var ws = (p.options && p.options.watches) || [], q = p.query || {};
     if (!body.firstChild) empty(body, 'Loading…');
@@ -961,7 +967,7 @@
           el('span', { 'class': 'dt-wl-name' }, [el('b', { text: w.name }), el('span', { text: there.from.name + ' → ' + there.to.name })]),
           el('span', { 'class': 'dt-wl-dir' }, [el('span', { text: '→' }), spark(there.days)].concat(back ? [el('span', { text: '←' }), spark(back.days)] : [])),
           el('span', { 'class': 'dt-wl-v' }, [el('b', { text: last && last.share >= 0 ? pct(last.share) : '—' }), el('span', { 'class': 'dt-muted', text: there.verdict ? 'usually ' + pct(there.usual) : '' })]),
-          el('span', { 'class': 'dt-wl-tag' }, [tag(there) || (back && tag(back))])
+          el('span', { 'class': 'dt-wl-tag' }, [tag(there) || backTag(back)])
         ]);
         row.addEventListener('click', function () { openWatchDetail(w, there, back); });
         list.appendChild(row);
