@@ -159,3 +159,26 @@ func TestDashboardsTakeWatchPanelsAndRepeaterVariables(t *testing.T) {
 		t.Error("a watch with a bad key was accepted")
 	}
 }
+
+// A built-in "Path" dashboard follows any two repeaters picked at the top,
+// with or without areas.
+func TestThePathDashboardIsBuiltIn(t *testing.T) {
+	for _, places := range []bool{true, false} {
+		var path *Dashboard
+		for _, d := range builtInDashboards(places) {
+			if d.ID == "path" {
+				d := d
+				path = &d
+			}
+		}
+		if path == nil {
+			t.Fatalf("places=%v: no built-in path dashboard", places)
+		}
+		if err := validateDashboard(*path); err != nil {
+			t.Fatalf("places=%v: %v", places, err)
+		}
+		if len(path.Variables) != 2 || path.Variables[0].Kind != "repeater" || path.Panels[0].Type != "watch" || path.Panels[0].Query.From != "$from" {
+			t.Errorf("places=%v: %+v", places, path)
+		}
+	}
+}
