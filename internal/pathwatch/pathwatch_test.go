@@ -164,3 +164,34 @@ func TestTooLittleTrafficSaysSo(t *testing.T) {
 		t.Fatalf("result %+v", r)
 	}
 }
+
+// On a thin path a handful of packets proves nothing: a repeater that
+// carried a quarter of 16 crossings a day is 4 packets, and a day without
+// it is chance.
+func TestThinPathsRaiseNoChanges(t *testing.T) {
+	in := feed(100, func(int) float64 { return 0.16 }, func(i int) []string {
+		if (i*7)%4 == 0 {
+			return []string{"x"}
+		}
+		return []string{"y"}
+	})
+	r := Analyse(in, activity{}, Options{})
+	if len(r.Changes) != 0 {
+		t.Fatalf("changes on a thin path: %+v", r.Changes)
+	}
+}
+
+// When the main route stays the same but its share moves, the change says
+// so rather than naming the same route twice.
+func TestTheMainRouteKeepingItsPlaceButLosingShareIsAShareChange(t *testing.T) {
+	in := feed(200, func(int) float64 { return 0.5 }, func(i int) []string { return []string{"keir"} })
+	for k := range in.Reached { // on the last day, two in five go straight across instead
+		if in.Reached[k].At.After(day(0)) && k%5 < 2 {
+			in.Reached[k].Route = []string{}
+		}
+	}
+	r := Analyse(in, activity{}, Options{MainMove: 0.25, DropFrom: 0.9, DropTo: 0.01})
+	if r.Flag == nil || r.Flag.Kind != KindRouteShare || r.Flag.Was != 1 || r.Flag.Now > 0.7 {
+		t.Fatalf("flag %+v, want the main route's share falling", r.Flag)
+	}
+}
