@@ -43,11 +43,26 @@ type DashboardQuery struct {
 	Cols    string             `json:"cols,omitempty"`
 	Dim     string             `json:"dim,omitempty"`
 	Top     int                `json:"top,omitempty"`
+	// From and To are the two repeaters a watch panel follows: public keys,
+	// or $variables of the repeater kind.
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
+	// Basis is "adverts" to count only adverts on a watch (steadier), else all.
+	Basis string `json:"basis,omitempty"`
+}
+
+// DashboardWatch is one pair a watch list follows.
+type DashboardWatch struct {
+	Name string `json:"name"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	Both bool   `json:"both,omitempty"` // show the way back too
 }
 
 // DashboardPanelOptions holds the settings only some panel types have.
 type DashboardPanelOptions struct {
-	Text string `json:"text,omitempty"`
+	Text    string           `json:"text,omitempty"`
+	Watches []DashboardWatch `json:"watches,omitempty"` // a watchlist's pairs
 }
 
 // DashboardLayout is a panel's place on the 12-column grid.
@@ -100,8 +115,9 @@ const (
 var (
 	dashboardIDRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	dashboardVarRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
-	panelTypes     = map[string]bool{"bar": true, "line": true, "area": true, "matrix": true, "stat": true, "table": true, "top": true, "text": true}
-	variableKinds  = map[string]bool{"area": true, "scope": true, "channel": true, "text": true}
+	panelTypes     = map[string]bool{"bar": true, "line": true, "area": true, "matrix": true, "stat": true, "table": true, "top": true, "text": true, "watch": true, "watchlist": true}
+	variableKinds  = map[string]bool{"area": true, "scope": true, "channel": true, "text": true, "repeater": true}
+	watchEndRe     = regexp.MustCompile(`^([0-9a-f]{64}|\$[a-z][a-z0-9_]{0,31})$`)
 	dashWindows    = map[string]bool{"": true, "24h": true, "7d": true, "30d": true}
 	rollups        = map[string]bool{"": true, "10m": true, "30m": true, "1h": true, "6h": true, "1d": true, "1w": true}
 )
@@ -159,6 +175,24 @@ func validatePanel(p DashboardPanel) error {
 	if p.Options != nil && len(p.Options.Text) > maxDashboardTextBytes {
 		return fmt.Errorf("panel %q: text is longer than %d bytes", p.ID, maxDashboardTextBytes)
 	}
+	if q.Basis != "" && q.Basis != "all" && q.Basis != "adverts" {
+		return fmt.Errorf("panel %q: basis must be all or adverts", p.ID)
+	}
+	switch p.Type {
+	case "watch":
+		if !watchEndRe.MatchString(q.From) || !watchEndRe.MatchString(q.To) || q.From == q.To {
+			return fmt.Errorf("panel %q: a watch needs two different repeaters, by public key or $variable", p.ID)
+		}
+	case "watchlist":
+		if p.Options == nil || len(p.Options.Watches) == 0 || len(p.Options.Watches) > pathMaxPairs {
+			return fmt.Errorf("panel %q: a watch list needs 1 to %d watches", p.ID, pathMaxPairs)
+		}
+		for _, wt := range p.Options.Watches {
+			if wt.Name == "" || len(wt.Name) > 80 || !pubkeyRe.MatchString(wt.From) || !pubkeyRe.MatchString(wt.To) || wt.From == wt.To {
+				return fmt.Errorf("panel %q: watch %q needs a name of at most 80 characters and two different repeater public keys", p.ID, wt.Name)
+			}
+		}
+	}
 	l := p.Layout
 	if l.W < 1 || l.W > 12 || l.H < 1 || l.H > 12 || l.X < 0 || l.X+l.W > 12 || l.Y < 0 {
 		return fmt.Errorf("panel %q: layout must fit the 12-column grid", p.ID)
@@ -209,7 +243,7 @@ func validateDashboard(d Dashboard) error {
 	vars := map[string]bool{}
 	for _, v := range d.Variables {
 		if !dashboardVarRe.MatchString(v.Name) || !variableKinds[v.Kind] || vars[v.Name] {
-			return fmt.Errorf("dashboard %q: variable %q needs a unique lower-case name and a kind of area, scope, channel or text", d.ID, v.Name)
+			return fmt.Errorf("dashboard %q: variable %q needs a unique lower-case name and a kind of area, scope, channel, repeater or text", d.ID, v.Name)
 		}
 		vars[v.Name] = true
 	}

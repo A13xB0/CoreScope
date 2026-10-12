@@ -288,6 +288,8 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/data/cube", s.handleDataCube).Methods("GET")
 	r.HandleFunc("/api/data/packets", s.handleDataPackets).Methods("GET")
 	r.HandleFunc("/api/data/dashboards", s.handleDataDashboards).Methods("GET")
+	r.HandleFunc("/api/data/path", s.handleDataPath).Methods("GET")
+	r.HandleFunc("/api/data/paths", s.handleDataPaths).Methods("POST")
 	r.Handle("/api/config/geo-filter", s.requireAdmin(http.HandlerFunc(s.handlePutConfigGeoFilter))).Methods("PUT")
 
 	// Readiness endpoint (gated on background init completion)
