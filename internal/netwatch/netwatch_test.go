@@ -1162,3 +1162,20 @@ func TestStatusCountsTheTiers(t *testing.T) {
 		t.Fatalf("tiers %+v, want 3 core and 1 local", st.Tiers)
 	}
 }
+
+// A key seen only in resolved paths, never adverting itself, may be a
+// mis-resolved hop rather than a repeater: it is not put in a tier.
+func TestOnlyRepeatersThatAdvertAreTiered(t *testing.T) {
+	f := tierWatch()
+	for h := int64(0); h < 9*day; h++ {
+		var adv []string
+		if h%6 == 0 {
+			adv = []string{"real"}
+		}
+		f.hour(h, "obs1", map[string]int{"real": 1, "ghost": 1}, adv, 0)
+		f.w.Evaluate(f.start + h)
+	}
+	if c := f.w.Status().Tiers; c.Local != 1 { // real; zzobs1 is core
+		t.Fatalf("tiers %+v, want only the adverting repeater local", c)
+	}
+}
