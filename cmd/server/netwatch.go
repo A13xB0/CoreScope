@@ -857,6 +857,13 @@ func (nw *netWatchService) event(e netwatch.Event) NetWatchEvent {
 			way = "rose"
 		}
 		out.Text = fmt.Sprintf("%s %s from %s to %s of adverts getting through", e.Where, way, pc(e.Before), pc(e.After))
+		if down := nw.observerNames(e.ObserversDown); len(down) > 0 {
+			verb := " is"
+			if len(down) > 1 {
+				verb = " are"
+			}
+			out.Text += ", while " + strings.Join(down, " and ") + verb + " offline"
+		}
 	case "reroute":
 		out.Text = fmt.Sprintf("%s rerouted from %s to %s", e.Where, out.Name, out.OtherName)
 	case "drift":

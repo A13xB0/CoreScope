@@ -196,6 +196,9 @@ type Event struct {
 	Where  string  `json:"where,omitempty"` // the corridor direction or route
 	Before float64 `json:"before,omitempty"`
 	After  float64 `json:"after,omitempty"`
+	// ObserversDown names quiet observers that usually hear most of a step's
+	// corridor or route: the step may be theirs.
+	ObserversDown []string `json:"observersDown,omitempty"`
 }
 
 func where(c CorridorStatus, d CorridorDirection) string {
@@ -258,7 +261,7 @@ func (w *Watch) explainedBy(st *Status) {
 	for _, c := range st.Corridors {
 		for _, d := range c.Directions {
 			if d.Reach != nil && d.Reach.Since != nil {
-				ev = append(ev, Event{Hour: *d.Reach.Since, Kind: "step", Where: where(c, d), Before: d.Reach.Usual, After: d.Reach.Last})
+				ev = append(ev, Event{Hour: *d.Reach.Since, Kind: "step", Where: where(c, d), Before: d.Reach.Usual, After: d.Reach.Last, ObserversDown: d.ObserversDown})
 			}
 			if d.Reroute != nil {
 				ev = append(ev, Event{Hour: d.Reroute.Since, Kind: "reroute", Node: d.Reroute.From, Other: d.Reroute.To, Where: where(c, d)})
@@ -267,7 +270,7 @@ func (w *Watch) explainedBy(st *Status) {
 	}
 	for _, r := range st.Routes {
 		if r.Reach != nil && r.Reach.Since != nil {
-			ev = append(ev, Event{Hour: *r.Reach.Since, Kind: "step", Where: r.Name, Before: r.Reach.Usual, After: r.Reach.Last})
+			ev = append(ev, Event{Hour: *r.Reach.Since, Kind: "step", Where: r.Name, Before: r.Reach.Usual, After: r.Reach.Last, ObserversDown: r.ObserversDown})
 		}
 	}
 	for _, d := range st.Drift {
