@@ -192,7 +192,7 @@ func (w *Watch) reroute(carriers map[int64]map[string]int, t int64) *Reroute {
 	for s-1 >= firstDay && top(s-1) == now {
 		s--
 	}
-	if s == firstDay {
+	if s == firstDay || lastDay-s >= stepWeek { // always so, or old news
 		return nil
 	}
 	count := map[string]int{}
