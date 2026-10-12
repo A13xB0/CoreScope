@@ -600,6 +600,20 @@
         window.dispatchEvent(new Event('resize'));
       }
     }
+    // Health (Network Watch) is opt-in too: injected after Analytics when on.
+    window.MC_NET_WATCH = cfg.netWatch === true;
+    if (window.MC_NET_WATCH && !document.querySelector('.nav-links [data-route="health"]')) {
+      var hAnchor = document.querySelector('.nav-links [data-route="analytics"]');
+      if (hAnchor) {
+        var hLink = document.createElement('a');
+        hLink.href = '#/health';
+        hLink.className = 'nav-link';
+        hLink.setAttribute('data-route', 'health');
+        hLink.innerHTML = '<svg class="ph-icon" aria-hidden="true" focusable="false"><use href="/icons/phosphor-sprite.svg#ph-pulse"></use></svg> Health';
+        hAnchor.insertAdjacentElement('afterend', hLink);
+        window.dispatchEvent(new Event('resize'));
+      }
+    }
     if (cfg.roles) {
       if (cfg.roles.colors) {
         // #1407 — ROLE_COLORS is now a live getter; merge into the override map.
