@@ -290,6 +290,9 @@
       // from window.ROLE_COLORS, role swatches use CSS tokens, and the one
       // cached value (_labelColor) is re-read on restart.
       if (_currentTab === 'neighbor-graph' && _ngState) { startGraphRenderer(); return; }
+      // Before the answers land there is nothing to re-render; loadAnalytics()
+      // renders the tab with the current theme when they do.
+      if (!_analyticsData.rfData) return;
       renderTab(_currentTab);
     };
     window.addEventListener('theme-refresh', _themeRefreshHandler);
