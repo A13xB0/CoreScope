@@ -80,3 +80,7 @@ require (
 )
 
 replace github.com/meshcore-analyzer/mailer => ../../internal/mailer
+
+require github.com/meshcore-analyzer/netwatch v0.0.0
+
+replace github.com/meshcore-analyzer/netwatch => ../../internal/netwatch

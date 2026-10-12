@@ -216,6 +216,9 @@ type Config struct {
 	ResolvedPath  *ResolvedPathConfig  `json:"resolvedPath,omitempty"`
 	NeighborGraph *NeighborGraphConfig `json:"neighborGraph,omitempty"`
 
+	// Network Watch: the public Health page (off by default). See netwatch.go.
+	NetWatch *NetWatchConfig `json:"netWatch,omitempty"`
+
 	// Observers cache settings (#1481 P0-3 / #1483).
 	ObserversCache *ObserversCacheConfig `json:"observersCache,omitempty"`
 

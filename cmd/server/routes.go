@@ -33,9 +33,10 @@ type Server struct {
 	db        *DB
 	cfg       *Config
 	hub       *Hub
-	store     *PacketStore // in-memory packet store (nil = fallback to DB)
-	data      *dataService // the Data tab's index (nil = tab off)
-	configDir string       // directory containing config.json (for write-back via PUT /api/config/geo-filter)
+	store     *PacketStore     // in-memory packet store (nil = fallback to DB)
+	data      *dataService     // the Data tab's index (nil = tab off)
+	netwatch  *netWatchService // Health page; nil when netWatch is off
+	configDir string           // directory containing config.json (for write-back via PUT /api/config/geo-filter)
 	startedAt time.Time
 	perfStats *PerfStats
 	version   string
@@ -364,6 +365,9 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/analytics/distance", s.handleAnalyticsDistance).Methods("GET")
 	r.HandleFunc("/api/analytics/hash-sizes", s.handleAnalyticsHashSizes).Methods("GET")
 	r.HandleFunc("/api/analytics/hash-collisions", s.handleAnalyticsHashCollisions).Methods("GET")
+	r.HandleFunc("/api/netwatch", s.handleNetWatch).Methods("GET")
+	r.HandleFunc("/api/netwatch/node/{pubkey}", s.handleNetWatchNode).Methods("GET")
+	r.HandleFunc("/api/netwatch/probe", s.handleNetWatchProbe).Methods("GET")
 	r.HandleFunc("/api/analytics/subpaths", s.handleAnalyticsSubpaths).Methods("GET")
 	r.HandleFunc("/api/analytics/subpaths-bulk", s.handleAnalyticsSubpathsBulk).Methods("GET")
 	r.HandleFunc("/api/analytics/subpath-detail", s.handleAnalyticsSubpathDetail).Methods("GET")
