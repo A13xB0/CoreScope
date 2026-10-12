@@ -36,7 +36,10 @@ const STATUS = {
     directions: [
       { from: 'Highlands', to: 'Central belt', lastDay: 109, usualDay: 165, daily: [160, 170, 165, 109], carriers: [{ node: K('c'), name: 'Goyle Hill', packets: 100 }] },
       { from: 'Central belt', to: 'Highlands', lastDay: 615, usualDay: 840, daily: [850, 840, 900, 615], carriers: [{ node: K('a'), name: 'Keir Hill', packets: 3 }] }] },
-    { name: 'Scotland and North East England', a: 'Scotland', b: 'North East England', lastDay: 612, usualDay: 2, daily: [0, 0, 0, 0, 0, 0, 40, 612], carriers: [] }],
+    { name: 'Scotland and North East England', a: 'Scotland', b: 'North East England', lastDay: 612, usualDay: 2, daily: [0, 0, 0, 0, 0, 0, 40, 612], carriers: [],
+      directions: [
+        { from: 'Scotland', to: 'North East England', lastDay: 400, usualDay: 1, daily: [0, 0, 0, 0, 0, 0, 25, 400], carriers: [] },
+        { from: 'North East England', to: 'Scotland', lastDay: 212, usualDay: 1, daily: [0, 0, 0, 0, 0, 0, 15, 212], carriers: [] }] }],
   routes: [
     { name: 'North link', from: K('d'), fromName: 'Inverness', to: K('e'), toName: 'Edinburgh', now: 40, usual: 120, lastDay: 300, usualDay: 900, daily: [880, 900, 910, 300] },
     { name: 'Ireland gateway', from: K('f'), fromName: 'Galloway', to: K('e'), toName: 'Edinburgh', now: 60, usual: 50, lastDay: 260, usualDay: 200, daily: [190, 200, 210, 260] },
