@@ -20,7 +20,7 @@ const (
 	nwObs   = "0B5E000000000000000000000000000000000000000000000000000000000000"
 )
 
-// seedNetWatch writes ten days of traffic ending at now: Keir relays about 20
+// seedNetWatch writes seventeen days of traffic ending at now: Keir relays about 20
 // packets an hour on the path north → keir → south and adverts every two
 // hours, until it goes silent two days before now; a steady north → mid →
 // south chain runs throughout.
@@ -59,7 +59,7 @@ func seedNetWatch(t *testing.T, db *DB, now time.Time) {
 		}
 	}
 	silentFrom := now.Add(-48 * time.Hour).Truncate(time.Hour)
-	for at := now.Add(-10 * 24 * time.Hour).Truncate(time.Hour); at.Before(now.Truncate(time.Hour)); at = at.Add(time.Hour) {
+	for at := now.Add(-17 * 24 * time.Hour).Truncate(time.Hour); at.Before(now.Truncate(time.Hour)); at = at.Add(time.Hour) {
 		for i := 0; i < 15; i++ {
 			add(at.Add(time.Duration(i)*time.Minute), 5, "", []string{nwNorth, nwMid, nwSouth})
 		}
@@ -153,7 +153,7 @@ func TestNetWatchNodeSeries(t *testing.T) {
 	if code := getNW(t, r, "/api/netwatch/node/"+nwKeir, &s); code != 200 {
 		t.Fatalf("status %d", code)
 	}
-	if s.Name != "Keir Hill" || len(s.Relays) != len(s.Expected) || len(s.Relays) < 24*10 {
+	if s.Name != "Keir Hill" || len(s.Relays) != len(s.Expected) || len(s.Relays) < 24*17 {
 		t.Fatalf("series %q %d/%d", s.Name, len(s.Relays), len(s.Expected))
 	}
 	if last := s.Relays[len(s.Relays)-1]; last != 0 {
