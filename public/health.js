@@ -141,13 +141,19 @@
       html += '<section class="h-card"><h3>Routes</h3><p class="h-empty">No routes configured. Name two repeaters in <code>netWatch.routes</code> in config.json to follow the traffic between them.</p></section>';
     }
     if (st.corridors.length) {
-      html += '<section class="h-card"><h3>Corridors</h3><div class="h-corridors">' + st.corridors.map(function (c) {
-        var v = judge(c.lastDay, c.usualDay);
-        return '<div class="h-corr"><div><b>' + esc(c.name) + '</b><span class="h-muted"> ' + esc(c.a) + ' and ' + esc(c.b) + '</span></div>' +
-          '<div>' + c.lastDay + ' packets yesterday, usually ' + c.usualDay + ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> ' + v.pct + '</div>' +
-          bars(c.daily, 260, 46) +
-          (c.carriers.length ? '<div class="h-muted">Carried by ' + c.carriers.map(function (k) { return esc(k.name) + ' (' + k.packets + ')'; }).join(', ') + '</div>' : '') +
-          '</div>';
+      html += '<section class="h-card"><h3>Corridors</h3><p class="h-sub">Packets whose path joins the two zones, each way: a packet travels from the zone its path reaches first.</p><div class="h-corridors">' + st.corridors.map(function (c) {
+        var dirs = (c.directions || []).map(function (d) {
+          var v = judge(d.lastDay, d.usualDay, d.observersDown);
+          return '<div class="h-dir"><div><b>' + esc(d.from) + ' → ' + esc(d.to) + '</b></div>' +
+            '<div>' + d.lastDay + ' yesterday, usually ' + d.usualDay + ' <span class="h-chip ' + v.cls + '">' + esc(v.text) + '</span> ' + v.pct + '</div>' +
+            (v.note ? '<div class="h-note">' + esc(v.note) + '</div>' : '') +
+            bars(d.daily, 260, 36) +
+            (d.carriers.length ? '<div class="h-muted">Carried by ' + d.carriers.map(function (k) { return esc(k.name) + ' (' + k.packets + ')'; }).join(', ') + '</div>' : '') +
+            '</div>';
+        }).join('');
+        var total = judge(c.lastDay, c.usualDay);
+        return '<div class="h-corr"><div><b>' + esc(c.name) + '</b><span class="h-muted"> ' + esc(c.a) + ' and ' + esc(c.b) + '</span></div>' + dirs +
+          '<div class="h-muted">Both ways: ' + c.lastDay + ' yesterday, usually ' + c.usualDay + (total.pct ? ' (' + total.pct + ')' : '') + '</div></div>';
       }).join('') + '</div></section>';
     }
     html += '<section class="h-card"><h3>Observers</h3><div class="h-scroll"><table class="h-table"><thead><tr><th>Observer</th><th class="num">Last ' + st.slotHours + ' h</th><th class="num">Usual</th><th></th></tr></thead><tbody>' +
