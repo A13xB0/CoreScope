@@ -190,30 +190,36 @@ type corridorDir struct {
 // by day the repeaters the ones that crossed went through (via).
 type reach struct {
 	den, num ring
-	via      map[int64]map[string]int
+	via      map[int64]map[string]int // the repeaters crossings went through
+	denVia   map[int64]map[string]int // the repeaters every advert went through
 }
 
 func newReach(n int) reach {
-	return reach{den: make(ring, n), num: make(ring, n), via: map[int64]map[string]int{}}
+	return reach{den: make(ring, n), num: make(ring, n), via: map[int64]map[string]int{}, denVia: map[int64]map[string]int{}}
 }
 
-func (r reach) addVia(h int64, origin string, path []string) {
-	day := r.via[h/24]
-	if day == nil {
-		day = map[string]int{}
-		r.via[h/24] = day
-	}
+// countVia counts, once per packet, each repeater on path (but its origin)
+// in m for the day of hour h; key keeps corridors and routes apart.
+func (w *Watch) countVia(m map[int64]map[string]int, h, tx int64, key, origin string, path []string) {
+	day := m[h/24]
 	for _, pk := range path {
-		if pk != "" && pk != origin {
-			day[pk]++
+		if pk == "" || pk == origin || !w.once(h, seenKey{a: key, b: pk, tx: tx}) {
+			continue
 		}
+		if day == nil {
+			day = map[string]int{}
+			m[h/24] = day
+		}
+		day[pk]++
 	}
 }
 
 func (r reach) prune(before int64) {
-	for d := range r.via {
-		if d < before {
-			delete(r.via, d)
+	for _, m := range []map[int64]map[string]int{r.via, r.denVia} {
+		for d := range m {
+			if d < before {
+				delete(m, d)
+			}
 		}
 	}
 }
@@ -423,9 +429,12 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 					if w.once(h, seenKey{a: "\x00reach-den", b: key, tx: tx}) {
 						cd.reach.den.add(w, h, 1)
 					}
-					if w.pathReaches(path, zones[1]) && w.once(h, seenKey{a: "\x00reach-num", b: key, tx: tx}) {
-						cd.reach.num.add(w, h, 1)
-						cd.reach.addVia(h, origin, path)
+					w.countVia(cd.reach.denVia, h, tx, "\x00cvia-den"+key, origin, path)
+					if w.pathReaches(path, zones[1]) {
+						if w.once(h, seenKey{a: "\x00reach-num", b: key, tx: tx}) {
+							cd.reach.num.add(w, h, 1)
+						}
+						w.countVia(cd.reach.via, h, tx, "\x00cvia-num"+key, origin, path)
 					}
 				}
 			}
@@ -446,15 +455,18 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 		if w.once(h, seenKey{a: "\x00rreach-den", b: key, tx: tx}) {
 			r.reach.den.add(w, h, 1)
 		}
+		w.countVia(r.reach.denVia, h, tx, "\x00rvia-den"+key, origin, path)
 		reached := passes(path, r.From, r.To)
 		if origin == r.From {
 			for _, pk := range path {
 				reached = reached || pk == r.To
 			}
 		}
-		if reached && w.once(h, seenKey{a: "\x00rreach-num", b: key, tx: tx}) {
-			r.reach.num.add(w, h, 1)
-			r.reach.addVia(h, origin, path)
+		if reached {
+			if w.once(h, seenKey{a: "\x00rreach-num", b: key, tx: tx}) {
+				r.reach.num.add(w, h, 1)
+			}
+			w.countVia(r.reach.via, h, tx, "\x00rvia-num"+key, origin, path)
 		}
 	}
 }
@@ -909,6 +921,9 @@ type Reach struct {
 	// it: fast (the last 6 and 24 hours both under), slow (24 and 72), ok.
 	Target float64 `json:"target,omitempty"`
 	Burn   string  `json:"burn,omitempty"`
+	// candidates for Cause, most of the drop first; one that has itself gone
+	// quiet is preferred (see preferQuiet).
+	candidates []Cause
 }
 
 // CorridorDirection is one direction of a corridor, against its usual.

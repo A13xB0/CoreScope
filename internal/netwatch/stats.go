@@ -95,12 +95,17 @@ func shareRangeK(usual float64, days []float64, n int, k float64) (lo, hi float6
 	return math.Max(0, usual-k*sd), math.Min(1, usual+k*sd)
 }
 
+// stepWeek is how many usable days before a step it is compared with.
+const stepWeek = 7
+
 // stepChange finds where the daily shares x (oldest first; -1 for days with
 // too little to say) moved to a new level and stayed there: the earliest day
-// from which every usable day falls outside the range of the days before it.
-// A step is held to four spreads, a little stricter than a day's verdict, so
-// a borderline day is not taken as its start. It needs at least three usable
-// days before and two after. ok is false when there is no such step.
+// from which every usable day falls outside the range of the week before it.
+// The week, not the whole window, so a level that held only for a while (a
+// link that came up and went down again) is still a level. A step is held to
+// four spreads, a little stricter than a day's verdict, so a borderline day is
+// not taken as its start. It needs at least three usable days before and two
+// after. ok is false when there is no such step.
 func stepChange(x []float64, ns []int) (at int, before float64, down, ok bool) {
 	var idx []int
 	for i, v := range x {
@@ -110,7 +115,7 @@ func stepChange(x []float64, ns []int) (at int, before float64, down, ok bool) {
 	}
 	for j := 3; j <= len(idx)-2; j++ {
 		var prev []float64
-		for _, i := range idx[:j] {
+		for _, i := range idx[max(0, j-stepWeek):j] {
 			prev = append(prev, x[i])
 		}
 		u := medianF(prev)

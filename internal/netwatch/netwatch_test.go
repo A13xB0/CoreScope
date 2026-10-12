@@ -1009,6 +1009,6 @@ func TestTheQuietRepeaterIsPreferredAsTheCause(t *testing.T) {
 	st := w.Status()
 	c := st.Corridors[0].Directions[0].Reach.Cause
 	if c == nil || c.Node != "keir" {
-		t.Fatalf("cause %+v, want keir (quiet) rather than goyle (which lost more)", c)
+		t.Fatalf("cause %+v, want keir (quiet) rather than goyle (which lost more); open %+v candidates %+v", c, st.Open, st.Corridors[0].Directions[0].Reach.candidates)
 	}
 }
