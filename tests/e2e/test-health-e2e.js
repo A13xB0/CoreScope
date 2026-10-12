@@ -31,7 +31,9 @@ const STATUS = {
   open: [{ node: K('a'), name: 'Keir Hill', lat: 57.17, lon: -2.3, start: '2026-10-06T23:00:00Z', flagged: '2026-10-07T05:00:00Z', usual: 158, now: 6, advertEveryH: 2,
     kind: 'quiet', chance: 2e-9, observers: 13, repeats: 2, affects: ['Highlands ⇄ central belt: Highlands → Central belt'], tier: 'core', windowH: 2 },
     { node: K('h'), name: 'Glen Local', lat: 56.8, lon: -4.2, start: '2026-10-07T01:00:00Z', flagged: '2026-10-07T05:00:00Z', usual: 4, now: 0, advertEveryH: 0,
-      kind: 'unheard', tier: 'local', windowH: 4, heardEveryH: 2, observers: 3, repeats: 1 }],
+      kind: 'unheard', tier: 'local', windowH: 4, heardEveryH: 2, observers: 3, repeats: 1 },
+    { node: K('i'), name: 'Long Gone', start: '2026-09-25T10:00:00Z', flagged: '2026-09-26T10:00:00Z', usual: 3, now: 0, advertEveryH: 12,
+      kind: 'unheard', tier: 'local', windowH: 280, heardEveryH: 14, observers: 2, repeats: 1 }],
   tiers: { core: 38, local: 104 },
   recent: [{ node: K('b'), name: 'Tarbat RPT', lat: 57.83, lon: -3.83, start: '2026-10-04T06:00:00Z', flagged: '2026-10-04T11:00:00Z', end: '2026-10-06T10:00:00Z', usual: 208, now: 2, advertEveryH: 2, kind: 'quiet', chance: 1e-6, observers: 12, repeats: 1 }],
   feed: { down: false },
@@ -141,6 +143,13 @@ async function openPage(browser, { on, feedDown }) {
     const cards = await page.$$eval('#hOpen .h-inc', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')));
     assert(/Core/.test(cards[0]) && /in 2 h/.test(cards[0]), 'core: ' + cards[0]);
     assert(/Glen Local/.test(cards[1]) && /Local/.test(cards[1]) && /Not heard/.test(cards[1]) && /usually heard at least every 2 h/i.test(cards[1]), 'local: ' + cards[1]);
+  });
+
+  await step('repeaters silent for over a week are kept apart, folded away', async () => {
+    assert(!/Long Gone/.test(await page.textContent('#hOpen')), 'not among the current ones');
+    assert(/Silent for over a week \(1\)/.test(await page.textContent('#hLong summary')), await page.textContent('#hLong summary'));
+    assert(!(await page.$eval('#hLong', (d) => d.open)), 'folded');
+    assert(/Long Gone/.test(await page.textContent('#hLong')), 'listed inside');
   });
 
   await step('a corridor that dropped says since when, the range it usually falls in, and its likely cause', async () => {
