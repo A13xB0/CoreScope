@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/meshcore-analyzer/netwatch"
 )
 
 const (
@@ -294,5 +295,13 @@ func TestNetWatchNotifiesNewAndClosedIncidentsButNotTheFirstFill(t *testing.T) {
 	if len(got) != 2 || !strings.Contains(got[0], "Tarbat RPT went quiet") || !strings.Contains(got[0], `"content"`) ||
 		!strings.Contains(got[1], "Keir Hill is back") || !strings.Contains(got[0], "https://scope.example/#/health") {
 		t.Fatalf("sent %q", got)
+	}
+}
+
+func TestNetWatchStepEventsNameAnOfflineObserver(t *testing.T) {
+	svc := &netWatchService{nodes: map[string]nwNode{}, obsNames: map[string]string{nwObs: "AYR-Observer"}}
+	e := svc.event(netwatch.Event{Kind: "step", Where: "Ireland gateway to Ayr", Before: 0.32, After: 0, ObserversDown: []string{nwObs}})
+	if e.Text != "Ireland gateway to Ayr fell from 32% to 0% of adverts getting through, while AYR-Observer is offline" {
+		t.Errorf("text %q", e.Text)
 	}
 }
