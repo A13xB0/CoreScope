@@ -424,3 +424,44 @@ func TestRoutesAndHopsBlameAnOfflineObserver(t *testing.T) {
 		}
 	}
 }
+
+// A corridor is judged in each direction: a packet travels from the zone its
+// path reaches first. A drop one way must not hide behind the other.
+func TestCorridorsAreJudgedInEachDirection(t *testing.T) {
+	pos := grid{"north": {57.5, -4.2}, "south": {55.9, -3.2}, "mid": {56.9, -2.6}}
+	w := New(Options{Corridors: []Corridor{{
+		Name: "Highlands and central belt",
+		A:    Zone{Name: "Highlands", LatMin: 57.3, LatMax: 59, LonMin: -6, LonMax: -3},
+		B:    Zone{Name: "Central belt", LatMin: 55.5, LatMax: 56.4, LonMin: -5, LonMax: -2},
+	}}}, pos)
+	var id int64
+	for h := int64(0); h < 9*day; h++ {
+		south := 40 // central belt to Highlands halves on the last day
+		if h >= 8*day {
+			south = 20
+		}
+		for i := 0; i < south; i++ {
+			id++
+			w.AddObservation(id, 1008+h, "o", []string{"south", "mid", "north"})
+		}
+		for i := 0; i < 10; i++ { // the other way carries on as usual
+			id++
+			w.AddObservation(id, 1008+h, "o", []string{"north", "mid", "south"})
+		}
+		w.Evaluate(1008 + h)
+	}
+	c := w.Status().Corridors[0]
+	if len(c.Directions) != 2 {
+		t.Fatalf("directions %+v", c.Directions)
+	}
+	ab, ba := c.Directions[0], c.Directions[1]
+	if ab.From != "Highlands" || ab.To != "Central belt" || ab.LastDay != 10*24 || ab.UsualDay != 10*24 {
+		t.Errorf("Highlands → central belt %+v, want unchanged at %d a day", ab, 240)
+	}
+	if ba.From != "Central belt" || ba.To != "Highlands" || ba.LastDay != 20*24 || ba.UsualDay != 40*24 {
+		t.Errorf("central belt → Highlands %+v, want %d against %d", ba, 480, 960)
+	}
+	if len(ba.Carriers) == 0 || ba.Carriers[0].Node != "mid" {
+		t.Errorf("carriers one way %+v", ba.Carriers)
+	}
+}
