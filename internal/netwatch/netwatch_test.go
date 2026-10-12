@@ -324,3 +324,71 @@ func TestPolygonZonesFollowABorder(t *testing.T) {
 		}
 	}
 }
+
+// With a 14-day baseline, an outage of five days is still an outage: the
+// median of the same hours has not caught up with it.
+func TestALongOutageKeepsItsUsual(t *testing.T) {
+	w := New(Options{Days: 14, WindowHours: 22 * day}, nil)
+	var id int64
+	for h := int64(0); h < 20*day; h++ {
+		for i := 0; i < 30; i++ {
+			id++
+			path := []string{"a", "b", "c"}
+			if h >= 15*day {
+				path = []string{"a", "b"} // b stopped reaching c five days ago
+			}
+			w.AddObservation(id, 2016+h, "o", path)
+		}
+		w.Evaluate(2016 + h)
+	}
+	p := w.Probe("a", "c", 2016+20*day-1)
+	if len(p.Hops) != 2 || !p.Hops[1].Quiet {
+		t.Fatalf("after five days the broken hop should still be quiet: %+v", p.Hops)
+	}
+}
+
+// A repeater far from every observer may have its adverts heard only now and
+// then; once it relays its usual traffic again it is back.
+func TestAnIncidentClosesWhenRelaysReturnEvenIfNoAdvertIsHeard(t *testing.T) {
+	f := newFeed(t)
+	stop, back := int64(9*day), int64(10*day)
+	for h := int64(0); h < 12*day; h++ {
+		rate, adv := 40, []string(nil)
+		if h >= stop && h < back {
+			rate = 0
+		} else if h < stop && h%2 == 0 {
+			adv = []string{"r1"} // no advert is heard after the outage
+		}
+		f.hour(h, "obs1", map[string]int{"r1": rate}, adv, 60)
+		f.w.Evaluate(f.start + h)
+	}
+	st := f.w.Status()
+	if len(st.Open) != 0 || len(st.Recent) != 1 {
+		t.Fatalf("open %+v recent %+v, want it back", st.Open, st.Recent)
+	}
+}
+
+// Only repeaters inside the judged area are judged; others are still counted
+// (for routes, links and corridors) but never flagged.
+func TestOnlyRepeatersInsideTheAreaAreJudged(t *testing.T) {
+	pos := grid{"inside": {56.0, -3.2}, "outside": {52.5, -3.5}}
+	f := &feed{w: New(Options{Area: &Zone{Name: "Scotland", LatMin: 54.6, LatMax: 61, LonMin: -8, LonMax: -0.7}}, pos), start: 500000}
+	for h := int64(0); h < 12*day; h++ {
+		rate := 40
+		var adv []string
+		if h >= 10*day {
+			rate = 0
+		} else if h%2 == 0 {
+			adv = []string{"inside", "outside"}
+		}
+		f.hour(h, "obs1", map[string]int{"inside": rate, "outside": rate}, adv, 60)
+		f.w.Evaluate(f.start + h)
+	}
+	st := f.w.Status()
+	if len(st.Open) != 1 || st.Open[0].Node != "inside" {
+		t.Fatalf("open %+v, want only the repeater inside the area", st.Open)
+	}
+	if st.Judged != 1 {
+		t.Errorf("judged %d, want 1", st.Judged)
+	}
+}
