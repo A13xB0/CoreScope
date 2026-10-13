@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"encoding/hex"
+	"math/rand"
+	"strings"
+	"testing"
+)
 
 // relayCandidates runs once per hop of every observation the cold loader
 // resolves. With any listener-only observer known it built a filtered copy
@@ -41,5 +46,70 @@ func TestRelayCandidatesAfterSecondMark(t *testing.T) {
 	pm.markNonRelay([]string{"a4bb000000000000000000000000000000000000000000000000000000000002"})
 	if got := pm.relayCandidates("a4"); len(got) != 0 {
 		t.Fatalf("relayCandidates(a4) = %v, want none after both are marked", got)
+	}
+}
+
+// markNonRelayFixture is 5,000 repeaters with random keys, three of which
+// are marked as listeners, the size of a busy regional network.
+func markNonRelayFixture() (*prefixMap, []string) {
+	rng := rand.New(rand.NewSource(1290))
+	nodes := make([]nodeInfo, 5000)
+	for i := range nodes {
+		b := make([]byte, 32)
+		rng.Read(b)
+		nodes[i] = nodeInfo{PublicKey: hex.EncodeToString(b), Role: "repeater"}
+	}
+	return buildPrefixMap(nodes), []string{nodes[7].PublicKey, nodes[1234].PublicKey, strings.ToUpper(nodes[4321].PublicKey)}
+}
+
+// markNonRelay runs on every node cache rebuild, as often as every 30 s. It
+// used to copy every prefix's list to find the few that hold a listener;
+// those can only be the listeners' own prefixes, so only they are visited.
+func TestMarkNonRelayVisitsOnlyListenerPrefixes(t *testing.T) {
+	_, listeners := markNonRelayFixture()
+	n := testing.AllocsPerRun(5, func() {
+		pm, _ := markNonRelayFixture()
+		pm.markNonRelay(listeners)
+	}) - testing.AllocsPerRun(5, func() { markNonRelayFixture() })
+	// Three listeners have at most 8 prefixes each, plus the maps themselves.
+	if n > 80 {
+		t.Errorf("markNonRelay allocates %.0f times for 3 listeners among 5,000 repeaters, want at most 80", n)
+	}
+}
+
+// Every prefix gives what filtering its list on the spot would.
+func TestMarkNonRelayMatchesFilteringEachList(t *testing.T) {
+	pm, listeners := markNonRelayFixture()
+	pm.markNonRelay(listeners)
+	isListener := map[string]bool{}
+	for _, pk := range listeners {
+		isListener[strings.ToLower(pk)] = true
+	}
+	for key, candidates := range pm.m {
+		var want []nodeInfo
+		for _, c := range candidates {
+			if !isListener[strings.ToLower(c.PublicKey)] {
+				want = append(want, c)
+			}
+		}
+		got := pm.relayCandidates(key)
+		if len(got) != len(want) {
+			t.Fatalf("relayCandidates(%q) has %d candidates, want %d", key, len(got), len(want))
+		}
+		for i := range want {
+			if got[i].PublicKey != want[i].PublicKey {
+				t.Fatalf("relayCandidates(%q)[%d] = %s, want %s", key, i, got[i].PublicKey, want[i].PublicKey)
+			}
+		}
+	}
+}
+
+func BenchmarkMarkNonRelay5000(b *testing.B) {
+	pm, listeners := markNonRelayFixture()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		pm.nonRelay, pm.relay = nil, nil // as on a fresh rebuild
+		pm.markNonRelay(listeners)
 	}
 }
