@@ -113,3 +113,24 @@ func BenchmarkMarkNonRelay5000(b *testing.B) {
 		pm.markNonRelay(listeners)
 	}
 }
+
+// relayCandidates is the other side of markNonRelay's work: one lookup per
+// 2-character prefix, the hop width most paths use, so 256 lookups per op.
+func BenchmarkRelayCandidates256(b *testing.B) {
+	pm, listeners := markNonRelayFixture()
+	pm.markNonRelay(listeners)
+	const digits = "0123456789abcdef"
+	hops := make([]string, 0, 256)
+	for _, x := range digits {
+		for _, y := range digits {
+			hops = append(hops, string(x)+string(y))
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, h := range hops {
+			_ = pm.relayCandidates(h)
+		}
+	}
+}
