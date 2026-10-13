@@ -127,7 +127,6 @@ node tests/unit/test-issue-1753-copy-url-slash.js
 node tests/unit/test-issue-1770-mobile-row-clamp.js
 node tests/unit/test-issue-1789-observer-firmware-cols.js
 node tests/unit/test-issue-1825-observer-node-cross-links.js
-node tests/unit/test-issue-1833-legend-toggle-vcr-offset.js
 node tests/unit/test-issue-1836-crossnav-case-normalization.js
 node tests/unit/test-issue-1843-node-qr-quiet-zone.js
 node tests/unit/test-issue-1846-observers-width.js
@@ -150,6 +149,7 @@ node tests/unit/test-issue-2098-last-hop-region.js
 node tests/unit/test-live-anims.js
 node tests/unit/test-live-dt-cap-1524.js
 node tests/unit/test-live-legend-helper.js
+node tests/unit/test-live-panel-fold.js
 node tests/unit/test-live-multibyte-filter.js
 node tests/unit/test-live-region-filter.js
 node tests/unit/test-live.js
