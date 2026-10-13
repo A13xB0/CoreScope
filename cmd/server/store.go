@@ -7175,17 +7175,30 @@ func (pm *prefixMap) markNonRelay(pubkeys []string) {
 	for _, pk := range pubkeys {
 		pm.nonRelay[strings.ToLower(pk)] = struct{}{}
 	}
+	// A listener can only be in the lists of its own prefixes (and its full
+	// key), so those are the only lists to filter: at most maxPrefixLen+1
+	// per listener, rather than every list in pm.m. markNonRelay runs on
+	// every node cache rebuild.
 	pm.relay = make(map[string][]nodeInfo)
-	for key, candidates := range pm.m {
-		filtered, changed := candidates[:0:0], false
-		for i := range candidates {
-			if _, isListener := pm.nonRelay[strings.ToLower(candidates[i].PublicKey)]; isListener {
-				changed = true
+	for pk := range pm.nonRelay {
+		for l := 2; l <= len(pk); l++ {
+			if l > maxPrefixLen && l < len(pk) {
+				l = len(pk) // past the prefixes, only the full key is a list
+			}
+			key := pk[:l]
+			if _, done := pm.relay[key]; done {
 				continue
 			}
-			filtered = append(filtered, candidates[i])
-		}
-		if changed {
+			candidates, ok := pm.m[key]
+			if !ok {
+				continue
+			}
+			filtered := candidates[:0:0]
+			for i := range candidates {
+				if _, isListener := pm.nonRelay[strings.ToLower(candidates[i].PublicKey)]; !isListener {
+					filtered = append(filtered, candidates[i])
+				}
+			}
 			pm.relay[key] = filtered
 		}
 	}
