@@ -4918,6 +4918,21 @@ body[data-cb-preset="achromat"] {
 .mc-cluster .mc-pill.role-observer  { color: var(--mc-role-observer-text,  #1a1a1a); }
 
 /* V3 — multi-byte hash labels: neutral fill + colored 3px left border */
+/* Hash labels beside repeater markers on the unclustered map (placeHashLabels):
+   plain text with a halo in the page background, so it reads on any tile. */
+.mc-hash-label-icon { background: transparent; border: 0; pointer-events: none; }
+/* Stale nodes on the unclustered map, dimmed like the live page's. */
+.map-node-stale { opacity: 0.35; }
+.mc-hash-label {
+  display: block; height: 100%; box-sizing: border-box; padding: 0 4px;
+  font: 600 11px/15px ui-monospace, "SF Mono", Consolas, monospace;
+  color: var(--text); white-space: nowrap;
+  text-shadow: 0 0 2px var(--content-bg), 0 0 2px var(--content-bg), 0 0 3px var(--content-bg), 0 0 4px var(--content-bg);
+}
+.mc-hash-label.is-stale { opacity: 0.6; }
+.mc-hash-label.hash-unconfirmed { font-style: italic; }
+.mc-hash-tip-hash { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+
 .mc-mb-label {
   background: var(--mc-mb-fill);
   color: var(--mc-mb-text);
