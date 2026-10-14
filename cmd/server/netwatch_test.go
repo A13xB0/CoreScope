@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/meshcore-analyzer/netwatch"
 )
 
 const (
@@ -42,16 +39,12 @@ func seedNetWatch(t *testing.T, db *DB, now time.Time) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	insT, _ := tx.Prepare(`INSERT INTO transmissions (raw_hex, hash, first_seen, payload_type, from_pubkey, decoded_json) VALUES ('00', ?, ?, ?, ?, ?)`)
-	insO, _ := tx.Prepare(`INSERT INTO observations (transmission_id, observer_idx, timestamp, resolved_path, snr) VALUES (?, 1, ?, ?, 4.5)`)
+	insT, _ := tx.Prepare(`INSERT INTO transmissions (raw_hex, hash, first_seen, payload_type, from_pubkey) VALUES ('00', ?, ?, ?, ?)`)
+	insO, _ := tx.Prepare(`INSERT INTO observations (transmission_id, observer_idx, timestamp, resolved_path) VALUES (?, 1, ?, ?)`)
 	n := 0
 	add := func(at time.Time, typ int, from string, path []string) {
 		n++
-		dj := ""
-		if typ == 4 {
-			dj = fmt.Sprintf(`{"type":"ADVERT","timestamp":%d}`, at.Unix())
-		}
-		res, err := insT.Exec(fmt.Sprintf("%016x", n), at.UTC().Format("2006-01-02T15:04:05Z"), typ, from, dj)
+		res, err := insT.Exec(fmt.Sprintf("%016x", n), at.UTC().Format("2006-01-02T15:04:05Z"), typ, from)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,7 +106,6 @@ func netWatchRouter(t *testing.T, enabled bool) (*mux.Router, time.Time) {
 	r.HandleFunc("/api/netwatch", srv.handleNetWatch).Methods("GET")
 	r.HandleFunc("/api/netwatch/node/{pubkey}", srv.handleNetWatchNode).Methods("GET")
 	r.HandleFunc("/api/netwatch/probe", srv.handleNetWatchProbe).Methods("GET")
-	r.HandleFunc("/api/netwatch/feed.atom", srv.handleNetWatchFeed).Methods("GET")
 	return r, now
 }
 
@@ -145,15 +137,6 @@ func TestNetWatchFlagsARepeaterThatWentQuiet(t *testing.T) {
 	if inc.Usual < 100 || inc.Now > inc.Usual/5 || inc.AdvertEveryH != 2 {
 		t.Errorf("incident %+v", inc)
 	}
-	if inc.Kind != "quiet" || inc.Chance <= 0 || inc.Chance > 1e-4 || inc.Observers != 1 || inc.Repeats != 1 {
-		t.Errorf("incident evidence %+v", inc)
-	}
-	if st.Feed.Down || st.Nightly == nil || st.Drift == nil {
-		t.Errorf("feed %+v nightly %v drift %v", st.Feed, st.Nightly, st.Drift)
-	}
-	if len(st.Events) == 0 || st.Events[0].Kind != "quiet" || st.Events[0].Name != "Keir Hill" || st.Events[0].Text != "Keir Hill went quiet" {
-		t.Errorf("timeline %+v, want Keir Hill going quiet first", st.Events)
-	}
 	if inc.Lat == nil || *inc.Lat != 57.17 {
 		t.Errorf("incident has no position: %+v", inc)
 	}
@@ -171,8 +154,6 @@ func TestNetWatchFlagsARepeaterThatWentQuiet(t *testing.T) {
 	}
 	if r := st.Corridors[0].Directions[0].Reach; r == nil || r.Usual != 1 || r.Last != 0 || r.LastAdverts != 24 {
 		t.Errorf("Highlands adverts reaching the central belt %+v, want none of 24 yesterday against all of them usually", r)
-	} else if r.Verdict != "worse" || r.Since == nil || r.Cause == nil || r.Cause.Name != "Keir Hill" {
-		t.Errorf("reach verdict %q since %v cause %+v, want worse since the drop, Keir Hill the cause", r.Verdict, r.Since, r.Cause)
 	}
 	if len(st.Routes) != 2 || st.Routes[0].FromName != "Inverness" || st.Routes[0].ToName != "Edinburgh" {
 		t.Fatalf("routes %+v", st.Routes)
@@ -190,9 +171,6 @@ func TestNetWatchNodeSeries(t *testing.T) {
 	var s NetWatchNodeResponse
 	if code := getNW(t, r, "/api/netwatch/node/"+nwKeir, &s); code != 200 {
 		t.Fatalf("status %d", code)
-	}
-	if s.AdvertEveryMin != 120 || len(s.AdvertDelivery) == 0 || s.Why.Observers != 1 || s.Why.Usual < 100 {
-		t.Errorf("advert every %d min, delivery %v, why %+v", s.AdvertEveryMin, s.AdvertDelivery, s.Why)
 	}
 	if s.Name != "Keir Hill" || len(s.Relays) != len(s.Expected) || len(s.Relays) < 24*17 {
 		t.Fatalf("series %q %d/%d", s.Name, len(s.Relays), len(s.Expected))
@@ -227,115 +205,5 @@ func TestNetWatchIsOffUnlessEnabled(t *testing.T) {
 		if code := getNW(t, r, p, nil); code != 404 {
 			t.Errorf("%s = %d, want 404 when off", p, code)
 		}
-	}
-}
-
-func TestNetWatchAtomFeedListsWhatHappened(t *testing.T) {
-	r, _ := netWatchRouter(t, true)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/netwatch/feed.atom", nil))
-	if w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/atom+xml") {
-		t.Fatalf("status %d type %q", w.Code, w.Header().Get("Content-Type"))
-	}
-	if b := w.Body.String(); !strings.Contains(b, "<feed") || !strings.Contains(b, "<title>Keir Hill went quiet</title>") {
-		t.Errorf("feed %s", b)
-	}
-}
-
-// A 1-byte hop that another repeater nearby shares cannot be told apart, so
-// it is not credited to the one it was resolved to.
-func TestNetWatchIgnoresHopsItCannotTellApart(t *testing.T) {
-	db := setupTestDB(t)
-	now := time.Now().UTC().Truncate(time.Hour).Add(-time.Minute)
-	twin := "aa11000000000000000000000000000000000000000000000000000000000099"
-	mustExecDB(t, db, `INSERT INTO nodes (public_key, name, role, lat, lon, last_seen) VALUES ('`+nwKeir+`', 'Keir Hill', 'repeater', 57.17, -2.30, '`+now.Format(time.RFC3339)+`')`)
-	mustExecDB(t, db, `INSERT INTO nodes (public_key, name, role, lat, lon, last_seen) VALUES ('`+twin+`', 'Keir Twin', 'repeater', 57.30, -2.40, '`+now.Format(time.RFC3339)+`')`)
-	mustExecDB(t, db, `INSERT INTO nodes (public_key, name, role, lat, lon, last_seen) VALUES ('`+nwSouth+`', 'Edinburgh', 'repeater', 55.95, -3.19, '`+now.Format(time.RFC3339)+`')`)
-	mustExecDB(t, db, `INSERT INTO observers (id, name, iata) VALUES ('`+nwObs+`', 'Edinburgh Obs', 'EDI')`)
-	at := now.Add(-2 * time.Hour)
-	for i, hops := range []string{`["AA","DD00"]`, `["AA00","DD00"]`} {
-		mustExecDB(t, db, fmt.Sprintf(`INSERT INTO transmissions (raw_hex, hash, first_seen, payload_type) VALUES ('00', 'h%d', '%s', 5)`, i, at.Format("2006-01-02T15:04:05Z")))
-		mustExecDB(t, db, fmt.Sprintf(`INSERT INTO observations (transmission_id, observer_idx, timestamp, resolved_path, path_json) VALUES (%d, 1, %d, '["%s","%s"]', '%s')`, i+1, at.Unix(), nwKeir, nwSouth, hops))
-	}
-	svc := newNetWatchService(db, &Config{NetWatch: &NetWatchConfig{Enabled: true}})
-	svc.now = func() time.Time { return now }
-	if err := svc.catchUp(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	ser := svc.watch.NodeSeries(nwKeir, now.Unix()/3600)
-	total := 0
-	for _, v := range ser.Relays {
-		total += v
-	}
-	if total != 1 {
-		t.Errorf("Keir Hill credited with %d relays, want 1 (the 2-byte hop; the 1-byte one could be its twin)", total)
-	}
-}
-
-func TestNetWatchNotifiesNewAndClosedIncidentsButNotTheFirstFill(t *testing.T) {
-	var got []string
-	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		got = append(got, string(b))
-	}))
-	defer hook.Close()
-	n := &netWatchNotifier{cfg: NetWatchNotify{Webhook: hook.URL, Format: "discord", BaseURL: "https://scope.example"}, client: hook.Client()}
-	keir := NetWatchIncident{Node: nwKeir, Name: "Keir Hill", Kind: "quiet", Start: "2026-10-07T00:00:00Z", Flagged: "2026-10-07T05:00:00Z", Usual: 153, Now: 6, Chance: 1e-8, Affects: []string{"H and C: Highlands → Central belt"}}
-	n.update(context.Background(), NetWatchResponse{Ready: true, Open: []NetWatchIncident{keir}})
-	if len(got) != 0 {
-		t.Fatalf("sent %v on the first fill", got)
-	}
-	tarbat := keir
-	tarbat.Node, tarbat.Name, tarbat.Affects = nwNorth, "Tarbat RPT", nil
-	n.update(context.Background(), NetWatchResponse{Ready: true, Open: []NetWatchIncident{keir, tarbat}})
-	end := "2026-10-08T10:00:00Z"
-	closed := keir
-	closed.End = &end
-	n.update(context.Background(), NetWatchResponse{Ready: true, Open: []NetWatchIncident{tarbat}, Recent: []NetWatchIncident{closed}})
-	if len(got) != 2 || !strings.Contains(got[0], "Tarbat RPT went quiet") || !strings.Contains(got[0], `"content"`) ||
-		!strings.Contains(got[1], "Keir Hill is back") || !strings.Contains(got[0], "https://scope.example/#/health") {
-		t.Fatalf("sent %q", got)
-	}
-}
-
-func TestNetWatchStepEventsNameAnOfflineObserver(t *testing.T) {
-	svc := &netWatchService{nodes: map[string]nwNode{}, obsNames: map[string]string{nwObs: "AYR-Observer"}}
-	e := svc.event(netwatch.Event{Kind: "step", Where: "Ireland gateway to Ayr", Before: 0.32, After: 0, ObserversDown: []string{nwObs}})
-	if e.Text != "Ireland gateway to Ayr fell from 32% to 0% of adverts getting through, while AYR-Observer is offline" {
-		t.Errorf("text %q", e.Text)
-	}
-}
-
-// With tiers on, Keir Hill (about 20 relays an hour) is core: it is flagged
-// as slowed within the core window, and the counts say how many are in each
-// tier.
-func TestNetWatchTiers(t *testing.T) {
-	db := setupTestDB(t)
-	now := time.Now().UTC().Truncate(time.Hour).Add(-time.Minute)
-	seedNetWatch(t, db, now)
-	cfg := &Config{NetWatch: &NetWatchConfig{Enabled: true, Tiers: &NetWatchTiers{CoreEveryMinutes: 10, CoreHours: 2, LocalSilenceHours: 3}}}
-	svc := newNetWatchService(db, cfg)
-	svc.now = func() time.Time { return now }
-	if err := svc.catchUp(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	st := svc.response()
-	if st.Tiers == nil || st.Tiers.Core < 2 {
-		t.Fatalf("tiers %+v, want the busy repeaters counted as core", st.Tiers)
-	}
-	var keir *NetWatchIncident
-	for i := range st.Open {
-		if st.Open[i].Node == nwKeir {
-			keir = &st.Open[i]
-		}
-	}
-	if keir == nil || keir.Tier != "core" || keir.WindowH == 0 {
-		t.Fatalf("open %+v, want Keir Hill as a core incident", st.Open)
-	}
-	if e := svc.event(netwatch.Event{Kind: "slowed", Node: nwKeir}); e.Text != "Keir Hill slowed right down" {
-		t.Errorf("slowed text %q", e.Text)
-	}
-	if e := svc.event(netwatch.Event{Kind: "unheard", Node: nwKeir}); e.Text != "Keir Hill has not been heard for longer than usual" {
-		t.Errorf("unheard text %q", e.Text)
 	}
 }

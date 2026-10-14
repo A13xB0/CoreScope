@@ -23,7 +23,6 @@ type Options struct {
 	WindowHours   int     // hours of history kept [360]
 	Slot          int     // hours compared at a time [6]
 	Days          int     // days of history a slot is compared with [7]
-	MinDays       int     // judging starts once this many of them are in the window [7, or Days if fewer]
 	MinUsual      int     // a slot must usually hold this many relays to be judged [20]
 	QuietRatio    float64 // flagged below this share of usual [0.2]
 	BackRatio     float64 // back at or above this share of usual [0.5]
@@ -36,9 +35,6 @@ type Options struct {
 	// Area, when set, limits judging to repeaters placed inside it (by the
 	// Locator); repeaters outside it are still counted but never flagged.
 	Area *Zone
-	// Tiers, when set, also judges core repeaters over a few hours and
-	// local ones on how long they have gone unheard.
-	Tiers *Tiers
 }
 
 // Route is a named pair of repeaters whose traffic the watch follows: packets
@@ -47,7 +43,6 @@ type Route struct {
 	Name     string
 	From, To string
 	Basis    Basis
-	Target   float64 // optional share of adverts that should get through, 0..1
 }
 
 // Basis is the steady traffic a corridor or route's reach is judged on.
@@ -83,10 +78,6 @@ func (o Options) withDefaults() Options {
 	def(&o.WindowHours, 360)
 	def(&o.Slot, 6)
 	def(&o.Days, 7)
-	def(&o.MinDays, 7)
-	if o.MinDays > o.Days {
-		o.MinDays = o.Days
-	}
 	def(&o.MinUsual, 20)
 	deff(&o.QuietRatio, 0.2)
 	deff(&o.BackRatio, 0.5)
@@ -121,10 +112,9 @@ func (z Zone) contains(lat, lon float64) bool {
 
 // Corridor counts packets whose path joins a repeater in A and one in B.
 type Corridor struct {
-	Name   string
-	A, B   Zone
-	Basis  Basis
-	Target float64 // optional share each way that should get through, 0..1
+	Name  string
+	A, B  Zone
+	Basis Basis
 }
 
 // Locator places a repeater by its key; nil places nothing (no corridors).
@@ -169,8 +159,6 @@ type node struct {
 	adverts ring
 	byObs   map[string]ring
 	open    *Incident
-	gray    int     // consecutive hours it has looked like it stopped relaying
-	sent    []int64 // the send times its adverts carry, sorted, unix seconds
 }
 
 type corridorState struct {
@@ -189,43 +177,10 @@ type corridorDir struct {
 	reach    reach
 }
 
-// reach counts adverts that could cross (den) and those that did (num), and
-// by day the repeaters the ones that crossed went through (via).
-type reach struct {
-	den, num ring
-	via      map[int64]map[string]int // the repeaters crossings went through
-	denVia   map[int64]map[string]int // the repeaters every advert went through
-}
+// reach counts adverts that could cross (den) and those that did (num).
+type reach struct{ den, num ring }
 
-func newReach(n int) reach {
-	return reach{den: make(ring, n), num: make(ring, n), via: map[int64]map[string]int{}, denVia: map[int64]map[string]int{}}
-}
-
-// countVia counts, once per packet, each repeater on path (but its origin)
-// in m for the day of hour h; key keeps corridors and routes apart.
-func (w *Watch) countVia(m map[int64]map[string]int, h, tx int64, key, origin string, path []string) {
-	day := m[h/24]
-	for _, pk := range path {
-		if pk == "" || pk == origin || !w.once(h, seenKey{a: key, b: pk, tx: tx}) {
-			continue
-		}
-		if day == nil {
-			day = map[string]int{}
-			m[h/24] = day
-		}
-		day[pk]++
-	}
-}
-
-func (r reach) prune(before int64) {
-	for _, m := range []map[int64]map[string]int{r.via, r.denVia} {
-		for d := range m {
-			if d < before {
-				delete(m, d)
-			}
-		}
-	}
-}
+func newReach(n int) reach { return reach{den: make(ring, n), num: make(ring, n)} }
 
 type routeState struct {
 	Route
@@ -254,16 +209,13 @@ type Watch struct {
 	seen      map[int64]map[seenKey]struct{} // hour -> keys already counted
 	closed    []Incident
 	evaluated int64
-	feed      FeedStatus
-	signal    map[[2]string]*snrDays // [repeater, observer]
 }
 
 // New starts an empty watch.
 func New(opt Options, loc Locator) *Watch {
 	opt = opt.withDefaults()
 	w := &Watch{opt: opt, loc: loc, nodes: map[string]*node{}, observers: map[string]ring{},
-		links: map[[2]string]ring{}, total: make(ring, opt.WindowHours), seen: map[int64]map[seenKey]struct{}{},
-		signal: map[[2]string]*snrDays{}}
+		links: map[[2]string]ring{}, total: make(ring, opt.WindowHours), seen: map[int64]map[seenKey]struct{}{}}
 	for _, c := range opt.Corridors {
 		cs := &corridorState{Corridor: c, count: make(ring, opt.WindowHours), carriers: map[int64]map[string]int{}}
 		for i := range cs.dir {
@@ -310,7 +262,6 @@ func (w *Watch) advance(h int64) {
 		clear(r.count)
 		clear(r.reach.den)
 		clear(r.reach.num)
-		r.reach.prune((h - n) / 24)
 		for _, o := range r.byObs {
 			clear(o)
 		}
@@ -326,7 +277,6 @@ func (w *Watch) advance(h int64) {
 			clear(cd.count)
 			clear(cd.reach.den)
 			clear(cd.reach.num)
-			cd.reach.prune((h - n) / 24)
 			for _, r := range cd.byObs {
 				clear(r)
 			}
@@ -338,11 +288,8 @@ func (w *Watch) advance(h int64) {
 		}
 	}
 	w.newest = h
-	// A packet heard again more than a day after it was first seen is rare
-	// (0.15% of observations, the same at six hours as at a day); keeping a
-	// day of keys rather than three halves the watch's memory.
 	for hh := range w.seen {
-		if hh < h-24 {
+		if hh < h-72 {
 			delete(w.seen, hh)
 		}
 	}
@@ -435,19 +382,8 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 					if w.once(h, seenKey{a: "\x00reach-den", b: key, tx: tx}) {
 						cd.reach.den.add(w, h, 1)
 					}
-					// Only the path up to where it first enters the far zone
-					// says anything about the crossing; it floods on past it.
-					at := w.pathEnters(path, zones[1])
-					seg := path
-					if at >= 0 {
-						seg = path[:at+1]
-					}
-					w.countVia(cd.reach.denVia, h, tx, "\x00cvia-den"+key, origin, seg)
-					if at >= 0 {
-						if w.once(h, seenKey{a: "\x00reach-num", b: key, tx: tx}) {
-							cd.reach.num.add(w, h, 1)
-						}
-						w.countVia(cd.reach.via, h, tx, "\x00cvia-num"+key, origin, seg)
+					if w.pathReaches(path, zones[1]) && w.once(h, seenKey{a: "\x00reach-num", b: key, tx: tx}) {
+						cd.reach.num.add(w, h, 1)
 					}
 				}
 			}
@@ -468,51 +404,28 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 		if w.once(h, seenKey{a: "\x00rreach-den", b: key, tx: tx}) {
 			r.reach.den.add(w, h, 1)
 		}
-		// The stretch from From to To is what the route is about.
-		seg, reached := routeStretch(path, origin, r.From, r.To)
-		w.countVia(r.reach.denVia, h, tx, "\x00rvia-den"+key, origin, seg)
-		if reached {
-			if w.once(h, seenKey{a: "\x00rreach-num", b: key, tx: tx}) {
-				r.reach.num.add(w, h, 1)
+		reached := passes(path, r.From, r.To)
+		if origin == r.From {
+			for _, pk := range path {
+				reached = reached || pk == r.To
 			}
-			w.countVia(r.reach.via, h, tx, "\x00rvia-num"+key, origin, seg)
+		}
+		if reached && w.once(h, seenKey{a: "\x00rreach-num", b: key, tx: tx}) {
+			r.reach.num.add(w, h, 1)
 		}
 	}
 }
 
-func (w *Watch) pathReaches(path []string, z Zone) bool { return w.pathEnters(path, z) >= 0 }
-
-// pathEnters is the index of the first repeater on path inside z, or -1.
-func (w *Watch) pathEnters(path []string, z Zone) int {
-	for i, pk := range path {
+func (w *Watch) pathReaches(path []string, z Zone) bool {
+	for _, pk := range path {
 		if pk == "" {
 			continue
 		}
 		if lat, lon, ok := w.loc.Position(pk); ok && z.contains(lat, lon) {
-			return i
+			return true
 		}
 	}
-	return -1
-}
-
-// routeStretch is the part of path from from (or its start, when the packet
-// came from from) up to to, and whether it got there.
-func routeStretch(path []string, origin, from, to string) ([]string, bool) {
-	start := -1
-	if origin == from {
-		start = 0
-	}
-	for i, pk := range path {
-		if start < 0 && pk == from {
-			start = i
-		} else if start >= 0 && pk == to {
-			return path[start : i+1], true
-		}
-	}
-	if start < 0 {
-		return nil, false
-	}
-	return path[start:], false
+	return false
 }
 
 func (w *Watch) addObservation(tx, h int64, obs string, path []string) {
@@ -676,29 +589,12 @@ func (w *Watch) AddAdvert(tx, h int64, pk string) {
 // Incident is a repeater that went quiet. End is nil while it lasts.
 type Incident struct {
 	Node         string `json:"node"`
-	Kind         string `json:"kind"`    // KindQuiet or KindNotRelaying
-	Start        int64  `json:"start"`   // the hour after its last advert (or last relay)
+	Start        int64  `json:"start"`   // the hour after its last advert
 	Flagged      int64  `json:"flagged"` // the hour the watch raised it
 	End          *int64 `json:"end,omitempty"`
 	Usual        int    `json:"usual"`        // relays usually in the slot
 	Now          int    `json:"now"`          // relays in the slot when flagged
 	AdvertEveryH int    `json:"advertEveryH"` // its usual advert gap, hours (90th percentile)
-	// Tier is core or local when tiers are on; WindowH the hours Usual and
-	// Now cover (Slot when 0); HeardEveryH a local repeater's usual longest
-	// silence.
-	Tier        string `json:"tier,omitempty"`
-	WindowH     int    `json:"windowH,omitempty"`
-	HeardEveryH int    `json:"heardEveryH,omitempty"`
-	// Chance is how likely the quiet slot was by chance, judged through
-	// Observers observers that were up both now and in the usual.
-	Chance    float64 `json:"chance"`
-	Observers int     `json:"observers"`
-	Repeats   int     `json:"repeats"` // the how-many-th time in the window it went quiet
-	// Affects names the corridor directions and routes it explains (it is
-	// their likely cause, or the carrier they were rerouted from).
-	Affects []string `json:"affects,omitempty"`
-	// matchedUsual is the like-for-like usual at flag time, for closing.
-	matchedUsual int
 }
 
 func median(a []int) int {
@@ -716,38 +612,20 @@ func median(a []int) int {
 
 // slot is the count over the Slot hours ending at t, and the median of the
 // same hours on each of the previous Days days.
-func (w *Watch) slot(r ring, t int64) (now, usual int) { return w.slotN(r, t, w.opt.Slot) }
-
-// slotN is slot over hours hours rather than Slot.
-func (w *Watch) slotN(r ring, t int64, hours int) (now, usual int) {
-	s := int64(hours)
+func (w *Watch) slot(r ring, t int64) (now, usual int) {
+	s := int64(w.opt.Slot)
 	now = r.sum(w, t-s+1, t)
 	prev := make([]int, 0, w.opt.Days)
-	for d := int64(1); d <= int64(w.baseDays(t)); d++ {
+	for d := int64(1); d <= int64(w.opt.Days); d++ {
 		e := t - 24*d
 		prev = append(prev, r.sum(w, e-s+1, e))
 	}
 	return now, median(prev)
 }
 
-// baseDays is how many of the Days before t have their slot inside the
-// window, so a watch that has just started compares with what it has.
-func (w *Watch) baseDays(t int64) int {
-	n := 0
-	for d := 1; d <= w.opt.Days; d++ {
-		if t-24*int64(d)-int64(w.opt.Slot) < w.newest-int64(w.opt.WindowHours) {
-			break
-		}
-		n++
-	}
-	return n
+func (w *Watch) covered(t int64) bool {
+	return t-24*int64(w.opt.Days)-int64(w.opt.Slot) > w.newest-int64(w.opt.WindowHours)
 }
-
-// covered says whether hour t has enough history to be judged. Judging from
-// MinDays rather than Days means a watch that has just filled has already
-// recorded the incidents of its first weeks, and keeps them out of the
-// baseline.
-func (w *Watch) covered(t int64) bool { return w.baseDays(t) >= w.opt.MinDays }
 
 // advertSilence says whether pk's adverts have been silent at hour t for
 // AdvertGaps of its usual gaps, and what that gap is. known is false until it
@@ -828,59 +706,27 @@ func (w *Watch) observersDown(byObs map[string]ring, t int64, quiet map[string]b
 
 // Evaluate judges every repeater at hour t (normally the last complete hour),
 // opening and closing incidents. Hours are evaluated in order; earlier hours
-// already evaluated are skipped. An hour with no packets at all is still
-// judged: that silence is the news.
-//
-// A repeater is flagged when, through the observers up both now and in its
-// usual, its last Slot hours would happen by chance less than once in
-// 1/surpriseChance and hold at most QuietRatio of usual; and either its
-// adverts have stopped too (quiet) or they still arrive while its neighbours
-// carry on (not relaying).
+// already evaluated are skipped.
 func (w *Watch) Evaluate(t int64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if t > w.newest {
-		w.advance(t)
-	}
-	if t <= w.evaluated || !w.covered(t) {
-		if t > w.evaluated {
+	if t <= w.evaluated || t > w.newest || !w.covered(t) {
+		if t > w.evaluated && t <= w.newest {
 			w.evaluated = t
 		}
 		return
 	}
 	w.evaluated = t
 	quietObs := w.quietObservers(t)
-	w.checkFeed(t, quietObs)
+	s := int64(w.opt.Slot)
 	for pk, nd := range w.nodes {
 		now, usual := w.slot(nd.relays, t)
+		silent, gap, last, known := w.advertSilence(nd, t)
 		if nd.open != nil {
-			// Still relaying nothing (or slowed, or unheard) and now its
-			// adverts have stopped too: it has gone quiet altogether.
-			if k := nd.open.Kind; k == KindNotRelaying || k == KindSlowed || k == KindUnheard {
-				if silent, _, last, known := w.advertSilence(nd, t); known && silent {
-					nd.open.Kind = KindQuiet
-					nd.open.Start = min(nd.open.Start, last+1)
-				}
-			}
-			// Back once it relays half of what was usual when it was flagged,
-			// over the same hours, counted as it was then or like for like; a
-			// local repeater once it is heard at all. Adverts are not required:
-			// a repeater far from every observer may have them heard only now
-			// and then.
-			win := nd.open.WindowH
-			if win == 0 {
-				win = w.opt.Slot
-			}
-			wnow, _ := w.slotN(nd.relays, t, win)
-			back := float64(wnow) >= w.opt.BackRatio*float64(nd.open.Usual)
-			if nd.open.Tier == TierLocal {
-				back = nd.relays.at(w, t) > 0 || (nd.open.Kind == KindUnheard && nd.adverts.at(w, t) > 0)
-			}
-			if !back && nd.open.matchedUsual > 0 {
-				m := w.matchedN(nd.byObs, t, quietObs, pk, win)
-				back = float64(m.now) >= w.opt.BackRatio*float64(nd.open.matchedUsual)
-			}
-			if back {
+			// Back once it relays half of what was usual when it was flagged.
+			// Adverts are not required: a repeater far from every observer
+			// may have them heard only now and then.
+			if float64(now) >= w.opt.BackRatio*float64(nd.open.Usual) {
 				end := t
 				nd.open.End = &end
 				w.closed = append(w.closed, *nd.open)
@@ -888,53 +734,26 @@ func (w *Watch) Evaluate(t int64) {
 			}
 			continue
 		}
-		gray := nd.gray
-		nd.gray = 0 // kept only by an hour that still looks like it
-		if w.opt.Tiers != nil && !w.feed.Down && w.judged(pk) {
-			if inc := w.judgeTier(pk, nd, t, quietObs); inc != nil {
-				if n, ok := w.nightly(nd, t); !ok || !n.inItsNight(inc.Start, t) {
-					if silent, _, last, known := w.advertSilence(nd, t); known && silent {
-						inc.Kind, inc.Start = KindQuiet, min(inc.Start, last+1)
-					}
-					inc.Repeats = w.repeats(pk)
-					nd.open = inc
-					continue
+		if !known || !silent || usual < w.opt.MinUsual || float64(now) > w.opt.QuietRatio*float64(usual) || !w.judged(pk) {
+			continue
+		}
+		// Not blamed when most of what it relays reached us through
+		// observers that have gone quiet themselves.
+		if len(quietObs) > 0 {
+			base, viaQuiet := 0, 0
+			from, to := t-24*int64(w.opt.Days)-s+1, t-s
+			for obs, r := range nd.byObs {
+				n := r.sum(w, from, to)
+				base += n
+				if quietObs[obs] {
+					viaQuiet += n
 				}
 			}
-		}
-		// Cheap screen first: most repeaters are nowhere near quiet.
-		if w.feed.Down || usual == 0 || float64(now) > 0.5*float64(usual) || !w.judged(pk) {
-			continue
-		}
-		m := w.matched(nd.byObs, t, quietObs, pk)
-		if m.observers == 0 || float64(m.now) > w.opt.QuietRatio*float64(m.usual) {
-			continue
-		}
-		p := quietChance(usual, m)
-		if p >= surpriseChance {
-			continue
-		}
-		silent, gap, last, known := w.advertSilence(nd, t)
-		inc := &Incident{Node: pk, Flagged: t, Usual: usual, Now: now, AdvertEveryH: gap,
-			Chance: p, Observers: m.observers, matchedUsual: m.usual}
-		switch {
-		case known && silent:
-			inc.Kind, inc.Start = KindQuiet, last+1
-		case known && p < notRelayingChance && usual >= notRelayingMinUsual && m.observers >= 2 &&
-			w.advertsDuring(nd, t, gap) && w.neighboursCarryOn(pk, t, quietObs):
-			// One sign only, so it must hold for notRelayingHours in a row.
-			if nd.gray = gray + 1; nd.gray < notRelayingHours {
+			if base > 0 && float64(viaQuiet) >= w.opt.ObserverShare*float64(base) {
 				continue
 			}
-			inc.Kind, inc.Start = KindNotRelaying, w.quietSince(nd.relays, t-int64(nd.gray)+1, usual, w.opt.Slot)
-		default:
-			continue
 		}
-		if n, ok := w.nightly(nd, t); ok && n.inItsNight(inc.Start, t) {
-			continue
-		}
-		inc.Repeats = w.repeats(pk)
-		nd.open = inc
+		nd.open = &Incident{Node: pk, Start: last + 1, Flagged: t, Usual: usual, Now: now, AdvertEveryH: gap}
 	}
 	// Forget closed incidents that have left the window.
 	keep := w.closed[:0]
@@ -969,24 +788,44 @@ type Reach struct {
 	LastAdverts int       `json:"lastAdverts"` // adverts (or messages) that could cross on the last day
 	LastReached int       `json:"lastReached"`
 	Daily       []float64 `json:"daily"`
-	// Low and High are the range it usually falls in on a day like the last
-	// one; Verdict is worse, better, normal or new.
-	Low     float64 `json:"low"`
-	High    float64 `json:"high"`
-	Verdict string  `json:"verdict"`
-	// Since is the first hour of the day it stepped to its present level,
-	// when that is recent; Usual is then the level before.
-	Since *int64 `json:"since,omitempty"`
-	// Cause is the repeater whose crossings fell away, when one explains
-	// most of a worse day.
-	Cause *Cause `json:"cause,omitempty"`
-	// Target, when set, and how fast the recent hours are burning through
-	// it: fast (the last 6 and 24 hours both under), slow (24 and 72), ok.
-	Target float64 `json:"target,omitempty"`
-	Burn   string  `json:"burn,omitempty"`
-	// candidates for Cause, most of the drop first; one that has itself gone
-	// quiet is preferred (see preferQuiet).
-	candidates []Cause
+}
+
+const minReachAdverts = 10
+
+// reachStatus is nil when there is not enough to say: too few adverts on
+// the last day, or fewer than three usable days before it.
+func (w *Watch) reachStatus(r reach, basis Basis, t int64) *Reach {
+	den, _, _ := w.daily(r.den, t)
+	num, _, _ := w.daily(r.num, t)
+	if len(den) == 0 {
+		return nil
+	}
+	rates := make([]float64, len(den))
+	for i := range den {
+		rates[i] = -1
+		if den[i] >= minReachAdverts {
+			rates[i] = float64(num[i]) / float64(den[i])
+		}
+	}
+	n := len(den)
+	if den[n-1] < minReachAdverts {
+		return nil
+	}
+	var prev []float64
+	for i := n - 2; i >= 0 && len(prev) < w.opt.Days; i-- {
+		if rates[i] >= 0 {
+			prev = append(prev, rates[i])
+		}
+	}
+	if len(prev) < 3 {
+		return nil
+	}
+	sort.Float64s(prev)
+	usual := prev[len(prev)/2]
+	if len(prev)%2 == 0 {
+		usual = (prev[len(prev)/2-1] + prev[len(prev)/2]) / 2
+	}
+	return &Reach{Last: rates[n-1], Usual: usual, Basis: basis.orDefault(), LastAdverts: den[n-1], LastReached: num[n-1], Daily: rates}
 }
 
 // CorridorDirection is one direction of a corridor, against its usual.
@@ -1000,8 +839,6 @@ type CorridorDirection struct {
 	ObserversDown []string  `json:"observersDown,omitempty"`
 	// Reach is the share of adverts from repeaters in From that reached To.
 	Reach *Reach `json:"reach,omitempty"`
-	// Reroute is set when its main carrier changed and the old one fell away.
-	Reroute *Reroute `json:"reroute,omitempty"`
 }
 
 // CorridorStatus is a corridor's last complete day against its usual day.
@@ -1051,11 +888,6 @@ type Status struct {
 	Network   NetworkStatus    `json:"network"`
 	Corridors []CorridorStatus `json:"corridors"`
 	Routes    []RouteStatus    `json:"routes"`
-	Feed      FeedStatus       `json:"feed"`
-	Tiers     *TierCounts      `json:"tiers,omitempty"`
-	Nightly   []Nightly        `json:"nightly"`
-	Drift     []Drift          `json:"drift"`
-	Events    []Event          `json:"events"` // newest first
 }
 
 // Status reports the watch at its last evaluated hour.
@@ -1068,7 +900,7 @@ func (w *Watch) Status() Status {
 		return st
 	}
 	for pk, nd := range w.nodes {
-		if _, usual := w.slot(nd.relays, t); judgeable(usual) && w.judged(pk) {
+		if _, usual := w.slot(nd.relays, t); usual >= w.opt.MinUsual && w.judged(pk) {
 			st.Judged++
 		}
 		if nd.open != nil {
@@ -1087,12 +919,6 @@ func (w *Watch) Status() Status {
 	}
 	sort.Slice(st.Observers, func(i, j int) bool { return st.Observers[i].ID < st.Observers[j].ID })
 	st.Network.Now, st.Network.Usual = w.slot(w.total, t)
-	st.Feed = w.feed
-	if w.opt.Tiers != nil {
-		c := w.tierCounts(t)
-		st.Tiers = &c
-	}
-	st.Nightly = w.nightlyList(t)
 	for _, c := range w.corridors {
 		st.Corridors = append(st.Corridors, w.corridorStatus(c, t))
 	}
@@ -1101,11 +927,9 @@ func (w *Watch) Status() Status {
 		rs := RouteStatus{Name: r.Name, From: r.From, To: r.To, ObserversDown: w.observersDown(r.byObs, t, quiet)}
 		rs.Now, rs.Usual = w.slot(r.count, t)
 		rs.Daily, rs.LastDay, rs.UsualDay = w.daily(r.count, t)
-		rs.Reach = w.reachStatus(r.reach, r.Basis, r.Target, t)
+		rs.Reach = w.reachStatus(r.reach, r.Basis, t)
 		st.Routes = append(st.Routes, rs)
 	}
-	st.Drift = w.drifts(t)
-	w.explainedBy(&st)
 	return st
 }
 
@@ -1157,8 +981,7 @@ func (w *Watch) corridorStatus(c *corridorState, t int64) CorridorStatus {
 		d := CorridorDirection{From: names[i][0], To: names[i][1], ObserversDown: w.observersDown(cd.byObs, t, quiet)}
 		d.Daily, d.LastDay, d.UsualDay = w.daily(cd.count, t)
 		d.Carriers = topCarriers(cd.carriers[lastDay])
-		d.Reach = w.reachStatus(cd.reach, c.Basis, c.Target, t)
-		d.Reroute = w.reroute(cd.carriers, t)
+		d.Reach = w.reachStatus(cd.reach, c.Basis, t)
 		cs.Directions = append(cs.Directions, d)
 	}
 	return cs
@@ -1170,10 +993,6 @@ type Series struct {
 	Relays   []int     `json:"relays"`
 	Adverts  []int     `json:"adverts"`
 	Expected []float64 `json:"expected"` // median of the same hour on the previous Days days; -1 where unknown
-	// AdvertEveryMin is how often it adverts, from the times its adverts
-	// carry; AdvertDelivery the share of them heard, per complete day.
-	AdvertEveryMin int       `json:"advertEveryMin"`
-	AdvertDelivery []float64 `json:"advertDelivery"`
 }
 
 func (w *Watch) series(r ring, end int64) ([]int, []float64) {
@@ -1206,8 +1025,6 @@ func (w *Watch) NodeSeries(pk string, end int64) Series {
 	}
 	s.Relays, s.Expected = w.series(nd.relays, end)
 	s.Adverts, _ = w.series(nd.adverts, end)
-	every, daily := w.advertDelivery(nd, end)
-	s.AdvertEveryMin, s.AdvertDelivery = int(every/60), daily
 	return s
 }
 
@@ -1343,15 +1160,6 @@ func (w *Watch) Prune() {
 	for k, r := range w.observers {
 		if r.sum(w, lo, hi) == 0 {
 			delete(w.observers, k)
-		}
-	}
-	for k, sd := range w.signal {
-		recent := false
-		for _, d := range sd.day {
-			recent = recent || d >= lo/24
-		}
-		if !recent {
-			delete(w.signal, k)
 		}
 	}
 }
