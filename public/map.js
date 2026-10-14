@@ -2116,6 +2116,8 @@
       if (m.icon && m.icon.options.iconSize && m.icon.options.iconSize[0] === size) continue;
       m.icon = makeLiveStyleIcon(m.role, m.stale, m.tint, zoom);
       m._leafletMarker.setIcon(m.icon);
+      var tt = m._leafletMarker.getTooltip();
+      if (tt) tt.options.offset = L.point(0, -size / 2); // stay half the new size above
     }
     placeHashLabels();
   }
@@ -2308,9 +2310,11 @@
       if (useCluster) {
         clusterMarkers.push(marker);
       } else {
-        // The node under the pointer names itself, labels on or off.
+        // The node under the pointer names itself, labels on or off, as on
+        // the live page: its live-tooltip, half the marker's size above it.
         var tip = (m.hashText ? '<b class="mc-hash-tip-hash">' + safeEsc(m.hashText) + '</b> ' : '') + safeEsc(m.node.name || m.node.id || 'Unknown');
-        marker.bindTooltip(tip, { direction: 'top', offset: [0, -8], className: 'mc-hash-tip', opacity: 1 });
+        var tipSize = m.icon && m.icon.options.iconSize ? m.icon.options.iconSize[1] : 16;
+        marker.bindTooltip(tip, { permanent: false, direction: 'top', offset: [0, -tipSize / 2], className: 'live-tooltip' });
         markerLayer.addLayer(marker);
       }
     }
