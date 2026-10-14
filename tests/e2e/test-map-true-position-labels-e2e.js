@@ -11,7 +11,8 @@
  *     room (right, left, above or below), and leaves it off where there is
  *     not: labels never overlap each other or a marker. Zooming in makes
  *     room for more;
- *   - the node under the pointer shows its hash in a tooltip, labels on or off;
+ *   - the node under the pointer shows its hash in a tooltip, labels on or off,
+ *     styled and placed as the live page's: half the marker's size above it;
  *   - clustering on is unchanged.
  *
  * Run: BASE_URL=http://localhost:13581 node tests/e2e/test-map-true-position-labels-e2e.js
@@ -130,21 +131,46 @@ const overlap = (a, b) => a.l < b.r - 0.5 && a.r > b.l + 0.5 && a.t < b.b - 0.5 
     await page.waitForTimeout(600);
   });
 
-  await step('the node under the pointer shows its hash', async () => {
-    const pos = await page.evaluate(() => ((all) => all.find((x) => x.repeater && x.inView && all.every((o) => o === x || Math.hypot(o.x - x.x, o.y - x.y) > 24)))(window.__meshcoreMapInternals.markerPositions()));
-    assert(pos, 'a repeater in view with no other marker close by');
+  // The live page's hover: its live-tooltip style, half the marker's size above it.
+  const hoverTip = async (pos) => {
     await page.mouse.move(pos.x, pos.y);
-    await page.waitForSelector('.leaflet-tooltip.mc-hash-tip', { state: 'visible' });
-    const t = await page.textContent('.leaflet-tooltip.mc-hash-tip');
-    assert(t.indexOf(pos.hash) >= 0, 'tooltip "' + t + '" lacks ' + pos.hash);
+    await page.waitForSelector('.leaflet-tooltip.live-tooltip', { state: 'visible' });
+    return page.evaluate(() => {
+      const r = document.querySelector('.leaflet-tooltip.live-tooltip').getBoundingClientRect();
+      return { text: document.querySelector('.leaflet-tooltip.live-tooltip').textContent, bottom: r.bottom };
+    });
+  };
+  const lonely = () => page.evaluate(() => ((all) => all.find((x) => x.repeater && x.inView && all.every((o) => o === x || Math.hypot(o.x - x.x, o.y - x.y) > 24)))(window.__meshcoreMapInternals.markerPositions()));
+  // Leaflet's top tooltip ends 6 px of arrow above its anchor, the anchor
+  // being the offset: half the marker's size above its centre.
+  const sitsAbove = (tip, pos) => Math.abs((pos.y - pos.w / 2 - 6) - tip.bottom) <= 3;
+
+  await step('the node under the pointer shows its hash, as the live page shows a node', async () => {
+    const pos = await lonely();
+    assert(pos, 'a repeater in view with no other marker close by');
+    const tip = await hoverTip(pos);
+    assert(tip.text.indexOf(pos.hash) >= 0, 'tooltip "' + tip.text + '" lacks ' + pos.hash);
+    assert(sitsAbove(tip, pos), 'tooltip bottom ' + tip.bottom.toFixed(1) + ' is not half the marker (' + pos.w + ' px) above it at y ' + pos.y);
+    await page.mouse.move(5, 5);
+  });
+
+  await step('after zooming in, the hover still sits half the (larger) marker above it', async () => {
+    await page.evaluate(() => { const m = window.__meshcoreMapInternals.leafletMap(); m.setZoom(m.getZoom() + 2, { animate: false }); });
+    await page.waitForTimeout(600);
+    const pos = await lonely();
+    assert(pos, 'a repeater in view with no other marker close by after zooming in');
+    const tip = await hoverTip(pos);
+    assert(sitsAbove(tip, pos), 'after zoom, tooltip bottom ' + tip.bottom.toFixed(1) + ' is not half the marker (' + pos.w + ' px) above it at y ' + pos.y);
+    await page.mouse.move(5, 5);
+    await page.evaluate(() => { const m = window.__meshcoreMapInternals.leafletMap(); m.setZoom(m.getZoom() - 2, { animate: false }); });
+    await page.waitForTimeout(600);
   });
 
   await step('with hash labels off there are no labels, and hover still names the node', async () => {
     await openMap(page, { clustering: false, labels: false });
     assert((await page.$$('.mc-hash-label')).length === 0, 'labels drawn with the toggle off');
     const pos = await page.evaluate(() => ((all) => all.find((x) => x.repeater && x.inView && all.every((o) => o === x || Math.hypot(o.x - x.x, o.y - x.y) > 24)))(window.__meshcoreMapInternals.markerPositions()));
-    await page.mouse.move(pos.x, pos.y);
-    await page.waitForSelector('.leaflet-tooltip.mc-hash-tip', { state: 'visible' });
+    await hoverTip(pos);
   });
 
   await step('clustering on is unchanged: clusters, no beside-labels', async () => {
