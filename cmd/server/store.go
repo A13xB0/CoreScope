@@ -1914,9 +1914,8 @@ func (s *PacketStore) indexByNode(tx *StoreTx) bool {
 	return foundNew
 }
 
-// newNodeSets returns an empty nodeHashes. The sets hold transmission IDs:
-// on a busy week they have ~650k entries, and int keys take about 30% less
-// than the 16-character hash strings they used to be keyed by.
+// newNodeSets returns an empty nodeHashes. The sets hold transmission IDs,
+// which take less memory than the 16-character hashes they replaced.
 func newNodeSets() map[string]map[int]struct{} { return make(map[string]map[int]struct{}) }
 
 // nodeHasTx reports whether tx is listed under pubkey.

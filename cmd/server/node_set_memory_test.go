@@ -6,9 +6,9 @@ import (
 )
 
 // nodeHashes is the set behind byNode's de-dup: for every node, the packets
-// already listed under it. On a busy week it held about 650k entries and
-// 21.5MB keyed by the packets' 16-character hashes. Keyed by packet ID the
-// same membership takes about 30% less: 25.8MB -> 18MB for this fixture.
+// already listed under it. Keyed by packet ID rather than by the packets'
+// 16-character hashes, the same membership takes markedly less memory; the
+// limit below sits between the two.
 func TestNodeSetRetainedHeap(t *testing.T) {
 	const nodes, perNode = 2000, 250 // 500k (node, packet) pairs
 	txs := make([]*StoreTx, perNode*4)
