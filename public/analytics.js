@@ -72,12 +72,14 @@
   }
 
   // Packets / Hour (#2193): a long history rolls up to coarser bars (at most
-  // 180, so about 4 units each in barChart's plot) with about 10 labels, and
-  // the chart starts on the first UTC day with at least 2% of a typical recent
-  // day (the median of the last seven whole days), at its first hour with a
-  // tenth of a typical hour: a short store also keeps a few old packets that
-  // were heard again, weeks before the rest.
-  function packetsPerHourCard(pph) {
+  // 180, so about 4 units each in barChart's plot) with about 10 labels.
+  // Under "All data" (no opts.window) the chart starts on the first UTC day
+  // with at least 2% of a typical recent day (the median of the seven days
+  // before the last one), at its first hour with a tenth of a typical hour: a
+  // short store also keeps a few old packets that were heard again, weeks
+  // before the rest. The card then says where it starts. In a picked window
+  // the server has already cut the data to it, so nothing is cropped.
+  function packetsPerHourCard(pph, opts) {
     const icon = '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-trend-up"/></svg>';
     if (!pph || !pph.length) return { html: `<h3>${icon} Packets / Hour</h3><p class="text-muted">No packets in this period.</p>`, from: null };
     const at = (h) => Date.parse(h.hour.replace(' ', 'T') + ':00:00Z');
@@ -86,7 +88,8 @@
     const recent = [...days.values()].slice(-8, -1).sort((a, b) => a - b);
     const floor = (recent.length ? recent[recent.length >> 1] : 0) * 0.02;
     const day = [...days.keys()].find((d) => days.get(d) >= floor);
-    const start = at(pph.find((h) => h.hour.slice(0, 10) >= day && h.count >= floor * 5 / 24) || pph[0]);
+    const first = at(pph[0]);
+    const start = opts && opts.window ? first : at(pph.find((h) => h.hour.slice(0, 10) >= day && h.count >= floor * 5 / 24) || pph[0]);
     const last = at(pph[pph.length - 1]), spanH = (last - start) / 3600e3 + 1;
     const [bh, name] = [[1, 'Hour'], [6, '6 hours'], [24, 'Day']].find(([b]) => spanH / b <= 180) || [168, 'Week'];
     const step = bh * 3600e3, from = Math.floor(start / step) * step, counts = [];
@@ -98,7 +101,8 @@
       if ((t / 3600e3) % every) return '';
       return spanH > 48 && (every >= 24 || hh === 0) ? d.toISOString().slice(5, 10) : String(hh).padStart(2, '0') + 'h';
     });
-    return { html: `<h3>${icon} Packets / ${name}</h3>${barChart(counts, labels, 'var(--accent)')}`, from };
+    const since = from > first ? ` <span class="text-muted">since ${new Date(from).toISOString().slice(5, 10)}</span>` : '';
+    return { html: `<h3>${icon} Packets / ${name}${since}</h3>${barChart(counts, labels, 'var(--accent)')}`, from };
   }
 
   function barChart(data, labels, colors, w = 800, h = 220, pad = 40) {
@@ -332,7 +336,7 @@
         api('/analytics/hash-collisions' + sepBase, { ttl: CLIENT_TTL.analyticsRF }),
         api('/analytics/relay-airtime-share' + sepWin, { ttl: CLIENT_TTL.analyticsRF }).catch(() => ({ rows: [] })),
       ]);
-      _analyticsData = { hashData, rfData, topoData, chanData, collisionData, airtimeData };
+      _analyticsData = { hashData, rfData, topoData, chanData, collisionData, airtimeData, window: twVal };
       renderTab(_currentTab);
     } catch (e) {
       document.getElementById('analyticsContent').innerHTML =
@@ -438,7 +442,7 @@
       </div>
 
       <div class="analytics-row">
-        <div class="analytics-card flex-1">${packetsPerHourCard(rf.packetsPerHour).html}</div>
+        <div class="analytics-card flex-1">${packetsPerHourCard(rf.packetsPerHour, { window: d.window }).html}</div>
       </div>
 
       <div class="analytics-row">
