@@ -150,12 +150,36 @@ func parseObsTimestamp(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// decodedCacheDroppedKeys are payload fields no server code reads: the
+// ciphertext and MAC of encrypted payloads, advert signatures, the ISO copy
+// of a timestamp, raw path data and control-packet details.
+// TestDecodedCacheDroppedKeysAreUnread fails if code starts naming one.
+var decodedCacheDroppedKeys = []string{
+	"encryptedData", "mac", "signature", "signatureValid", "timestampISO", "pathData",
+	"ctrlPubKey", "ctrlSubtype", "ctrlTag", "ctrlFlags", "ctrlZeroHop", "ctrlLength",
+}
+
+// broadcastPayload returns the packet's whole decoded payload for the live
+// feed: the stored JSON as it is, since the feed only serialises it. Copying
+// the cache would lose the fields it drops, and decoding again would run
+// under the store's write lock; this does neither. nil if the JSON is not
+// valid, as before.
+func broadcastPayload(tx *StoreTx) json.RawMessage {
+	if tx.DecodedJSON == "" || !json.Valid([]byte(tx.DecodedJSON)) {
+		return nil
+	}
+	return json.RawMessage(tx.DecodedJSON)
+}
+
 // ParsedDecoded returns the parsed DecodedJSON map, caching the result.
 // Thread-safe via sync.Once — the first call parses, subsequent calls return cached.
 func (tx *StoreTx) ParsedDecoded() map[string]interface{} {
 	tx.decodedOnce.Do(func() {
 		if tx.DecodedJSON != "" {
 			json.Unmarshal([]byte(tx.DecodedJSON), &tx.parsedDecoded)
+			for _, k := range decodedCacheDroppedKeys {
+				delete(tx.parsedDecoded, k)
+			}
 		}
 	})
 	return tx.parsedDecoded
@@ -3163,14 +3187,8 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			},
 		}
 		if tx.DecodedJSON != "" {
-			if payload := tx.ParsedDecoded(); payload != nil {
-				// Copy the cached map so broadcast consumers cannot mutate
-				// the shared cache or cause a data race (#1871 review).
-				cp := make(map[string]interface{}, len(payload))
-				for k, v := range payload {
-					cp[k] = v
-				}
-				decoded["payload"] = cp
+			if payload := broadcastPayload(tx); payload != nil {
+				decoded["payload"] = payload
 			}
 		}
 		// For TRACE packets, decode the full packet to include path.hopsCompleted
@@ -3437,14 +3455,8 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			},
 		}
 		if tx.DecodedJSON != "" {
-			if payload := tx.ParsedDecoded(); payload != nil {
-				// Copy the cached map so broadcast consumers cannot mutate
-				// the shared cache or cause a data race (#1871 review).
-				cp := make(map[string]interface{}, len(payload))
-				for k, v := range payload {
-					cp[k] = v
-				}
-				decoded["payload"] = cp
+			if payload := broadcastPayload(tx); payload != nil {
+				decoded["payload"] = payload
 			}
 		}
 		// For TRACE packets, decode the full packet to include path.hopsCompleted
