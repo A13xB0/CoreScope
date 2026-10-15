@@ -79,6 +79,8 @@
   // short store also keeps a few old packets that were heard again, weeks
   // before the rest. The card then says where it starts. In a picked window
   // the server has already cut the data to it, so nothing is cropped.
+  // Buckets and labels follow the viewer: their locale's date and time
+  // format, on their own clock unless the app's timezone setting is UTC.
   function packetsPerHourCard(pph, opts) {
     const icon = '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-trend-up"/></svg>';
     if (!pph || !pph.length) return { html: `<h3>${icon} Packets / Hour</h3><p class="text-muted">No packets in this period.</p>`, from: null };
@@ -92,16 +94,21 @@
     const start = opts && opts.window ? first : at(pph.find((h) => h.hour.slice(0, 10) >= day && h.count >= floor * 5 / 24) || pph[0]);
     const last = at(pph[pph.length - 1]), spanH = (last - start) / 3600e3 + 1;
     const [bh, name] = [[1, 'Hour'], [6, '6 hours'], [24, 'Day']].find(([b]) => spanH / b <= 180) || [168, 'Week'];
-    const step = bh * 3600e3, from = Math.floor(start / step) * step, counts = [];
+    const utc = typeof getTimestampTimezone !== 'function' || getTimestampTimezone() === 'utc';
+    const off = utc ? 0 : -new Date(start).getTimezoneOffset() * 60e3;
+    const step = bh * 3600e3, from = Math.floor((start + off) / step) * step - off, counts = [];
     for (let t = from; t <= last; t += step) counts.push(0);
     pph.forEach((h) => { const k = Math.floor((at(h) - from) / step); if (k >= 0) counts[k] += h.count; });
     const every = [1, 3, 6, 12, 24, 48, 72, 168, 336, 672, 1344].find((e) => e >= bh && counts.length * bh / e <= 10) || 2688;
+    const zone = utc ? { timeZone: 'UTC' } : {};
+    const date = new Intl.DateTimeFormat(undefined, { day: '2-digit', month: '2-digit', ...zone });
+    const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', ...zone });
     const labels = counts.map((_, i) => {
-      const t = from + i * step, d = new Date(t), hh = d.getUTCHours();
-      if ((t / 3600e3) % every) return '';
-      return spanH > 48 && (every >= 24 || hh === 0) ? d.toISOString().slice(5, 10) : String(hh).padStart(2, '0') + 'h';
+      const t = from + i * step, hrs = (t + off) / 3600e3;
+      if (hrs % every) return '';
+      return spanH > 48 && (every >= 24 || hrs % 24 === 0) ? date.format(t) : time.format(t);
     });
-    const since = from > first ? ` <span class="text-muted">since ${new Date(from).toISOString().slice(5, 10)}</span>` : '';
+    const since = from > first ? ` <span class="text-muted">since ${date.format(from)}</span>` : '';
     return { html: `<h3>${icon} Packets / ${name}${since}</h3>${barChart(counts, labels, 'var(--accent)')}`, from };
   }
 
