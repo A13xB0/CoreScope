@@ -93,36 +93,82 @@ type StoreObs struct {
 	// #1481 P0-2: cached parsed timestamp. The legacy handlers parse
 	// Timestamp as RFC3339Nano/RFC3339/"2006-01-02 15:04:05" with a
 	// fallback chain on every read; for /api/observers/{id}/analytics
-	// that fires 60k+ times per request under RLock. ParsedTime returns
-	// the parsed value once, caching for the lifetime of the StoreObs.
-	tsParseOnce sync.Once
-	tsParsed    time.Time
-	tsParsedOK  bool
+	// that fires 60k+ times per request under RLock. ParsedTime parses
+	// once and keeps the result here in 8 bytes (see tsUnparsed): a
+	// time.Time, sync.Once and bool took 40 and put each observation in
+	// the 192-byte size class instead of 160.
+	tsUnixNano atomic.Int64
 }
 
 // ParsedTime returns the parsed Timestamp, caching the result.
 // Tries RFC3339Nano → RFC3339 → "2006-01-02 15:04:05" in order.
 // Returns (zero, false) if Timestamp is empty or unparseable.
-// Thread-safe via sync.Once.
+// Safe for concurrent use: callers racing on the first call each parse and
+// store the same value.
 func (o *StoreObs) ParsedTime() (time.Time, bool) {
-	o.tsParseOnce.Do(func() {
-		if o.Timestamp == "" {
-			return
+	switch n := o.tsUnixNano.Load(); n {
+	case 0:
+	case tsUnparsed:
+		return time.Time{}, false
+	case tsReparse:
+		return parseObsTimestamp(o.Timestamp)
+	default:
+		return time.Unix(0, n).UTC(), true
+	}
+	t, ok := parseObsTimestamp(o.Timestamp)
+	switch {
+	case !ok:
+		o.tsUnixNano.Store(tsUnparsed)
+	case t.Location() != time.UTC || t.Year() < 1678 || t.Year() > 2261 || t.UnixNano() == 0:
+		// Kept only as UTC nanoseconds; a time with another offset (or one
+		// UnixNano cannot hold) is parsed again on each call so its
+		// location is kept.
+		o.tsUnixNano.Store(tsReparse)
+	default:
+		o.tsUnixNano.Store(t.UnixNano())
+		return time.Unix(0, t.UnixNano()).UTC(), true
+	}
+	return t, ok
+}
+
+// tsUnixNano holds 0 before the first ParsedTime, the UTC time in
+// nanoseconds after it, or one of these.
+const (
+	tsUnparsed = math.MinInt64     // empty or not a time
+	tsReparse  = math.MinInt64 + 1 // parsed, but not held as UTC nanoseconds
+)
+
+func parseObsTimestamp(s string) (time.Time, bool) {
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
 		}
-		if t, err := time.Parse(time.RFC3339Nano, o.Timestamp); err == nil {
-			o.tsParsed, o.tsParsedOK = t, true
-			return
-		}
-		if t, err := time.Parse(time.RFC3339, o.Timestamp); err == nil {
-			o.tsParsed, o.tsParsedOK = t, true
-			return
-		}
-		if t, err := time.Parse("2006-01-02 15:04:05", o.Timestamp); err == nil {
-			o.tsParsed, o.tsParsedOK = t, true
-			return
-		}
-	})
-	return o.tsParsed, o.tsParsedOK
+	}
+	return time.Time{}, false
+}
+
+// decodedCacheDroppedKeys are payload fields no server code reads: the
+// ciphertext and MAC of encrypted payloads, advert signatures, the ISO copy
+// of a timestamp, raw path data and control-packet details.
+// TestDecodedCacheDroppedKeysAreUnread fails if code starts naming one.
+var decodedCacheDroppedKeys = []string{
+	"encryptedData", "mac", "signature", "signatureValid", "timestampISO", "pathData",
+	"ctrlPubKey", "ctrlSubtype", "ctrlTag", "ctrlFlags", "ctrlZeroHop", "ctrlLength",
+}
+
+// broadcastPayload returns the packet's whole decoded payload for the live
+// feed: the stored JSON as it is, since the feed only serialises it. Copying
+// the cache would lose the fields it drops, and decoding again would run
+// under the store's write lock; this does neither. nil if the JSON is not
+// valid, as before.
+func broadcastPayload(tx *StoreTx) json.RawMessage {
+	if tx.DecodedJSON == "" || !json.Valid([]byte(tx.DecodedJSON)) {
+		return nil
+	}
+	return json.RawMessage(tx.DecodedJSON)
 }
 
 // ParsedDecoded returns the parsed DecodedJSON map, caching the result.
@@ -131,6 +177,9 @@ func (tx *StoreTx) ParsedDecoded() map[string]interface{} {
 	tx.decodedOnce.Do(func() {
 		if tx.DecodedJSON != "" {
 			json.Unmarshal([]byte(tx.DecodedJSON), &tx.parsedDecoded)
+			for _, k := range decodedCacheDroppedKeys {
+				delete(tx.parsedDecoded, k)
+			}
 		}
 	})
 	return tx.parsedDecoded
@@ -186,6 +235,10 @@ type PacketStore struct {
 	advertEvidenceMu       sync.Mutex
 	advertEvidenceCursor   int64
 	advertEvidenceRevision uint64 // cacheMu
+
+	// tx_rewrite_feed tail (#2107): in-place rewrites of loaded rows.
+	txRewriteMu     sync.Mutex
+	txRewriteCursor int64
 
 	mu            sync.RWMutex
 	db            *DB
@@ -784,6 +837,11 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 	if db.advertEvidencePresent() {
 		_ = db.conn.QueryRow(`SELECT COALESCE(MAX(id),0) FROM advert_route_evidence`).Scan(&ps.advertEvidenceCursor)
 	}
+	// Same watermark rule for the rewrite feed: rows loaded below already
+	// carry every rewrite committed before this point.
+	if db.txRewriteFeedPresent() {
+		_ = db.conn.QueryRow(`SELECT COALESCE(MAX(id),0) FROM tx_rewrite_feed`).Scan(&ps.txRewriteCursor)
+	}
 	return ps
 }
 
@@ -927,31 +985,34 @@ func (s *PacketStore) Load() error {
 
 	hopsSeen := make(map[string]bool) // reused across observations; cleared per use
 
-	for rows.Next() {
-		var txID int
-		var rawHex, hash, firstSeen, decodedJSON sql.NullString
-		var routeType, payloadType, payloadVersion sql.NullInt64
-		var obsID sql.NullInt64
-		var observerID, observerName, observerIATA, direction, pathJSON, obsTimestamp sql.NullString
-		var snr, rssi sql.NullFloat64
-		var score sql.NullInt64
-		var obsRawHex sql.NullString
-		var resolvedPathStr sql.NullString
-		var scopeName sql.NullString
+	// Scan overwrites every target on each row, so one set (and one
+	// argument slice) serves the whole loop instead of escaping per row.
+	var txID int
+	var rawHex, hash, firstSeen, decodedJSON sql.NullString
+	var routeType, payloadType, payloadVersion sql.NullInt64
+	var obsID sql.NullInt64
+	var observerID, observerName, observerIATA, direction, pathJSON, obsTimestamp sql.NullString
+	var snr, rssi sql.NullFloat64
+	var score sql.NullInt64
+	var obsRawHex sql.NullString
+	var resolvedPathStr sql.NullString
+	var scopeName sql.NullString
 
-		scanArgs := []interface{}{&txID, &rawHex, &hash, &firstSeen, &routeType, &payloadType,
-			&payloadVersion, &decodedJSON,
-			&obsID, &observerID, &observerName, &observerIATA, &direction,
-			&snr, &rssi, &score, &pathJSON, &obsTimestamp}
-		if s.db.hasObsRawHex {
-			scanArgs = append(scanArgs, &obsRawHex)
-		}
-		if s.db.hasResolvedPath {
-			scanArgs = append(scanArgs, &resolvedPathStr)
-		}
-		if s.db.hasScopeName {
-			scanArgs = append(scanArgs, &scopeName)
-		}
+	scanArgs := []interface{}{&txID, &rawHex, &hash, &firstSeen, &routeType, &payloadType,
+		&payloadVersion, &decodedJSON,
+		&obsID, &observerID, &observerName, &observerIATA, &direction,
+		&snr, &rssi, &score, &pathJSON, &obsTimestamp}
+	if s.db.hasObsRawHex {
+		scanArgs = append(scanArgs, &obsRawHex)
+	}
+	if s.db.hasResolvedPath {
+		scanArgs = append(scanArgs, &resolvedPathStr)
+	}
+	if s.db.hasScopeName {
+		scanArgs = append(scanArgs, &scopeName)
+	}
+
+	for rows.Next() {
 		if err := rows.Scan(scanArgs...); err != nil {
 			log.Printf("[store] scan error: %v", err)
 			continue
@@ -999,10 +1060,10 @@ func (s *PacketStore) Load() error {
 			obs := &StoreObs{
 				ID:             oid,
 				TransmissionID: txID,
-				ObserverID:     obsIDStr,
-				ObserverName:   nullStrVal(observerName),
-				ObserverIATA:   nullStrVal(observerIATA),
-				Direction:      nullStrVal(direction),
+				ObserverID:     internStr(obsIDStr),
+				ObserverName:   internStr(nullStrVal(observerName)),
+				ObserverIATA:   internStr(nullStrVal(observerIATA)),
+				Direction:      internStr(nullStrVal(direction)),
 				SNR:            nullFloatPtr(snr),
 				RSSI:           nullFloatPtr(rssi),
 				Score:          nullIntPtr(score),
@@ -1013,8 +1074,7 @@ func (s *PacketStore) Load() error {
 			// Decode-window: extract resolved pubkeys for index, don't store on struct.
 			rpStr := nullStrVal(resolvedPathStr)
 			if rpStr != "" {
-				rp := unmarshalResolvedPath(rpStr)
-				pks := extractResolvedPubkeys(rp)
+				pks := resolvedPubkeysFromJSON(rpStr)
 				// Single point of truth — see indexResolvedPathHops doc + #1558.
 				s.indexResolvedPathHops(tx, pks, hopsSeen)
 			} else if relayPM != nil && obsPJ != "" && obsPJ != "[]" {
@@ -1256,31 +1316,34 @@ func (s *PacketStore) loadChunk(from, to time.Time) error {
 	var localMaxTxID int
 	var localMaxObsID int
 
-	for rows.Next() {
-		var txID int
-		var rawHex, hash, firstSeen, decodedJSON sql.NullString
-		var routeType, payloadType, payloadVersion sql.NullInt64
-		var obsID sql.NullInt64
-		var observerID, observerName, observerIATA, direction, pathJSON, obsTimestamp sql.NullString
-		var snr, rssi sql.NullFloat64
-		var score sql.NullInt64
-		var obsRawHex sql.NullString
-		var resolvedPathStr sql.NullString
-		var scopeName sql.NullString
+	// Scan overwrites every target on each row, so one set (and one
+	// argument slice) serves the whole loop instead of escaping per row.
+	var txID int
+	var rawHex, hash, firstSeen, decodedJSON sql.NullString
+	var routeType, payloadType, payloadVersion sql.NullInt64
+	var obsID sql.NullInt64
+	var observerID, observerName, observerIATA, direction, pathJSON, obsTimestamp sql.NullString
+	var snr, rssi sql.NullFloat64
+	var score sql.NullInt64
+	var obsRawHex sql.NullString
+	var resolvedPathStr sql.NullString
+	var scopeName sql.NullString
 
-		scanArgs := []interface{}{&txID, &rawHex, &hash, &firstSeen, &routeType, &payloadType,
-			&payloadVersion, &decodedJSON,
-			&obsID, &observerID, &observerName, &observerIATA, &direction,
-			&snr, &rssi, &score, &pathJSON, &obsTimestamp}
-		if s.db.hasObsRawHex {
-			scanArgs = append(scanArgs, &obsRawHex)
-		}
-		if s.db.hasResolvedPath {
-			scanArgs = append(scanArgs, &resolvedPathStr)
-		}
-		if s.db.hasScopeName {
-			scanArgs = append(scanArgs, &scopeName)
-		}
+	scanArgs := []interface{}{&txID, &rawHex, &hash, &firstSeen, &routeType, &payloadType,
+		&payloadVersion, &decodedJSON,
+		&obsID, &observerID, &observerName, &observerIATA, &direction,
+		&snr, &rssi, &score, &pathJSON, &obsTimestamp}
+	if s.db.hasObsRawHex {
+		scanArgs = append(scanArgs, &obsRawHex)
+	}
+	if s.db.hasResolvedPath {
+		scanArgs = append(scanArgs, &resolvedPathStr)
+	}
+	if s.db.hasScopeName {
+		scanArgs = append(scanArgs, &scopeName)
+	}
+
+	for rows.Next() {
 		if err := rows.Scan(scanArgs...); err != nil {
 			log.Printf("[store] loadChunk scan error: %v", err)
 			continue
@@ -1321,10 +1384,10 @@ func (s *PacketStore) loadChunk(from, to time.Time) error {
 			obs := &StoreObs{
 				ID:             oid,
 				TransmissionID: txID,
-				ObserverID:     obsIDStr,
-				ObserverName:   nullStrVal(observerName),
-				ObserverIATA:   nullStrVal(observerIATA),
-				Direction:      nullStrVal(direction),
+				ObserverID:     internStr(obsIDStr),
+				ObserverName:   internStr(nullStrVal(observerName)),
+				ObserverIATA:   internStr(nullStrVal(observerIATA)),
+				Direction:      internStr(nullStrVal(direction)),
 				SNR:            nullFloatPtr(snr),
 				RSSI:           nullFloatPtr(rssi),
 				Score:          nullIntPtr(score),
@@ -1355,8 +1418,7 @@ func (s *PacketStore) loadChunk(from, to time.Time) error {
 			// they were heard via — Load() does the equivalent inline.
 			rpStr := nullStrVal(resolvedPathStr)
 			if rpStr != "" {
-				rp := unmarshalResolvedPath(rpStr)
-				pks := extractResolvedPubkeys(rp)
+				pks := resolvedPubkeysFromJSON(rpStr)
 				accumulateDedup(localResolvedPKsByTx, localResolvedSeenByTx, txID, pks)
 			} else if relayPM != nil && obsPJ != "" && obsPJ != "[]" {
 				// resolved_path not persisted — reconstruct relay hops from
@@ -2908,10 +2970,10 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			decodedJSON:  nullStrVal(decodedJSON),
 			routeType:    nullIntPtr(routeType),
 			payloadType:  nullIntPtr(payloadType),
-			observerID:   nullStrVal(observerID),
-			observerName: nullStrVal(observerName),
-			observerIATA: nullStrVal(observerIATA),
-			direction:    nullStrVal(direction),
+			observerID:   internStr(nullStrVal(observerID)),
+			observerName: internStr(nullStrVal(observerName)),
+			observerIATA: internStr(nullStrVal(observerIATA)),
+			direction:    internStr(nullStrVal(direction)),
 			pathJSON:     nullStrVal(pathJSON),
 			obsTS:        nullStrVal(obsTimestamp),
 			obsRawHex:    nullStrVal(obsRawHex),
@@ -3025,7 +3087,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			obs := &StoreObs{
 				ID:             oid,
 				TransmissionID: r.txID,
-				ObserverID:     r.observerID,
+				ObserverID:     r.observerID, // interned while scanning, outside s.mu
 				ObserverName:   r.observerName,
 				ObserverIATA:   r.observerIATA,
 				Direction:      r.direction,
@@ -3123,14 +3185,8 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			},
 		}
 		if tx.DecodedJSON != "" {
-			if payload := tx.ParsedDecoded(); payload != nil {
-				// Copy the cached map so broadcast consumers cannot mutate
-				// the shared cache or cause a data race (#1871 review).
-				cp := make(map[string]interface{}, len(payload))
-				for k, v := range payload {
-					cp[k] = v
-				}
-				decoded["payload"] = cp
+			if payload := broadcastPayload(tx); payload != nil {
+				decoded["payload"] = payload
 			}
 		}
 		// For TRACE packets, decode the full packet to include path.hopsCompleted
@@ -3221,6 +3277,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]interface{} {
 	// Must run even when observation IDs/timestamps have not changed.
 	s.refreshAdvertEvidence()
+	s.refreshTxRewrites() // #2107: rewrites never move IDs, so poll them here too
 	if limit <= 0 {
 		limit = 500
 	}
@@ -3289,10 +3346,10 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		obsRows = append(obsRows, obsRow{
 			obsID:        oid,
 			txID:         txID,
-			observerID:   nullStrVal(observerID),
-			observerName: nullStrVal(observerName),
-			observerIATA: nullStrVal(observerIATA),
-			direction:    nullStrVal(direction),
+			observerID:   internStr(nullStrVal(observerID)),
+			observerName: internStr(nullStrVal(observerName)),
+			observerIATA: internStr(nullStrVal(observerIATA)),
+			direction:    internStr(nullStrVal(direction)),
 			snr:          nullFloatPtr(snr),
 			rssi:         nullFloatPtr(rssi),
 			score:        nullIntPtr(score),
@@ -3341,7 +3398,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		obs := &StoreObs{
 			ID:             r.obsID,
 			TransmissionID: r.txID,
-			ObserverID:     r.observerID,
+			ObserverID:     r.observerID, // interned while scanning, outside s.mu
 			ObserverName:   r.observerName,
 			ObserverIATA:   r.observerIATA,
 			Direction:      r.direction,
@@ -3396,14 +3453,8 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			},
 		}
 		if tx.DecodedJSON != "" {
-			if payload := tx.ParsedDecoded(); payload != nil {
-				// Copy the cached map so broadcast consumers cannot mutate
-				// the shared cache or cause a data race (#1871 review).
-				cp := make(map[string]interface{}, len(payload))
-				for k, v := range payload {
-					cp[k] = v
-				}
-				decoded["payload"] = cp
+			if payload := broadcastPayload(tx); payload != nil {
+				decoded["payload"] = payload
 			}
 		}
 		// For TRACE packets, decode the full packet to include path.hopsCompleted
@@ -7121,6 +7172,10 @@ type prefixMap struct {
 	// contract they do not forward packets. nil/empty preserves the
 	// pre-#1290 behavior (every prefix-matching node is a candidate).
 	nonRelay map[string]struct{}
+	// relay holds, for each prefix whose candidates include a listener, the
+	// candidates without them; markNonRelay builds it so relayCandidates,
+	// called per hop of every observation resolved, never copies.
+	relay map[string][]nodeInfo
 }
 
 // markNonRelay registers a set of lowercase pubkeys as listener-only.
@@ -7135,6 +7190,33 @@ func (pm *prefixMap) markNonRelay(pubkeys []string) {
 	}
 	for _, pk := range pubkeys {
 		pm.nonRelay[strings.ToLower(pk)] = struct{}{}
+	}
+	// A listener can only be in the lists of its own prefixes (and its full
+	// key), so those are the only lists to filter: at most maxPrefixLen+1
+	// per listener, rather than every list in pm.m. markNonRelay runs on
+	// every node cache rebuild.
+	pm.relay = make(map[string][]nodeInfo)
+	for pk := range pm.nonRelay {
+		for l := 2; l <= len(pk); l++ {
+			if l > maxPrefixLen && l < len(pk) {
+				l = len(pk) // past the prefixes, only the full key is a list
+			}
+			key := pk[:l]
+			if _, done := pm.relay[key]; done {
+				continue
+			}
+			candidates, ok := pm.m[key]
+			if !ok {
+				continue
+			}
+			filtered := candidates[:0:0]
+			for i := range candidates {
+				if _, isListener := pm.nonRelay[strings.ToLower(candidates[i].PublicKey)]; !isListener {
+					filtered = append(filtered, candidates[i])
+				}
+			}
+			pm.relay[key] = filtered
+		}
 	}
 }
 
@@ -7251,18 +7333,11 @@ func (s *PacketStore) InvalidateNodeCache() {
 // when the only matching prefix belonged to a listener). Empty pm.nonRelay
 // preserves the pre-#1290 behavior exactly (back-compat).
 func (pm *prefixMap) relayCandidates(hop string) []nodeInfo {
-	candidates := pm.m[strings.ToLower(hop)]
-	if len(pm.nonRelay) == 0 || len(candidates) == 0 {
-		return candidates
+	h := strings.ToLower(hop)
+	if filtered, ok := pm.relay[h]; ok {
+		return filtered
 	}
-	filtered := candidates[:0:0]
-	for i := range candidates {
-		if _, isListener := pm.nonRelay[strings.ToLower(candidates[i].PublicKey)]; isListener {
-			continue
-		}
-		filtered = append(filtered, candidates[i])
-	}
-	return filtered
+	return pm.m[h]
 }
 
 func (pm *prefixMap) resolve(hop string) *nodeInfo {

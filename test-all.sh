@@ -48,6 +48,7 @@ node tests/unit/test-confidence-indicator.js
 node tests/unit/test-coverage-gate.js
 node tests/unit/test-customizer-v2.js
 node tests/unit/test-drag-manager.js
+node tests/unit/test-e2e-coverage.js
 node tests/unit/test-direct-rf-heard-by.js
 node tests/unit/test-embed-mode-1369.js
 node tests/unit/test-fetch-all-nodes-pagination.js
@@ -101,6 +102,7 @@ node tests/unit/test-issue-1509-nav-active-bg.js
 node tests/unit/test-issue-1518-home-url.js
 node tests/unit/test-issue-1532-live-fullscreen.js
 node tests/unit/test-issue-1562-observers-summary.js
+node tests/unit/test-issue-661-observer-airtime.js
 node tests/unit/test-issue-1563-aggregate-and-inflight.js
 node tests/unit/test-issue-1574-live-map-max-nodes.js
 node tests/unit/test-issue-1606-pagination.js
