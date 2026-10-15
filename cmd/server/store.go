@@ -189,17 +189,17 @@ type PacketStore struct {
 
 	mu            sync.RWMutex
 	db            *DB
-	packets       []*StoreTx                 // sorted by first_seen ASC (oldest first; newest at tail)
-	byHash        map[string]*StoreTx        // hash → *StoreTx
-	byTxID        map[int]*StoreTx           // transmission_id → *StoreTx
-	byObsID       map[int]*StoreObs          // observation_id → *StoreObs
-	maxTxID       int                        // highest transmission_id in store
-	maxObsID      int                        // highest observation_id in store
-	byObserver    map[string][]*StoreObs     // observer_id → observations
-	byNode        map[string][]*StoreTx      // pubkey → transmissions
-	nodeHashes    map[string]map[string]bool // pubkey → Set<hash>
-	byPathHop     map[string][]*StoreTx      // lowercase hop/pubkey → transmissions with that hop in path
-	byPayloadType map[int][]*StoreTx         // payload_type → transmissions
+	packets       []*StoreTx                  // sorted by first_seen ASC (oldest first; newest at tail)
+	byHash        map[string]*StoreTx         // hash → *StoreTx
+	byTxID        map[int]*StoreTx            // transmission_id → *StoreTx
+	byObsID       map[int]*StoreObs           // observation_id → *StoreObs
+	maxTxID       int                         // highest transmission_id in store
+	maxObsID      int                         // highest observation_id in store
+	byObserver    map[string][]*StoreObs      // observer_id → observations
+	byNode        map[string][]*StoreTx       // pubkey → transmissions
+	nodeHashes    map[string]map[int]struct{} // pubkey → set of tx IDs listed in byNode[pubkey]
+	byPathHop     map[string][]*StoreTx       // lowercase hop/pubkey → transmissions with that hop in path
+	byPayloadType map[int][]*StoreTx          // payload_type → transmissions
 	loaded        bool
 	totalObs      int
 	insertCount   int64
@@ -722,7 +722,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		byObserver:    make(map[string][]*StoreObs),
 		byNode:        make(map[string][]*StoreTx),
 		byPathHop:     make(map[string][]*StoreTx),
-		nodeHashes:    make(map[string]map[string]bool),
+		nodeHashes:    newNodeSets(),
 		byPayloadType: make(map[int][]*StoreTx),
 		rfCache:       make(map[string]*cachedResult),
 		topoCache:     make(map[string]*cachedResult),
@@ -1914,17 +1914,27 @@ func (s *PacketStore) indexByNode(tx *StoreTx) bool {
 	return foundNew
 }
 
+// newNodeSets returns an empty nodeHashes. The sets hold transmission IDs,
+// which take less memory than the 16-character hashes they replaced.
+func newNodeSets() map[string]map[int]struct{} { return make(map[string]map[int]struct{}) }
+
+// nodeHasTx reports whether tx is listed under pubkey.
+func (s *PacketStore) nodeHasTx(pubkey string, tx *StoreTx) bool {
+	_, ok := s.nodeHashes[pubkey][tx.ID]
+	return ok
+}
+
 // addToByNode adds tx to byNode[pubkey] with dedup via nodeHashes.
 // Returns true if this is a genuinely new node (pubkey not seen before).
 func (s *PacketStore) addToByNode(tx *StoreTx, pubkey string) bool {
 	isNew := s.nodeHashes[pubkey] == nil
 	if isNew {
-		s.nodeHashes[pubkey] = make(map[string]bool)
+		s.nodeHashes[pubkey] = make(map[int]struct{})
 	}
-	if s.nodeHashes[pubkey][tx.Hash] {
+	if _, ok := s.nodeHashes[pubkey][tx.ID]; ok {
 		return false
 	}
-	s.nodeHashes[pubkey][tx.Hash] = true
+	s.nodeHashes[pubkey][tx.ID] = struct{}{}
 	s.byNode[pubkey] = append(s.byNode[pubkey], tx)
 	return isNew
 }
@@ -5174,7 +5184,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 				for _, field := range []string{"pubKey", "destPubKey", "srcPubKey"} {
 					if v, ok := decoded[field].(string); ok && v != "" {
 						if hashes, ok := s.nodeHashes[v]; ok {
-							delete(hashes, tx.Hash)
+							delete(hashes, tx.ID)
 							if len(hashes) == 0 {
 								delete(s.nodeHashes, v)
 							}
@@ -5196,7 +5206,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 				continue
 			}
 			if hashes, ok := s.nodeHashes[pk]; ok {
-				delete(hashes, tx.Hash)
+				delete(hashes, tx.ID)
 				if len(hashes) == 0 {
 					delete(s.nodeHashes, pk)
 				}
@@ -9795,20 +9805,19 @@ func (s *PacketStore) GetBulkHealth(limit int, region, area string) []map[string
 	var regionNodeKeys map[string]bool
 	if region != "" {
 		if regionObs != nil {
-			regionalHashes := make(map[string]bool)
+			regionalTxIDs := make(map[int]bool)
 			for obsID := range regionObs {
 				obsList := s.byObserver[obsID]
 				for _, o := range obsList {
-					tx := s.byTxID[o.TransmissionID]
-					if tx != nil {
-						regionalHashes[tx.Hash] = true
+					if s.byTxID[o.TransmissionID] != nil {
+						regionalTxIDs[o.TransmissionID] = true
 					}
 				}
 			}
 			regionNodeKeys = make(map[string]bool)
-			for pk, hashes := range s.nodeHashes {
-				for h := range hashes {
-					if regionalHashes[h] {
+			for pk, txIDs := range s.nodeHashes {
+				for id := range txIDs {
+					if regionalTxIDs[id] {
 						regionNodeKeys[pk] = true
 						break
 					}
