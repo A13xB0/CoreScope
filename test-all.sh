@@ -123,6 +123,7 @@ node tests/unit/test-issue-1668-m4-per-route.js
 node tests/unit/test-issue-1697-mqtt-mobile-e2e.js
 node tests/unit/test-issue-1699-retransmission-chart.js
 node tests/unit/test-issue-2193-packets-per-hour.js
+node tests/unit/test-analytics-theme-refresh-before-data.js
 node tests/unit/test-issue-1705-subpath-contrast.js
 node tests/unit/test-issue-1753-copy-url-slash.js
 node tests/unit/test-issue-1770-mobile-row-clamp.js
