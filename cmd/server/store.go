@@ -5280,6 +5280,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 				filtered = append(filtered, o)
 			}
 		}
+		clear(obsList[len(filtered):])
 		if len(filtered) == 0 {
 			delete(s.byObserver, obsID)
 		} else {
@@ -5296,6 +5297,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 				filtered = append(filtered, t)
 			}
 		}
+		clear(ptList[len(filtered):])
 		if len(filtered) == 0 {
 			delete(s.byPayloadType, pt)
 		} else {
@@ -5312,6 +5314,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 				filtered = append(filtered, t)
 			}
 		}
+		clear(nodeList[len(filtered):])
 		if len(filtered) == 0 {
 			delete(s.byNode, nodeKey)
 		} else {
@@ -5330,6 +5333,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 			newDistHops = append(newDistHops, s.distHops[i])
 		}
 	}
+	clear(s.distHops[len(newDistHops):])
 	s.distHops = newDistHops
 
 	newDistPaths := s.distPaths[:0]
@@ -5338,10 +5342,12 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 			newDistPaths = append(newDistPaths, s.distPaths[i])
 		}
 	}
+	clear(s.distPaths[len(newDistPaths):])
 	s.distPaths = newDistPaths
 
 	// Trim packets slice
 	n := copy(s.packets, s.packets[cutoffIdx:])
+	clear(s.packets[n:])
 	s.packets = s.packets[:n]
 	s.totalObs -= evictedObs
 
