@@ -42,12 +42,11 @@ func TestObserverAnalyticsFormatLabel(t *testing.T) {
 // buildObsForTest constructs a StoreObs with the parsed-time cache primed so
 // tests don't depend on time.Parse in the helpers.
 func buildObsForTest(txID int, ts time.Time, snr *float64, pathJSON string) *StoreObs {
-	o := &StoreObs{
+	o := withSignal(&StoreObs{
 		TransmissionID: txID,
 		Timestamp:      ts.UTC().Format(time.RFC3339Nano),
-		SNR:            snr,
 		PathJSON:       pathJSON,
-	}
+	}, snr, nil)
 	// Prime the cache by calling ParsedTime once.
 	o.ParsedTime()
 	return o

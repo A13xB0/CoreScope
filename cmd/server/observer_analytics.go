@@ -153,11 +153,13 @@ func buildNodesTimeline(filtered []*StoreObs, days int, txByID map[int]*StoreTx)
 func buildSnrDistribution(filtered []*StoreObs) []SnrDistributionEntry {
 	snrBuckets := map[int]*SnrDistributionEntry{}
 	for _, obs := range filtered {
-		if obs.SNR == nil {
+		snrp := obs.SNRPtr()
+		if snrp == nil {
 			continue
 		}
-		bucket := int(*obs.SNR) / 2 * 2
-		if *obs.SNR < 0 && int(*obs.SNR) != bucket {
+		snr := *snrp
+		bucket := int(snr) / 2 * 2
+		if snr < 0 && int(snr) != bucket {
 			bucket -= 2
 		}
 		if snrBuckets[bucket] == nil {
