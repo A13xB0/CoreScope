@@ -56,12 +56,11 @@ func ngMakeTx(id int, payloadType int, decodedJSON string, obs []*StoreObs) *Sto
 }
 
 func ngMakeObs(observerID, pathJSON, timestamp string, snr *float64) *StoreObs {
-	return &StoreObs{
+	return withSignal(&StoreObs{
 		ObserverID: observerID,
 		PathJSON:   pathJSON,
 		Timestamp:  timestamp,
-		SNR:        snr,
-	}
+	}, snr, nil)
 }
 
 func ngFromNodeJSON(pubkey string) string {
@@ -907,7 +906,7 @@ func BenchmarkBuildFromStore(b *testing.B) {
 			PayloadType: &pt,
 			DecodedJSON: `{"pubKey":"aaaa1111"}`,
 			Observations: []*StoreObs{
-				{ObserverID: "bbbb2222", PathJSON: `["cccc"]`, Timestamp: nowStr, SNR: ngFloatPtr(-5.0)},
+				withSignal(&StoreObs{ObserverID: "bbbb2222", PathJSON: `["cccc"]`, Timestamp: nowStr}, ngFloatPtr(-5.0), nil),
 			},
 		})
 	}

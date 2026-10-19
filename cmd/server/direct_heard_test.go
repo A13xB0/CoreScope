@@ -223,11 +223,11 @@ func TestComputeDirectHeardAggregates(t *testing.T) {
 	snr := func(v float64) *float64 { return &v }
 	tx := dhTx(RouteFlood, PayloadTXT_MSG, "")
 	tx.Observations = []*StoreObs{
-		{ObserverID: "obsA", ObserverName: "A", PathJSON: `["BB11"]`, SNR: snr(10), RSSI: snr(-50)},
-		{ObserverID: "obsA", ObserverName: "A", PathJSON: `["BB11"]`, SNR: snr(20), RSSI: snr(-70)},
-		{ObserverID: "obsB", ObserverName: "B", PathJSON: `["BB11","A433"]`, SNR: snr(5)},
+		withSignal(&StoreObs{ObserverID: "obsA", ObserverName: "A", PathJSON: `["BB11"]`}, snr(10), snr(-50)),
+		withSignal(&StoreObs{ObserverID: "obsA", ObserverName: "A", PathJSON: `["BB11"]`}, snr(20), snr(-70)),
+		withSignal(&StoreObs{ObserverID: "obsB", ObserverName: "B", PathJSON: `["BB11","A433"]`}, snr(5), nil),
 		// Ambiguous last hop: contributes to nobody.
-		{ObserverID: "obsC", ObserverName: "C", PathJSON: `["A4"]`, SNR: snr(1)},
+		withSignal(&StoreObs{ObserverID: "obsC", ObserverName: "C", PathJSON: `["A4"]`}, snr(1), nil),
 	}
 
 	idx := buildDirectHeardIndex([]*StoreTx{tx}, buildPrefixMap(directHeardNodes))
