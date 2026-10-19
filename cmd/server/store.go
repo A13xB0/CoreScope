@@ -5291,7 +5291,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 			delete(s.byPathHop, key)
 			delete(s.pathHopKeys, key)
 		} else {
-			s.byPathHop[key] = filtered
+			s.byPathHop[key] = shrinkFiltered(filtered)
 		}
 	}
 	s.invalidateRelayStatsCache()
@@ -5309,7 +5309,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 		if len(filtered) == 0 {
 			delete(s.byObserver, obsID)
 		} else {
-			s.byObserver[obsID] = filtered
+			s.byObserver[obsID] = shrinkFiltered(filtered)
 		}
 	}
 
@@ -5326,7 +5326,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 		if len(filtered) == 0 {
 			delete(s.byPayloadType, pt)
 		} else {
-			s.byPayloadType[pt] = filtered
+			s.byPayloadType[pt] = shrinkFiltered(filtered)
 		}
 	}
 
@@ -5343,7 +5343,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 		if len(filtered) == 0 {
 			delete(s.byNode, nodeKey)
 		} else {
-			s.byNode[nodeKey] = filtered
+			s.byNode[nodeKey] = shrinkFiltered(filtered)
 		}
 	}
 
@@ -5359,7 +5359,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 		}
 	}
 	clear(s.distHops[len(newDistHops):])
-	s.distHops = newDistHops
+	s.distHops = shrinkFiltered(newDistHops)
 
 	newDistPaths := s.distPaths[:0]
 	for i := range s.distPaths {
@@ -5368,12 +5368,12 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 		}
 	}
 	clear(s.distPaths[len(newDistPaths):])
-	s.distPaths = newDistPaths
+	s.distPaths = shrinkFiltered(newDistPaths)
 
 	// Trim packets slice
 	n := copy(s.packets, s.packets[cutoffIdx:])
 	clear(s.packets[n:])
-	s.packets = s.packets[:n]
+	s.packets = shrinkFiltered(s.packets[:n])
 	s.totalObs -= evictedObs
 
 	evictCount := cutoffIdx
@@ -5398,6 +5398,21 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 	s.CheckResolvedPubkeyIndexSize()
 
 	return evictCount
+}
+
+// shrinkFiltered returns list, copied into a right-sized backing array
+// when filtering has left more than a third of its capacity unused.
+// Eviction filters indexes in place, and startup loads the whole retention
+// window before evicting down to maxMemoryMB, so without this every index
+// keeps the capacity of the largest window it ever held. Lists under 64
+// slots are left alone. After a shrink, appends grow the list by at most
+// 2x and a typical eviction pass removes ~15%, so lists don't flip
+// between shrinking and growing on every pass.
+func shrinkFiltered[T any](list []T) []T {
+	if c := cap(list); c >= 64 && c > len(list)+len(list)/2 {
+		return slices.Clone(list)
+	}
+	return list
 }
 
 // RunEviction acquires the write lock and runs eviction. Safe to call from
