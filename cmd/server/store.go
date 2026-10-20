@@ -5238,7 +5238,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 		// Remove from nodeHashes and collect affected node keys.
 		// Must mirror indexByNode: process decoded JSON fields AND resolved_path pubkeys.
 		evictedFromNode := make(map[string]bool)
-		if tx.DecodedJSON != "" {
+		if tx.DecodedJSON != "" && strings.Contains(tx.DecodedJSON, "ubKey") {
 			if decoded := tx.ParsedDecoded(); decoded != nil {
 				for _, field := range []string{"pubKey", "destPubKey", "srcPubKey"} {
 					if v, ok := decoded[field].(string); ok && v != "" {
@@ -5469,10 +5469,14 @@ func buildHopContextPubkeys(tx *StoreTx, pm *prefixMap) []string {
 	// Sender / originator pubkey from decoded payload. Use the cached
 	// ParsedDecoded() (sync.Once-gated) instead of re-unmarshaling — the
 	// helper is hot (3 distance sites + analytics topology, all 30k+ tx
-	// loops). See #1197 (carmack/adversarial r1).
-	if dec := tx.ParsedDecoded(); dec != nil {
-		if pk, ok := dec["pubKey"].(string); ok {
-			add(pk)
+	// loops). See #1197 (carmack/adversarial r1). Most payloads carry no
+	// pubKey at all; checking the JSON first keeps ParsedDecoded from
+	// decoding and caching each of those as a map for the packet's life.
+	if strings.Contains(tx.DecodedJSON, `"pubKey"`) {
+		if dec := tx.ParsedDecoded(); dec != nil {
+			if pk, ok := dec["pubKey"].(string); ok {
+				add(pk)
+			}
 		}
 	}
 
