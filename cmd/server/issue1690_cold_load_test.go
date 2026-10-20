@@ -15,7 +15,6 @@ package main
 import (
 	"encoding/json"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -81,10 +80,13 @@ func Test1690_ColdLoad_TimeAxis(t *testing.T) {
 	}
 }
 
-// Test1690_BackgroundLoadHonesty seeds 1000 transmissions but caps the
-// store's memory budget so it can only fit a fraction. After
-// loadBackgroundChunks runs, backgroundLoadDone must be FALSE and
-// backgroundLoadFailed must be TRUE because actual coverage is < 90%.
+// Test1690_BackgroundLoadHonesty seeds 5000 transmissions but caps the
+// store's memory budget so it can only fit a fraction. The background
+// loader then has nothing it may load, and the store must say so honestly:
+// the real coverage ratio, and a covered window that starts at the memory
+// edge rather than claiming to hold the whole database. That is the
+// configured outcome, not a failed load, so done=true and failed=false (a
+// store capped by memory never loads more, and "loading" would be a lie).
 func Test1690_BackgroundLoadHonesty(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
@@ -112,20 +114,24 @@ func Test1690_BackgroundLoadHonesty(t *testing.T) {
 	}
 	store.loadBackgroundChunks()
 
-	if store.backgroundLoadDone.Load() {
-		t.Errorf("backgroundLoadDone=true with only %d/5000 packets loaded; "+
-			"must be false until coverage ≥ 90%%", len(store.packets))
+	if len(store.packets) >= 4500 {
+		t.Fatalf("loaded %d/5000 packets; the 1 MB cap should have stopped the load well short", len(store.packets))
 	}
-	if !store.backgroundLoadFailed.Load() {
-		t.Errorf("backgroundLoadFailed=false despite under-coverage "+
-			"(%d/5000 packets loaded); must be true with a reason", len(store.packets))
+	store.bgErrMu.Lock()
+	ratio := store.loadCoverageRatio
+	store.bgErrMu.Unlock()
+	if want := float64(len(store.packets)) / 5000; ratio != want {
+		t.Errorf("loadCoverageRatio=%v, want the real ratio %v", ratio, want)
 	}
-	// The error message must mention a percentage so operators can see
-	// the actual ratio surface in the perf endpoint.
-	errMsg := store.BackgroundLoadError()
-	if !strings.Contains(errMsg, "%") {
-		t.Errorf("backgroundLoadError=%q; expected human-readable ratio "+
-			"(e.g. 'loaded X%% of Y rows')", errMsg)
+	if !store.backgroundLoadDone.Load() || store.backgroundLoadFailed.Load() {
+		t.Errorf("done=%v failed=%v (%q); a load stopped by maxMemoryMB is complete, not failed",
+			store.backgroundLoadDone.Load(), store.backgroundLoadFailed.Load(), store.BackgroundLoadError())
+	}
+	store.mu.RLock()
+	_, why := store.coverageStart(time.Now().UTC())
+	store.mu.RUnlock()
+	if why != coverageMemory {
+		t.Errorf("coverage reason=%q, want %q: the store must not claim to hold the whole database", why, coverageMemory)
 	}
 }
 
