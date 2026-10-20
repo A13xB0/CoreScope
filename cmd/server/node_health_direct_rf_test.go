@@ -38,11 +38,10 @@ func TestNodeHealth_RelayedObserverIsNotHeardBy(t *testing.T) {
 		ObservationCount: 1,
 		ObserverID:       "farawayobserver",
 		ObserverName:     "FarAway",
-		Observations: []*StoreObs{withSignal(&StoreObs{
-			ObserverID:   "farawayobserver",
-			ObserverName: "FarAway",
-			PathJSON:     `["AABB","1234","5678"]`,
-		}, &snr, &rssi)},
+		Observations: []*StoreObs{withSignal(withLabel(&StoreObs{
+			ObserverID: "farawayobserver",
+			PathJSON:   `["AABB","1234","5678"]`,
+		}, "FarAway", ""), &snr, &rssi)},
 	}
 
 	srv.store.mu.Lock()
