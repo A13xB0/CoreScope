@@ -977,9 +977,9 @@ func TestNodeClockSkew_EvidencePayload(t *testing.T) {
 		PayloadType: &pt,
 		DecodedJSON: `{"payload":{"timestamp":1700000060},"pubKey":"NODETEST"}`,
 		Observations: []*StoreObs{
-			{ObserverID: "obs1", ObserverName: "Observer Alpha", Timestamp: "2023-11-14T22:13:22Z"},
-			{ObserverID: "obs2", ObserverName: "Observer Beta", Timestamp: "2023-11-14T22:13:20Z"},
-			{ObserverID: "obs3", ObserverName: "Observer Gamma", Timestamp: "2023-11-14T22:13:19Z"},
+			withLabel(&StoreObs{ObserverID: "obs1", Timestamp: "2023-11-14T22:13:22Z"}, "Observer Alpha", ""),
+			withLabel(&StoreObs{ObserverID: "obs2", Timestamp: "2023-11-14T22:13:20Z"}, "Observer Beta", ""),
+			withLabel(&StoreObs{ObserverID: "obs3", Timestamp: "2023-11-14T22:13:19Z"}, "Observer Gamma", ""),
 		},
 	}
 	// Second hash to ensure we get multiple evidence entries.
@@ -988,9 +988,9 @@ func TestNodeClockSkew_EvidencePayload(t *testing.T) {
 		PayloadType: &pt,
 		DecodedJSON: `{"payload":{"timestamp":1700003660},"pubKey":"NODETEST"}`,
 		Observations: []*StoreObs{
-			{ObserverID: "obs1", ObserverName: "Observer Alpha", Timestamp: "2023-11-14T23:13:22Z"},
-			{ObserverID: "obs2", ObserverName: "Observer Beta", Timestamp: "2023-11-14T23:13:20Z"},
-			{ObserverID: "obs3", ObserverName: "Observer Gamma", Timestamp: "2023-11-14T23:13:19Z"},
+			withLabel(&StoreObs{ObserverID: "obs1", Timestamp: "2023-11-14T23:13:22Z"}, "Observer Alpha", ""),
+			withLabel(&StoreObs{ObserverID: "obs2", Timestamp: "2023-11-14T23:13:20Z"}, "Observer Beta", ""),
+			withLabel(&StoreObs{ObserverID: "obs3", Timestamp: "2023-11-14T23:13:19Z"}, "Observer Gamma", ""),
 		},
 	}
 

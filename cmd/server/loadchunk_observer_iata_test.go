@@ -43,8 +43,8 @@ func TestLoadChunkKeepsObserverIATA(t *testing.T) {
 	}
 	for _, tx := range store.packets {
 		for _, o := range tx.Observations {
-			if o.ObserverIATA != "EDI" {
-				t.Fatalf("tx %d: observation IATA = %q, want EDI", tx.ID, o.ObserverIATA)
+			if o.ObserverIATA() != "EDI" {
+				t.Fatalf("tx %d: observation IATA = %q, want EDI", tx.ID, o.ObserverIATA())
 			}
 		}
 		if tx.ObserverIATA != "EDI" {

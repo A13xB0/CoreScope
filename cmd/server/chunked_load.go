@@ -606,8 +606,6 @@ func (s *PacketStore) scanAndMergeChunk(rows *sql.Rows, relayPM *prefixMap, cold
 				ID:             oid,
 				TransmissionID: txID,
 				ObserverID:     internStr(obsIDStr),
-				ObserverName:   internStr(nullStrVal(observerName)),
-				ObserverIATA:   internStr(nullStrVal(observerIATA)),
 				Direction:      internStr(nullStrVal(direction)),
 				PathJSON:       obsPJ,
 				// Raw frames stay in SQLite; hash equality does not imply route
@@ -615,6 +613,7 @@ func (s *PacketStore) scanAndMergeChunk(rows *sql.Rows, relayPM *prefixMap, cold
 				// Packet-detail queries can read the original observation raw.
 				Timestamp: normalizeTimestamp(nullStrVal(obsTimestamp)),
 			}
+			obs.setObserverLabel(nullStrVal(observerName), nullStrVal(observerIATA))
 			obs.setSignal(snr, rssi, score)
 
 			rpStr := nullStrVal(resolvedPathStr)

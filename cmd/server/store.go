@@ -80,11 +80,8 @@ type StoreObs struct {
 	ID             int
 	TransmissionID int
 	ObserverID     string
-	ObserverName   string
-	ObserverIATA   string
 	Direction      string
 	PathJSON       string
-	RawHex         string
 	Timestamp      string
 
 	// Signal values are held inline: as *float64 / *int each one was its
@@ -95,6 +92,12 @@ type StoreObs struct {
 	rssi   float64
 	score  int32
 	sigSet uint8
+
+	// label is the observer name/IATA pair's slot in the shared label
+	// table (see internObserverLabel). Read it through ObserverName and
+	// ObserverIATA; set it with setObserverLabel. The raw frame is not
+	// held per observation at all (#881, #1999).
+	label uint16
 
 	// #1481 P0-2: cached parsed timestamp. The legacy handlers parse
 	// Timestamp as RFC3339Nano/RFC3339/"2006-01-02 15:04:05" with a
@@ -111,6 +114,16 @@ const (
 	sigRSSI
 	sigScore
 )
+
+// setObserverLabel records the observer name and IATA code the observation
+// was stored with.
+func (o *StoreObs) setObserverLabel(name, iata string) { o.label = internObserverLabel(name, iata) }
+
+// ObserverName is the observer's name as of this observation.
+func (o *StoreObs) ObserverName() string { return observerLabelAt(o.label).name }
+
+// ObserverIATA is the observer's IATA code as of this observation.
+func (o *StoreObs) ObserverIATA() string { return observerLabelAt(o.label).iata }
 
 // setSignal stores the observation's SNR, RSSI and score; a NULL column
 // leaves that value unset.
@@ -1115,12 +1128,11 @@ func (s *PacketStore) Load() error {
 				ID:             oid,
 				TransmissionID: txID,
 				ObserverID:     internStr(obsIDStr),
-				ObserverName:   internStr(nullStrVal(observerName)),
-				ObserverIATA:   internStr(nullStrVal(observerIATA)),
 				Direction:      internStr(nullStrVal(direction)),
 				PathJSON:       obsPJ,
 				Timestamp:      normalizeTimestamp(nullStrVal(obsTimestamp)),
 			}
+			obs.setObserverLabel(nullStrVal(observerName), nullStrVal(observerIATA))
 			obs.setSignal(snr, rssi, score)
 
 			// Decode-window: extract resolved pubkeys for index, don't store on struct.
@@ -1429,12 +1441,11 @@ func (s *PacketStore) loadChunk(from, to time.Time) error {
 				ID:             oid,
 				TransmissionID: txID,
 				ObserverID:     internStr(obsIDStr),
-				ObserverName:   internStr(nullStrVal(observerName)),
-				ObserverIATA:   internStr(nullStrVal(observerIATA)),
 				Direction:      internStr(nullStrVal(direction)),
 				PathJSON:       obsPJ,
 				Timestamp:      normalizeTimestamp(nullStrVal(obsTimestamp)),
 			}
+			obs.setObserverLabel(nullStrVal(observerName), nullStrVal(observerIATA))
 			obs.setSignal(snr, rssi, score)
 
 			tx.addObservation(obs)
@@ -1875,8 +1886,8 @@ func pickBestObservation(tx *StoreTx) {
 		}
 	}
 	tx.ObserverID = best.ObserverID
-	tx.ObserverName = best.ObserverName
-	tx.ObserverIATA = best.ObserverIATA
+	tx.ObserverName = best.ObserverName()
+	tx.ObserverIATA = best.ObserverIATA()
 	// These point into best, which tx.Observations already keeps alive for
 	// as long as tx is in the store.
 	tx.SNR = best.SNRPtr()
@@ -2311,8 +2322,8 @@ func storeTxDistinctIatas(tx *StoreTx) []string {
 		seen[tx.ObserverIATA] = true
 	}
 	for _, o := range tx.Observations {
-		if o != nil && o.ObserverIATA != "" {
-			seen[o.ObserverIATA] = true
+		if o != nil && o.ObserverIATA() != "" {
+			seen[o.ObserverIATA()] = true
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -2744,7 +2755,8 @@ func (s *PacketStore) GetStoreMemoryBreakdown() *StoreMemoryBreakdown {
 			}
 			out.Observations++
 			obsPathJSON += int64(len(o.PathJSON) + strHdr)
-			obsStrings += int64(len(o.ObserverID)+len(o.ObserverName)+len(o.ObserverIATA)+len(o.Direction)+len(o.Timestamp)) + 5*strHdr
+			// Name and IATA are a shared label slot, not per-observation strings.
+			obsStrings += int64(len(o.ObserverID)+len(o.Direction)+len(o.Timestamp)) + 3*strHdr
 		}
 	}
 
@@ -3155,12 +3167,11 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				ID:             oid,
 				TransmissionID: r.txID,
 				ObserverID:     r.observerID, // interned while scanning, outside s.mu
-				ObserverName:   r.observerName,
-				ObserverIATA:   r.observerIATA,
 				Direction:      r.direction,
 				PathJSON:       r.pathJSON,
 				Timestamp:      normalizeTimestamp(r.obsTS),
 			}
+			obs.setObserverLabel(r.observerName, r.observerIATA)
 			obs.setSignalFrom(r.snr, r.rssi, r.score)
 
 			// Resolve path at ingest time using neighbor graph — decode-window discipline:
@@ -3273,7 +3284,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				"payload_type":      intPtrOrNil(tx.PayloadType),
 				"decoded_json":      strOrNil(tx.DecodedJSON),
 				"observer_id":       strOrNil(obs.ObserverID),
-				"observer_name":     strOrNil(obs.ObserverName),
+				"observer_name":     strOrNil(obs.ObserverName()),
 				"snr":               floatPtrOrNil(obs.SNRPtr()),
 				"rssi":              floatPtrOrNil(obs.RSSIPtr()),
 				"path_json":         strOrNil(obs.PathJSON),
@@ -3463,8 +3474,6 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			ID:             r.obsID,
 			TransmissionID: r.txID,
 			ObserverID:     r.observerID, // interned while scanning, outside s.mu
-			ObserverName:   r.observerName,
-			ObserverIATA:   r.observerIATA,
 			Direction:      r.direction,
 			PathJSON:       r.pathJSON,
 			// obs.RawHex deliberately NOT stored: it duplicates the parent
@@ -3472,6 +3481,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			// == "". Live-polled observations must not re-introduce the dup.
 			Timestamp: normalizeTimestamp(r.timestamp),
 		}
+		obs.setObserverLabel(r.observerName, r.observerIATA)
 		obs.setSignalFrom(r.snr, r.rssi, r.score)
 
 		// Resolve path at ingest time for late-arriving observations (review item #2).
@@ -3537,7 +3547,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			"payload_type":      intPtrOrNil(tx.PayloadType),
 			"decoded_json":      strOrNil(tx.DecodedJSON),
 			"observer_id":       strOrNil(obs.ObserverID),
-			"observer_name":     strOrNil(obs.ObserverName),
+			"observer_name":     strOrNil(obs.ObserverName()),
 			"snr":               floatPtrOrNil(obs.SNRPtr()),
 			"rssi":              floatPtrOrNil(obs.RSSIPtr()),
 			"path_json":         strOrNil(obs.PathJSON),
@@ -4209,8 +4219,8 @@ func enrichObsFields(obs *StoreObs, tx *StoreTx) map[string]interface{} {
 		"id":            obs.ID,
 		"timestamp":     strOrNil(obs.Timestamp),
 		"observer_id":   strOrNil(obs.ObserverID),
-		"observer_name": strOrNil(obs.ObserverName),
-		"observer_iata": strOrNil(obs.ObserverIATA),
+		"observer_name": strOrNil(obs.ObserverName()),
+		"observer_iata": strOrNil(obs.ObserverIATA()),
 		"direction":     strOrNil(obs.Direction),
 		"snr":           floatPtrOrNil(obs.SNRPtr()),
 		"rssi":          floatPtrOrNil(obs.RSSIPtr()),
@@ -4220,16 +4230,10 @@ func enrichObsFields(obs *StoreObs, tx *StoreTx) map[string]interface{} {
 
 	if tx != nil {
 		m["hash"] = strOrNil(tx.Hash)
-		// raw_hex comes from the transmission (#881). obs.RawHex is no longer
-		// retained when loading/ingesting the store — it duplicated this exact
-		// value (same content hash ⇒ same frame) and at ~10.6 observations/tx
-		// wasted ~98MB on a live ~1.7M-observation store. The obs.RawHex branch
-		// stays for callers that build a StoreObs from a response map.
-		if obs.RawHex != "" {
-			m["raw_hex"] = obs.RawHex
-		} else {
-			m["raw_hex"] = strOrNil(tx.RawHex)
-		}
+		// raw_hex comes from the transmission (#881): StoreObs holds no
+		// per-observation frame. Packet detail reads the observation's own
+		// bytes from SQLite on demand (#1999).
+		m["raw_hex"] = strOrNil(tx.RawHex)
 		m["payload_type"] = intPtrOrNil(tx.PayloadType)
 		m["route_type"] = intPtrOrNil(tx.RouteType)
 		m["decoded_json"] = strOrNil(tx.DecodedJSON)
@@ -4274,8 +4278,8 @@ func txToMap(tx *StoreTx, includeObservations ...bool) map[string]interface{} {
 			om := map[string]interface{}{
 				"id":            o.ID,
 				"observer_id":   strOrNil(o.ObserverID),
-				"observer_name": strOrNil(o.ObserverName),
-				"observer_iata": strOrNil(o.ObserverIATA),
+				"observer_name": strOrNil(o.ObserverName()),
+				"observer_iata": strOrNil(o.ObserverIATA()),
 				"snr":           floatPtrOrNil(o.SNRPtr()),
 				"rssi":          floatPtrOrNil(o.RSSIPtr()),
 				"path_json":     strOrNil(o.PathJSON),
@@ -5055,8 +5059,8 @@ func estimateStoreTxBytesTypical(numObs int) int64 {
 // ResolvedPath membership index overhead is tracked separately.
 func estimateStoreObsBytes(obs *StoreObs) int64 {
 	base := int64(storeObsBaseBytes)
-	base += int64(len(obs.PathJSON) + len(obs.ObserverID) + len(obs.ObserverName) +
-		len(obs.ObserverIATA) + len(obs.Direction) + len(obs.RawHex) + len(obs.Timestamp))
+	base += int64(len(obs.PathJSON) + len(obs.ObserverID) + len(obs.ObserverName()) +
+		len(obs.ObserverIATA()) + len(obs.Direction) + len(obs.Timestamp))
 	base += int64(numIndexesPerObs * indexEntryBytes)
 	// ResolvedPath field removed (#800) — no per-obs RP overhead
 	return base
