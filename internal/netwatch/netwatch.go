@@ -232,8 +232,8 @@ type Watch struct {
 	total     ring
 	corridors []*corridorState
 	routes    []*routeState
-	seen      map[int64]map[uint64]struct{} // hour -> hashes of keys already counted
-	hash      maphash.Hash                  // hashes seen keys; guarded by mu
+	seen      map[int64]*hashSet // hour -> hashes of keys already counted
+	hash      maphash.Hash       // hashes seen keys; guarded by mu
 	closed    []Incident
 	evaluated int64
 }
@@ -242,7 +242,7 @@ type Watch struct {
 func New(opt Options, loc Locator) *Watch {
 	opt = opt.withDefaults()
 	w := &Watch{opt: opt, loc: loc, nodes: map[string]*node{}, observers: map[string]ring{},
-		links: map[[2]string]ring{}, total: make(ring, opt.WindowHours), seen: map[int64]map[uint64]struct{}{}}
+		links: map[[2]string]ring{}, total: make(ring, opt.WindowHours), seen: map[int64]*hashSet{}}
 	for _, c := range opt.Corridors {
 		cs := &corridorState{Corridor: c, count: make(ring, opt.WindowHours), carriers: map[int64]map[string]int{}}
 		for i := range cs.dir {
@@ -341,14 +341,10 @@ func (w *Watch) once(h int64, k seenKey) bool {
 
 	m := w.seen[h]
 	if m == nil {
-		m = map[uint64]struct{}{}
+		m = &hashSet{}
 		w.seen[h] = m
 	}
-	if _, ok := m[sum]; ok {
-		return false
-	}
-	m[sum] = struct{}{}
-	return true
+	return m.add(sum)
 }
 
 func (w *Watch) nodeOf(pk string) *node {

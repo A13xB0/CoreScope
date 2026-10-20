@@ -38,7 +38,7 @@ func TestSeenKeysCostLittleEach(t *testing.T) {
 
 	entries := 0
 	for _, m := range w.seen {
-		entries += len(m)
+		entries += m.len()
 	}
 	if entries < 200000 {
 		t.Fatalf("only %d seen entries; the fixture should exercise the set", entries)
@@ -52,4 +52,26 @@ func TestSeenKeysCostLittleEach(t *testing.T) {
 		t.Errorf("seen set costs %.1f bytes per entry, want <= 16", per)
 	}
 	runtime.KeepAlive(w)
+}
+
+func TestHashSet(t *testing.T) {
+	var s hashSet
+	for i := uint64(0); i < 10000; i++ {
+		if !s.add(i * 0x9E3779B97F4A7C15) {
+			t.Fatalf("add(%d) reported a duplicate", i)
+		}
+	}
+	for i := uint64(0); i < 10000; i++ {
+		if s.add(i * 0x9E3779B97F4A7C15) {
+			t.Fatalf("re-add(%d) reported new", i)
+		}
+	}
+	if s.len() != 10000 {
+		t.Fatalf("len = %d, want 10000", s.len())
+	}
+	// 0 is the empty marker: it is stored as 1, so the two are one key.
+	var z hashSet
+	if !z.add(0) || z.add(1) || z.add(0) {
+		t.Fatal("0 and 1 must share a slot")
+	}
 }
