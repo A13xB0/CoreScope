@@ -20,7 +20,7 @@ const decodedJSONFixtureBytes = 300_000
 func TestStoreMemoryBreakdown(t *testing.T) {
 	rt0, rt1, rt2 := 0, 1, 2
 	obs := func(id, pj string) *StoreObs {
-		return &StoreObs{ObserverID: id, ObserverName: "obs-" + id, PathJSON: pj}
+		return withLabel(&StoreObs{ObserverID: id, PathJSON: pj}, "obs-"+id, "")
 	}
 	bigJSON := strings.Repeat("x", decodedJSONFixtureBytes)
 	s := &PacketStore{}
@@ -158,10 +158,8 @@ func TestObsRawHexNotRetainedOnLoad(t *testing.T) {
 	}
 	obs := tx.Observations[0]
 
-	// The dup must NOT be retained, even though the DB column held obsHex.
-	if obs.RawHex != "" {
-		t.Errorf("obs.RawHex should be empty after load (dropped as redundant dup), got %q", obs.RawHex)
-	}
+	// The dup cannot be retained: StoreObs has no raw-frame field
+	// (TestStoreObsHoldsNoRawFrame).
 
 	// The read path must still serve raw_hex via the parent-tx fallback.
 	store.mu.RLock()

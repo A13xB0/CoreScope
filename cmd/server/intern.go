@@ -1,8 +1,11 @@
 package main
 
 import (
+	"log"
+	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // internMax bounds the intern table. Observer IDs, names, IATA codes and
@@ -48,3 +51,57 @@ func internStr(s string) string {
 	internTable[c] = c
 	return c
 }
+
+// observerLabel is the observer name and IATA code an observation was
+// stored with. Every observation from one observer carries the same pair, so
+// StoreObs keeps a uint16 slot in a shared table instead of two string
+// headers (32 bytes per observation).
+type observerLabel struct{ name, iata string }
+
+var (
+	labelMu    sync.RWMutex
+	labelIndex = map[observerLabel]uint16{{}: 0}
+	// labelTab is only ever appended to under labelMu and republished
+	// whole, so a reader indexes the slice it loaded without a lock: the
+	// slots it can see are never written again.
+	labelTab      atomic.Pointer[[]observerLabel]
+	labelFullOnce sync.Once
+)
+
+func init() {
+	tab := []observerLabel{{}} // slot 0 is the empty label
+	labelTab.Store(&tab)
+}
+
+// internObserverLabel returns the slot holding (name, iata), adding it if
+// it is new. The pairs number in the hundreds; should the table ever fill,
+// further new pairs are stored as the empty label and logged once.
+func internObserverLabel(name, iata string) uint16 {
+	k := observerLabel{name, iata}
+	labelMu.RLock()
+	i, ok := labelIndex[k]
+	labelMu.RUnlock()
+	if ok {
+		return i
+	}
+	labelMu.Lock()
+	defer labelMu.Unlock()
+	if i, ok := labelIndex[k]; ok {
+		return i
+	}
+	tab := *labelTab.Load()
+	if len(tab) > math.MaxUint16 {
+		labelFullOnce.Do(func() {
+			log.Printf("[store] observer label table full (%d name/IATA pairs); new pairs are stored without a name", len(tab))
+		})
+		return 0
+	}
+	k = observerLabel{internStr(name), internStr(iata)}
+	tab = append(tab, k)
+	labelTab.Store(&tab)
+	i = uint16(len(tab) - 1)
+	labelIndex[k] = i
+	return i
+}
+
+func observerLabelAt(i uint16) observerLabel { return (*labelTab.Load())[i] }

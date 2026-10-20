@@ -171,7 +171,7 @@ func buildDirectHeardIndex(packets []*StoreTx, pm *prefixMap) directHeardIndex {
 			}
 			agg := byObs[obs.ObserverID]
 			if agg == nil {
-				agg = &directHeardAgg{ObserverName: obs.ObserverName}
+				agg = &directHeardAgg{ObserverName: obs.ObserverName()}
 				byObs[obs.ObserverID] = agg
 			}
 			agg.Count++

@@ -55,9 +55,9 @@ func makeTestStore(count int, startTime time.Time, intervalMin int) *PacketStore
 				ID:             obsID,
 				TransmissionID: txID,
 				ObserverID:     obsIDStr,
-				ObserverName:   fmt.Sprintf("Observer%d", j),
 				Timestamp:      ts.UTC().Format(time.RFC3339),
 			}
+			obs.setObserverLabel(fmt.Sprintf("Observer%d", j), "")
 			tx.Observations = append(tx.Observations, obs)
 			tx.ObservationCount++
 			store.byObsID[obsID] = obs

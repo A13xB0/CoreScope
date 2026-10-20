@@ -957,7 +957,7 @@ func TestPickBestObservation(t *testing.T) {
 		snr := 10.0
 		tx := &StoreTx{
 			Observations: []*StoreObs{
-				withSignal(&StoreObs{ObserverID: "obs1", ObserverName: "One", PathJSON: `["aa"]`}, &snr, nil),
+				withSignal(withLabel(&StoreObs{ObserverID: "obs1", PathJSON: `["aa"]`}, "One", ""), &snr, nil),
 			},
 		}
 		pickBestObservation(tx)
@@ -2100,8 +2100,8 @@ func TestTxToMapLazyObservations(t *testing.T) {
 		ID:   1,
 		Hash: "abc",
 		Observations: []*StoreObs{
-			withSignal(&StoreObs{ID: 10, ObserverID: "obs1", ObserverName: "O1", Timestamp: "2025-01-01"}, &snr, &rssi),
-			withSignal(&StoreObs{ID: 11, ObserverID: "obs2", ObserverName: "O2", Timestamp: "2025-01-02"}, &snr, &rssi),
+			withSignal(withLabel(&StoreObs{ID: 10, ObserverID: "obs1", Timestamp: "2025-01-01"}, "O1", ""), &snr, &rssi),
+			withSignal(withLabel(&StoreObs{ID: 11, ObserverID: "obs2", Timestamp: "2025-01-02"}, "O2", ""), &snr, &rssi),
 		},
 	}
 
