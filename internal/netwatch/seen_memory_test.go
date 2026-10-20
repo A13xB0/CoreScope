@@ -45,11 +45,11 @@ func TestSeenKeysCostLittleEach(t *testing.T) {
 	}
 	per := float64(after.HeapAlloc-before.HeapAlloc) / float64(entries)
 	t.Logf("%d seen entries, %.1f bytes each", entries, per)
-	// A uint64 map entry is 8 bytes of key plus the map's own slack (control
-	// bytes, load factor, power-of-two growth): ~18-36 bytes. String keys
-	// measured 87.
-	if per > 32 {
-		t.Errorf("seen set costs %.1f bytes per entry, want <= 32", per)
+	// An 8-byte hash in a flat open-addressing table that doubles at 3/4
+	// full averages ~11-16 bytes. String keys measured 87, a Go map of the
+	// hashes 26.
+	if per > 16 {
+		t.Errorf("seen set costs %.1f bytes per entry, want <= 16", per)
 	}
 	runtime.KeepAlive(w)
 }
