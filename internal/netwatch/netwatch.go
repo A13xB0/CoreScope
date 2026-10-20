@@ -13,7 +13,8 @@
 package netwatch
 
 import (
-	"fmt"
+	"encoding/binary"
+	"hash/maphash"
 	"sort"
 	"sync"
 )
@@ -189,10 +190,35 @@ type routeState struct {
 	reach reach
 }
 
+// seenKey names one thing a packet is counted towards: kind says what, a
+// and b which repeater, observer, route or corridor, n an index alongside.
+// The set keeps only its hash (see once).
 type seenKey struct {
+	kind seenKind
 	a, b string
+	n    int
 	tx   int64
 }
+
+type seenKind uint8
+
+const (
+	seenPacket seenKind = iota + 1
+	seenObserver
+	seenRelay
+	seenRelayObs
+	seenLink
+	seenAdvert
+	seenRoute
+	seenRouteObs
+	seenRouteReachDen
+	seenRouteReachNum
+	seenCorridor
+	seenCorridorDir
+	seenCorridorObs
+	seenReachDen
+	seenReachNum
+)
 
 // Watch is safe for concurrent use.
 type Watch struct {
@@ -206,7 +232,8 @@ type Watch struct {
 	total     ring
 	corridors []*corridorState
 	routes    []*routeState
-	seen      map[int64]map[seenKey]struct{} // hour -> keys already counted
+	seen      map[int64]*hashSet // hour -> hashes of keys already counted
+	hash      maphash.Hash       // hashes seen keys; guarded by mu
 	closed    []Incident
 	evaluated int64
 }
@@ -215,7 +242,7 @@ type Watch struct {
 func New(opt Options, loc Locator) *Watch {
 	opt = opt.withDefaults()
 	w := &Watch{opt: opt, loc: loc, nodes: map[string]*node{}, observers: map[string]ring{},
-		links: map[[2]string]ring{}, total: make(ring, opt.WindowHours), seen: map[int64]map[seenKey]struct{}{}}
+		links: map[[2]string]ring{}, total: make(ring, opt.WindowHours), seen: map[int64]*hashSet{}}
 	for _, c := range opt.Corridors {
 		cs := &corridorState{Corridor: c, count: make(ring, opt.WindowHours), carriers: map[int64]map[string]int{}}
 		for i := range cs.dir {
@@ -295,17 +322,29 @@ func (w *Watch) advance(h int64) {
 	}
 }
 
+// once reports whether k is new for hour h, and records it. The set holds a
+// 64-bit hash of the key rather than the key: two strings and a fresh
+// concatenation per entry made it most of the watch's memory. Two keys
+// sharing a hash would skip one count; across the few million keys a 72-hour
+// window holds, that is around one chance in ten million.
 func (w *Watch) once(h int64, k seenKey) bool {
+	w.hash.Reset()
+	w.hash.WriteByte(byte(k.kind))
+	w.hash.WriteString(k.a)
+	w.hash.WriteByte(0)
+	w.hash.WriteString(k.b)
+	var buf [16]byte
+	binary.LittleEndian.PutUint64(buf[:8], uint64(k.n))
+	binary.LittleEndian.PutUint64(buf[8:], uint64(k.tx))
+	w.hash.Write(buf[:])
+	sum := w.hash.Sum64()
+
 	m := w.seen[h]
 	if m == nil {
-		m = map[seenKey]struct{}{}
+		m = &hashSet{}
 		w.seen[h] = m
 	}
-	if _, ok := m[k]; ok {
-		return false
-	}
-	m[k] = struct{}{}
-	return true
+	return m.add(sum)
 }
 
 func (w *Watch) nodeOf(pk string) *node {
@@ -336,7 +375,7 @@ func (w *Watch) AddAdvertObservation(tx, h int64, obs, from string, path []strin
 	if from == "" || h <= w.newest-int64(w.opt.WindowHours) {
 		return
 	}
-	if w.once(h, seenKey{a: "\x00adv", b: from, tx: tx}) {
+	if w.once(h, seenKey{kind: seenAdvert, a: from, tx: tx}) {
 		w.nodeOf(from).adverts.add(w, h, 1)
 	}
 	// Reach counts adverts that entered the mesh: an observation with no
@@ -378,11 +417,10 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 						continue
 					}
 					cd := c.dir[di]
-					key := fmt.Sprint(ci, "/", di)
-					if w.once(h, seenKey{a: "\x00reach-den", b: key, tx: tx}) {
+					if w.once(h, seenKey{kind: seenReachDen, n: ci*2 + di, tx: tx}) {
 						cd.reach.den.add(w, h, 1)
 					}
-					if w.pathReaches(path, zones[1]) && w.once(h, seenKey{a: "\x00reach-num", b: key, tx: tx}) {
+					if w.pathReaches(path, zones[1]) && w.once(h, seenKey{kind: seenReachNum, n: ci*2 + di, tx: tx}) {
 						cd.reach.num.add(w, h, 1)
 					}
 				}
@@ -400,8 +438,7 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 		if !via {
 			continue
 		}
-		key := fmt.Sprint(ri)
-		if w.once(h, seenKey{a: "\x00rreach-den", b: key, tx: tx}) {
+		if w.once(h, seenKey{kind: seenRouteReachDen, n: ri, tx: tx}) {
 			r.reach.den.add(w, h, 1)
 		}
 		reached := passes(path, r.From, r.To)
@@ -410,7 +447,7 @@ func (w *Watch) countReach(tx, h int64, basis Basis, origin string, path []strin
 				reached = reached || pk == r.To
 			}
 		}
-		if reached && w.once(h, seenKey{a: "\x00rreach-num", b: key, tx: tx}) {
+		if reached && w.once(h, seenKey{kind: seenRouteReachNum, n: ri, tx: tx}) {
 			r.reach.num.add(w, h, 1)
 		}
 	}
@@ -433,10 +470,10 @@ func (w *Watch) addObservation(tx, h int64, obs string, path []string) {
 	if h <= w.newest-int64(w.opt.WindowHours) {
 		return
 	}
-	if w.once(h, seenKey{tx: tx}) {
+	if w.once(h, seenKey{kind: seenPacket, tx: tx}) {
 		w.total.add(w, h, 1)
 	}
-	if obs != "" && w.once(h, seenKey{a: "\x00obs", b: obs, tx: tx}) {
+	if obs != "" && w.once(h, seenKey{kind: seenObserver, a: obs, tx: tx}) {
 		r := w.observers[obs]
 		if r == nil {
 			r = make(ring, w.opt.WindowHours)
@@ -449,10 +486,10 @@ func (w *Watch) addObservation(tx, h int64, obs string, path []string) {
 			continue
 		}
 		nd := w.nodeOf(pk)
-		if w.once(h, seenKey{a: pk, tx: tx}) {
+		if w.once(h, seenKey{kind: seenRelay, a: pk, tx: tx}) {
 			nd.relays.add(w, h, 1)
 		}
-		if obs != "" && w.once(h, seenKey{a: pk, b: "\x00" + obs, tx: tx}) {
+		if obs != "" && w.once(h, seenKey{kind: seenRelayObs, a: pk, b: obs, tx: tx}) {
 			r := nd.byObs[obs]
 			if r == nil {
 				r = make(ring, w.opt.WindowHours)
@@ -462,7 +499,7 @@ func (w *Watch) addObservation(tx, h int64, obs string, path []string) {
 		}
 		if i+1 < len(path) && path[i+1] != "" && path[i+1] != pk {
 			k := [2]string{pk, path[i+1]}
-			if w.once(h, seenKey{a: k[0], b: k[1], tx: tx}) {
+			if w.once(h, seenKey{kind: seenLink, a: k[0], b: k[1], tx: tx}) {
 				r := w.links[k]
 				if r == nil {
 					r = make(ring, w.opt.WindowHours)
@@ -479,10 +516,10 @@ func (w *Watch) addObservation(tx, h int64, obs string, path []string) {
 		if !passes(path, r.From, r.To) {
 			continue
 		}
-		if w.once(h, seenKey{a: "\x00route", b: r.Name, tx: tx + int64(ri)<<48}) {
+		if w.once(h, seenKey{kind: seenRoute, a: r.Name, n: ri, tx: tx}) {
 			r.count.add(w, h, 1)
 		}
-		if obs != "" && w.once(h, seenKey{a: "\x00route-obs" + r.Name, b: obs, tx: tx}) {
+		if obs != "" && w.once(h, seenKey{kind: seenRouteObs, a: r.Name, b: obs, tx: tx}) {
 			o := r.byObs[obs]
 			if o == nil {
 				o = make(ring, w.opt.WindowHours)
@@ -545,8 +582,7 @@ func (w *Watch) countCorridors(tx, h int64, obs string, path []string) {
 		if firstA < 0 || firstB < 0 {
 			continue
 		}
-		key := tx + int64(ci)<<48
-		if w.once(h, seenKey{a: "\x00cor", b: c.Name, tx: key}) {
+		if w.once(h, seenKey{kind: seenCorridor, a: c.Name, n: ci, tx: tx}) {
 			c.count.add(w, h, 1)
 			bump(c.carriers, h/24, c)
 		}
@@ -555,11 +591,11 @@ func (w *Watch) countCorridors(tx, h int64, obs string, path []string) {
 			di = 1
 		}
 		cd := c.dir[di]
-		if w.once(h, seenKey{a: "\x00cor-dir", b: fmt.Sprint(c.Name, di), tx: key}) {
+		if w.once(h, seenKey{kind: seenCorridorDir, a: c.Name, n: ci*2 + di, tx: tx}) {
 			cd.count.add(w, h, 1)
 			bump(cd.carriers, h/24, c)
 		}
-		if obs != "" && w.once(h, seenKey{a: "\x00cor-obs" + fmt.Sprint(c.Name, di), b: obs, tx: tx}) {
+		if obs != "" && w.once(h, seenKey{kind: seenCorridorObs, a: c.Name, b: obs, n: di, tx: tx}) {
 			r := cd.byObs[obs]
 			if r == nil {
 				r = make(ring, w.opt.WindowHours)
@@ -581,7 +617,7 @@ func (w *Watch) AddAdvert(tx, h int64, pk string) {
 	if h <= w.newest-int64(w.opt.WindowHours) {
 		return
 	}
-	if w.once(h, seenKey{a: "\x00adv", b: pk, tx: tx}) {
+	if w.once(h, seenKey{kind: seenAdvert, a: pk, tx: tx}) {
 		w.nodeOf(pk).adverts.add(w, h, 1)
 	}
 }
