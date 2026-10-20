@@ -1718,12 +1718,28 @@ func (s *PacketStore) loadBackgroundChunks() {
 		totalChunks = 1
 	}
 
+	// Stop filling at the point eviction would trim back to (its low
+	// watermark): anything loaded past it is evicted again on the next
+	// pass, but the heap it grew to stays with the process as RSS.
+	var fillLimit int64
+	if s.maxMemoryMB > 0 {
+		fillLimit = int64(float64(int64(s.maxMemoryMB)*1048576) * 0.85)
+	}
+	capped := false
+
 	for {
 		s.mu.RLock()
 		oldest := s.oldestLoaded
+		tracked := s.trackedBytes
 		s.mu.RUnlock()
 
 		if oldest == "" {
+			break
+		}
+		if fillLimit > 0 && tracked >= fillLimit {
+			capped = true
+			log.Printf("[store] background loader: stopping at %s, store is at the maxMemoryMB=%d fill limit (%.1f MB tracked)",
+				oldest, s.maxMemoryMB, float64(tracked)/1048576)
 			break
 		}
 		chunkEnd, err := time.Parse(time.RFC3339, oldest)
@@ -1810,7 +1826,7 @@ func (s *PacketStore) loadBackgroundChunks() {
 	}
 	s.bgErrMu.Lock()
 	s.loadCoverageRatio = ratio
-	if totalInDB > 0 && ratio < 0.90 {
+	if totalInDB > 0 && ratio < 0.90 && !capped {
 		s.backgroundLoadFailed.Store(true)
 		s.backgroundLoadErr = fmt.Sprintf("loaded %.1f%% of %d rows (%d in memory)",
 			ratio*100, totalInDB, loadedCount)

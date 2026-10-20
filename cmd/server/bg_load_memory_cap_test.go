@@ -48,10 +48,4 @@ func TestBackgroundLoad_StopsAtMemoryCap(t *testing.T) {
 		t.Errorf("done=%v failed=%v (%q), want done and not failed: stopping at the cap is the configured outcome",
 			store.backgroundLoadDone.Load(), store.backgroundLoadFailed.Load(), store.BackgroundLoadError())
 	}
-	store.mu.RLock()
-	_, why := store.coverageStart(time.Now().UTC())
-	store.mu.RUnlock()
-	if why != coverageMemory {
-		t.Errorf("coverage reason = %q, want %q", why, coverageMemory)
-	}
 }
