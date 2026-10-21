@@ -328,6 +328,9 @@ func BuildFromStoreWithOptions(store *PacketStore, opts BuildOptions) *NeighborG
 		}
 
 		for _, obs := range p.observations {
+			if obs.isOwnTransmission() {
+				continue
+			}
 			path := parsePathJSON(obs.PathJSON)
 			observerPK := cachedToLower(lowerCache, obs.ObserverID)
 
