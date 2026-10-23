@@ -70,5 +70,19 @@ assert(c.from === Date.UTC(2026, 7, 13), 'an outage after the data starts is not
 
 assert(/No packets/.test(card([]).html), 'no data says so');
 
+// The crop is for "All data", where a short store's stragglers sit weeks
+// before the rest. In a window the user picked, the server has already cut
+// to it, so a quieter early stretch is real and stays: 90 days, the first
+// 30 at 1 packet an hour, then 100 an hour.
+const quietStart = hours(90 * 24, (k) => (k < 30 * 24 ? 1 : 100));
+c = card(quietStart, { window: '30d' });
+assert(bars(c.html) === 91 && !/since/.test(c.html), 'in a picked window nothing is cropped: 91 daily bars (got ' + bars(c.html) + ')');
+
+// Under "All data" a crop is said on the card, so it is never invisible.
+c = card(hours(44 * 24, (k, back) => (back < 8 * 24 ? 300 + (k % 140) : k % 24 === 9 ? 1 + (k % 30) : 0)), { window: '' });
+assert(/since 10-04/.test(c.html), 'a cropped chart says where it starts (since 10-04)');
+c = card(hours(2932), { window: '' });
+assert(!/since/.test(c.html), 'and an uncropped one says nothing');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

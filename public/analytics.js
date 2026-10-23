@@ -72,12 +72,14 @@
   }
 
   // Packets / Hour (#2193): a long history rolls up to coarser bars (at most
-  // 180, so about 4 units each in barChart's plot) with about 10 labels, and
-  // the chart starts on the first UTC day with at least 2% of a typical recent
-  // day (the median of the last seven whole days), at its first hour with a
-  // tenth of a typical hour: a short store also keeps a few old packets that
-  // were heard again, weeks before the rest.
-  function packetsPerHourCard(pph) {
+  // 180, so about 4 units each in barChart's plot) with about 10 labels.
+  // Under "All data" (no opts.window) the chart starts on the first UTC day
+  // with at least 2% of a typical recent day (the median of the seven days
+  // before the last one), at its first hour with a tenth of a typical hour: a
+  // short store also keeps a few old packets that were heard again, weeks
+  // before the rest. The card then says where it starts. In a picked window
+  // the server has already cut the data to it, so nothing is cropped.
+  function packetsPerHourCard(pph, opts) {
     const icon = '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-trend-up"/></svg>';
     if (!pph || !pph.length) return { html: `<h3>${icon} Packets / Hour</h3><p class="text-muted">No packets in this period.</p>`, from: null };
     const at = (h) => Date.parse(h.hour.replace(' ', 'T') + ':00:00Z');
@@ -86,7 +88,8 @@
     const recent = [...days.values()].slice(-8, -1).sort((a, b) => a - b);
     const floor = (recent.length ? recent[recent.length >> 1] : 0) * 0.02;
     const day = [...days.keys()].find((d) => days.get(d) >= floor);
-    const start = at(pph.find((h) => h.hour.slice(0, 10) >= day && h.count >= floor * 5 / 24) || pph[0]);
+    const first = at(pph[0]);
+    const start = opts && opts.window ? first : at(pph.find((h) => h.hour.slice(0, 10) >= day && h.count >= floor * 5 / 24) || pph[0]);
     const last = at(pph[pph.length - 1]), spanH = (last - start) / 3600e3 + 1;
     const [bh, name] = [[1, 'Hour'], [6, '6 hours'], [24, 'Day']].find(([b]) => spanH / b <= 180) || [168, 'Week'];
     const step = bh * 3600e3, from = Math.floor(start / step) * step, counts = [];
@@ -98,7 +101,8 @@
       if ((t / 3600e3) % every) return '';
       return spanH > 48 && (every >= 24 || hh === 0) ? d.toISOString().slice(5, 10) : String(hh).padStart(2, '0') + 'h';
     });
-    return { html: `<h3>${icon} Packets / ${name}</h3>${barChart(counts, labels, 'var(--accent)')}`, from };
+    const since = from > first ? ` <span class="text-muted">since ${new Date(from).toISOString().slice(5, 10)}</span>` : '';
+    return { html: `<h3>${icon} Packets / ${name}${since}</h3>${barChart(counts, labels, 'var(--accent)')}`, from };
   }
 
   function barChart(data, labels, colors, w = 800, h = 220, pad = 40) {
@@ -254,13 +258,13 @@
     RegionFilter.init(document.getElementById('analyticsRegionFilter'));
     AreaFilter.init(document.getElementById('analyticsAreaFilter'));
     setAreaFilterVisibility(_currentTab);
-    RegionFilter.onChange(function () { loadAnalytics(); });
-    AreaFilter.onChange(function () { loadAnalytics(); });
+    _regionChangeHandler = RegionFilter.onChange(reloadForFilters);
+    _areaChangeHandler = AreaFilter.onChange(reloadForFilters);
 
     // Time-window picker (#842) — refresh analytics on change.
     const tw = document.getElementById('analyticsTimeWindow');
     if (tw) {
-      tw.addEventListener('change', function () { _updateAnalyticsUrl(); loadAnalytics(); });
+      tw.addEventListener('change', function () { _updateAnalyticsUrl(); reloadForFilters(); });
     }
 
     // Delegated click/keyboard handler for clickable table rows
@@ -297,15 +301,43 @@
     };
     window.addEventListener('theme-refresh', _themeRefreshHandler);
 
+    // A deep-linked tab that loads its own data does not wait for the bulk
+    // load, which only renders the bulk tabs (#2200).
+    if (!BULK_TABS.has(_currentTab)) renderTab(_currentTab);
     loadAnalytics();
   }
 
+  // A filter change reloads the bulk data; a tab that loads its own data is
+  // re-rendered for the new filters right away, since the bulk load no
+  // longer renders it (#2200).
+  function reloadForFilters() {
+    loadAnalytics();
+    if (!BULK_TABS.has(_currentTab)) renderTab(_currentTab);
+  }
+
   var _themeRefreshHandler = null;
+  var _regionChangeHandler = null;
+  var _areaChangeHandler = null;
   let _currentTab = 'overview';
 
+  // #2200: only the newest bulk load of the current visit may render. A
+  // window/region change starts a new load on the same visit, so the page
+  // keeps its own sequence next to the router's viewGeneration().
+  var _loadSeq = 0;
+  var _loadError = null;
+  // Tabs drawn from the bulk load; the other tabs fetch their own data.
+  var BULK_TABS = new Set(['overview', 'rf', 'topology', 'channels', 'hashsizes', 'collisions']);
+  function loadErrorHtml(msg) {
+    return `<div class="text-muted" role="alert" aria-live="polite" style="padding:40px">Failed to load: ${esc(msg)}</div>`;
+  }
+
   async function loadAnalytics() {
+    var gen = viewGeneration();
+    var seq = ++_loadSeq;
+    var isCurrent = function () { return gen === viewGeneration() && seq === _loadSeq; };
     try {
       _analyticsData = {};
+      _loadError = null;
       const rqs = RegionFilter.regionQueryString(); // "&region=..." or ""
       const aqs = AreaFilter.areaQueryString();     // "&area=..." or ""
       // Time window picker (#842) — append &window=… when set.
@@ -332,17 +364,27 @@
         api('/analytics/hash-collisions' + sepBase, { ttl: CLIENT_TTL.analyticsRF }),
         api('/analytics/relay-airtime-share' + sepWin, { ttl: CLIENT_TTL.analyticsRF }).catch(() => ({ rows: [] })),
       ]);
-      _analyticsData = { hashData, rfData, topoData, chanData, collisionData, airtimeData };
-      renderTab(_currentTab);
+      if (!isCurrent()) return;
+      _analyticsData = { hashData, rfData, topoData, chanData, collisionData, airtimeData, window: twVal };
+      // A tab that loads its own data is left alone (#2200).
+      if (BULK_TABS.has(_currentTab)) renderTab(_currentTab);
     } catch (e) {
-      document.getElementById('analyticsContent').innerHTML =
-        `<div class="text-muted" role="alert" aria-live="polite" style="padding:40px">Failed to load: ${e.message}</div>`;
+      if (!isCurrent()) return;
+      _loadError = e.message;
+      if (BULK_TABS.has(_currentTab)) document.getElementById('analyticsContent').innerHTML = loadErrorHtml(e.message);
     }
   }
 
   async function renderTab(tab) {
     const el = document.getElementById('analyticsContent');
     const d = _analyticsData;
+    // A tab click or refresh before the bulk load lands keeps the loading
+    // (or error) state instead of drawing from missing data (#2200).
+    if (BULK_TABS.has(tab) && !d.rfData) {
+      el.innerHTML = _loadError ? loadErrorHtml(_loadError)
+        : '<div class="text-center text-muted" style="padding:40px">Loading analytics…</div>';
+      return;
+    }
     switch (tab) {
       case 'overview': renderOverview(el, d); break;
       case 'rf': renderRF(el, d.rfData); break;
@@ -438,7 +480,7 @@
       </div>
 
       <div class="analytics-row">
-        <div class="analytics-card flex-1">${packetsPerHourCard(rf.packetsPerHour).html}</div>
+        <div class="analytics-card flex-1">${packetsPerHourCard(rf.packetsPerHour, { window: d.window }).html}</div>
       </div>
 
       <div class="analytics-row">
@@ -2465,18 +2507,13 @@
       const byObservers = [...enriched].sort((a, b) => (b.health.observers?.length || 0) - (a.health.observers?.length || 0));
       const byRecent = [...enriched].filter(n => n.health.stats.lastHeard).sort((a, b) => new Date(b.health.stats.lastHeard) - new Date(a.health.stats.lastHeard));
 
-      // Compute network status client-side from loaded nodes using shared getHealthThresholds()
+      // Compute network status client-side from loaded nodes using shared getHealthStatus()
       const now = Date.now();
       let active = 0, degraded = 0, silent = 0;
       nodes.forEach(function(n) {
-        const role = n.role || 'unknown';
-        const th = getHealthThresholds(role);
-        const lastMs = n.last_heard ? new Date(n.last_heard).getTime()
-                     : n.last_seen ? new Date(n.last_seen).getTime()
-                     : 0;
-        const age = lastMs ? (now - lastMs) : Infinity;
-        if (age < th.degradedMs) active++;
-        else if (age < th.silentMs) degraded++;
+        const s = getHealthStatus(n.role, n.last_heard || n.last_seen, now);
+        if (s === 'healthy') active++;
+        else if (s === 'degraded') degraded++;
         else silent++;
       });
       const totalNodes = nodesResp.total || nodes.length;
@@ -2667,14 +2704,9 @@
       (Array.isArray(clockData) ? clockData : []).forEach(c => { if (c && c.pubkey) clockByPk[c.pubkey] = c; });
 
       const now = Date.now();
-      function ageOf(n) {
-        const ms = n.last_heard ? new Date(n.last_heard).getTime() : n.last_seen ? new Date(n.last_seen).getTime() : 0;
-        return ms ? now - ms : Infinity;
-      }
       function statusOf(n) {
-        const th = (typeof getHealthThresholds === 'function') ? getHealthThresholds(n.role) : { degradedMs: 3600000, silentMs: 86400000 };
-        const age = ageOf(n);
-        return age < th.degradedMs ? 'active' : age < th.silentMs ? 'degraded' : 'silent';
+        const s = getHealthStatus(n.role, n.last_heard || n.last_seen, now);
+        return s === 'healthy' ? 'active' : (s || 'silent');
       }
       const pct = v => (v != null ? (v * 100).toFixed(1) + '%' : '—');
       // #1927: no fallback to usefulness_score. They are different metrics:
@@ -3176,7 +3208,7 @@
     }
   }
 
-function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _stopDistanceRetry(); _analyticsData = {}; _channelData = null; if (_ngState && _ngState.animId) { cancelAnimationFrame(_ngState.animId); } _ngState = null; if (_themeRefreshHandler) { window.removeEventListener('theme-refresh', _themeRefreshHandler); _themeRefreshHandler = null; } }
+function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _stopDistanceRetry(); _analyticsData = {}; _loadError = null; if (_regionChangeHandler) { RegionFilter.offChange(_regionChangeHandler); _regionChangeHandler = null; } if (_areaChangeHandler) { AreaFilter.offChange(_areaChangeHandler); _areaChangeHandler = null; } _channelData = null; if (_ngState && _ngState.animId) { cancelAnimationFrame(_ngState.animId); } _ngState = null; if (_themeRefreshHandler) { window.removeEventListener('theme-refresh', _themeRefreshHandler); _themeRefreshHandler = null; } }
 
   // Expose for testing
   if (typeof window !== 'undefined') {
@@ -4343,6 +4375,7 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _stopDistanceRet
             <span>avg: ${avgNf}</span>
             <span>max: ${maxNf}</span>
             <span>${obs.sample_count} samples</span>
+            <span data-testid="rf-cell-airtime">TX 1h: ${ObserverAirtime.badge(obs.tx_airtime_pct_1h, summaryData.duty_cycle_warn_pct)}</span>
           </div>
         </div>`;
       }).join('');

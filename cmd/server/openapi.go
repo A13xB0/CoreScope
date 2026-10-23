@@ -103,7 +103,8 @@ func routeDescriptions() map[string]routeMeta {
 		"POST /api/admin/proposals/{id}/approve":           {Summary: "Approve a proposal (admin)", Description: "Body {note} (at most 500 characters). Pending only (409 otherwise). The ingestor decrypts the channel from its next refresh (at most a minute) and /api/channels lists it in approvedChannels. 409 when userManagement.channelProposals.maxApproved channels are approved.", Tag: "users", Session: true},
 		"POST /api/admin/proposals/{id}/reject":            {Summary: "Reject a proposal (admin)", Description: "Body {note}. Pending only (409 otherwise). The name cannot be proposed again until the row is pruned, 90 days after the decision.", Tag: "users", Session: true},
 		"POST /api/admin/proposals/{id}/revoke":            {Summary: "Revoke an approved proposal (admin)", Description: "Body {note}. Approved only (409 otherwise). The ingestor stops decrypting the channel from its next refresh unless the channel is configured; stored messages stay. The name can be proposed again.", Tag: "users", Session: true},
-		"POST /api/mail/brevo/webhook":                     {Summary: "Brevo delivery-event webhook", Description: "Authenticated with Authorization: Bearer <userManagement.mail.webhookSecret>. Registered only when the secret is set.", Tag: "users"},
+		"POST /api/mail/brevo/webhook":                     {Summary: "Brevo delivery-event webhook", Description: "Authenticated with Authorization: Bearer <userManagement.mail.webhookSecret>. Registered only when mail.provider is brevo and the secret is set.", Tag: "users"},
+		"POST /api/mail/postal/webhook":                    {Summary: "Postal message-event webhook", Description: "Authenticated with HTTP Basic auth whose password is userManagement.mail.webhookSecret (put it in the webhook URL: https://postal:<secret>@host/api/mail/postal/webhook). Registered only when mail.provider is postal and the secret is set.", Tag: "users"},
 
 		// Node notifications (user management, part E)
 		"GET /api/account/notifications":                     {Summary: "Get own notification settings", Description: "Returns {enabled, events, availableEvents, externalLabel, watches: [{pubkey, name, known, createdAt}], limits: {maxWatches, perUserPerDay, mailsLast24h}}. node.external and externalLabel appear only when notifications.externalAlerts is configured. Creates the default settings (on, node.offline and node.battery) on first use. known is false once the node left the analyzer database. Registered only when userManagement.notifications.enabled.", Tag: "users", Session: true},
@@ -142,6 +143,7 @@ func routeDescriptions() map[string]routeMeta {
 				{Name: "status", Description: "Filter by status (active/stale/offline)", Type: "string"},
 			}},
 		"GET /api/nodes/search":             {Summary: "Search nodes", Description: "Search nodes by name or public key prefix.", Tag: "nodes", QueryParams: []paramMeta{{Name: "q", Description: "Search query", Type: "string", Required: true}}},
+		"GET /api/nodes/reported":           {Summary: "Repeaters known only from their reported name", Description: "Repeaters that told a mobile companion their own name (client_node_names, ANON_REQ_TYPE_OWNER) have no row in nodes or inactive_nodes, and were heard directly at least once (a discover or advert reception). 404 when clientRxCoverage is disabled. Each carries its reception counts and, when companions heard it directly from at least `method.min_spots` spots at least `method.min_spread_m` apart, an `estimate`: a SNR-weighted centroid of those spots with `radius_m` (never below `method.min_radius_m`). The estimate is where companions stood, weighted, not a measured position. Cached for 5 minutes.", Tag: "nodes"},
 		"GET /api/nodes/bulk-health":        {Summary: "Bulk node health", Description: "Returns health status for all nodes in one call.", Tag: "nodes"},
 		"GET /api/nodes/network-status":     {Summary: "Network status summary", Description: "Returns counts of active, stale, and offline nodes.", Tag: "nodes"},
 		"GET /api/nodes/{pubkey}":           {Summary: "Get node detail", Description: "Returns full detail for a single node by public key. For repeater/room nodes this includes the issue #672 usefulness axes + composite score/grade (see the Node schema).", Tag: "nodes", Response: schemaRef("NodeDetailResponse")},
@@ -237,14 +239,26 @@ func routeDescriptions() map[string]routeMeta {
 		"GET /api/observers/{id}":            {Summary: "Get observer detail", Tag: "observers"},
 		"GET /api/observers/{id}/metrics":    {Summary: "Get observer metrics", Description: "Packet rates, uptime, and performance metrics.", Tag: "observers"},
 		"GET /api/observers/{id}/analytics":  {Summary: "Get observer analytics", Tag: "observers"},
-		"GET /api/observers/metrics/summary": {Summary: "Observer metrics summary", Description: "Aggregate metrics across all observers.", Tag: "observers"},
+		"GET /api/observers/metrics/summary": {Summary: "Observer metrics summary", Description: "Aggregate metrics across all observers within window (noise floor, battery, sparkline). Each row also carries tx_airtime_pct_1h / rx_airtime_pct_1h: the airtime share over the last hour regardless of window, null with under 30 minutes of samples since the last reboot or no sample in the last 15 minutes. duty_cycle_warn_pct is the configured warning threshold (dutyCycleWarnPct, default 10).", Tag: "observers", QueryParams: []paramMeta{{Name: "window", Description: "Lookback such as 1h, 24h, 7d (default 24h)", Type: "string"}, {Name: "region", Description: "IATA code to filter observers", Type: "string"}}},
 
 		// Misc
 		"GET /api/resolve-hops":      {Summary: "Resolve hop path", Description: "Resolves hash prefixes in a hop path to node names. Returns affinity scores and best candidates.", Tag: "nodes", QueryParams: []paramMeta{{Name: "hops", Description: "Comma-separated hop hash prefixes", Type: "string", Required: true}}},
 		"GET /api/traces/{hash}":     {Summary: "Get packet traces", Description: "Returns all observer sightings for a packet hash.", Tag: "packets"},
+		"GET /api/rf-params":         {Summary: "LoRa RF parameters per node", Description: "Opt-in (config rfParams.nodesUrl, issue #1268). Frequency, SF, bandwidth and coding rate the MeshCore map holds for the nodes this instance knows, keyed by lower-case pubkey, limited to adverts within rfParams.maxAgeDays (default 7). Also returns the named presets and fetched_at, the time of the last successful map fetch (null before the first one), and deviations: the nodes whose frequency, SF or bandwidth differs from a setting that more than half of the nodes within rfParams.compareRadiusKm (default 50) on the same band share, the node itself counted, with that majority and the counts. Frequencies within a quarter of the bandwidth count as the same channel. enabled is false when the feature is off.", Tag: "nodes"},
 		"GET /api/iata-coords":       {Summary: "Get IATA airport coordinates", Description: "Returns lat/lon for known airport codes (used for observer positioning).", Tag: "config"},
 		"GET /api/audio-lab/buckets": {Summary: "Audio lab frequency buckets", Description: "Returns frequency bucket data for audio analysis.", Tag: "analytics"},
 	}
+}
+
+// openAPISchema is a typed OpenAPI schema object, for component schemas that
+// would otherwise be nested untyped map literals (AGENTS.md).
+type openAPISchema struct {
+	Type        string                   `json:"type"`
+	Description string                   `json:"description,omitempty"`
+	Enum        []string                 `json:"enum,omitempty"`
+	Items       *openAPISchema           `json:"items,omitempty"`
+	Properties  map[string]openAPISchema `json:"properties,omitempty"`
+	Required    []string                 `json:"required,omitempty"`
 }
 
 // schemaRef returns an OpenAPI $ref pointing at a named component schema.
@@ -302,6 +316,7 @@ func componentSchemas() map[string]interface{} {
 				"unscoped_relay_count_24h": map[string]interface{}{"type": "integer", "description": "Repeater/room only: subset of relay_count_24h that were unscoped floods (route_type FLOOD). A well-configured repeater sets flood.max.unscoped 0, so a non-trivial count flags a base-config problem."},
 				"last_relayed":             str("Repeater/room only: RFC3339 time this node last appeared as a relay hop."),
 				"declared_regions":         map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Repeater/room only (#1862): named regions from this node's newest declared-regions answer, spelled as GET /api/scope-audit declaredRegions spells them (leading '#' stripped, '*' wildcard excluded). Empty array: it answered and named no region. Absent: it never answered, this database has no declared-regions source, or the declared-regions lookup failed. Absence is not evidence the node lacks a region."},
+				"region_placement":         schemaRef("NodeRegionPlacement"),
 				"relay_window_hours":       map[string]interface{}{"type": "integer", "description": "Repeater/room only, /api/nodes/{pubkey} detail endpoint only: width (hours) of the relay-activity window the relay_count_* values cover."},
 				"traffic_share_score":      score01("#672 Traffic axis: share of non-advert traffic relayed through this repeater. Repeater/room only."),
 				"bridge_score":             score01("#672 Bridge axis: normalized betweenness centrality (chokepoint importance). Repeater/room only."),
@@ -313,6 +328,23 @@ func componentSchemas() map[string]interface{} {
 					"description": "Letter grade derived from usefulness_score. Repeater/room only.",
 				},
 				"declared_regions_truncated": map[string]interface{}{"type": "boolean", "description": "Repeater/room only (#1862): present, and true, only when the answer behind declared_regions was flagged as truncated, so that list is partial. GET /api/scope-audit shows the same flag as truncated. Absent otherwise, including for a source that does not record truncation, so absence does not mean the list is complete."},
+			},
+		},
+		"NodeRegionPlacement": openAPISchema{
+			Type:        "object",
+			Description: "#1879: which rule puts this node in regions for the /api/nodes ?region= filter, and which regions. Present on every node row.",
+			Required:    []string{"basis"},
+			Properties: map[string]openAPISchema{
+				"basis": {
+					Type: "string",
+					Enum: []string{string(RegionBasisZeroHop), string(RegionBasisFewestHops), string(RegionBasisNone), string(RegionBasisObserverScan)},
+					Description: "zero_hop: observers heard the node zero-hop (a direct advert, not relayed); it is in their regions, and a node on a boundary can have several. " +
+						"fewest_hops: never heard zero-hop; it is in the regions that heard it in the fewest hops. " +
+						"none: never heard zero-hop, and even its closest hearing is more than regionFallback.maxHops (default 3) hops out, so no ?region= filter includes it, even one listing every region; it still shows unfiltered. " +
+						"observer_scan: not in the last placement recompute (its first advert is newer, the packet store holds none, or no hearing of it recorded a path), so the filter puts it in each region whose observers heard any of its adverts.",
+				},
+				"regions": {Type: "array", Items: &openAPISchema{Type: "string"}, Description: "IATA codes, sorted. Present for zero_hop and fewest_hops."},
+				"hops":    {Type: "integer", Description: "Fewest hops any region heard the node over. Present for fewest_hops and none."},
 			},
 		},
 		"NodeListResponse": map[string]interface{}{

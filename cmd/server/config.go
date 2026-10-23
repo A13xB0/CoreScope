@@ -113,6 +113,10 @@ type Config struct {
 	// NormalizedRegionQuickPicks and config.example.json.
 	RegionQuickPicks []RegionQuickPick `json:"regionQuickPicks,omitempty"`
 
+	// RegionFallback tunes how the /api/nodes region filter places nodes
+	// never heard zero-hop (#1879). See RegionFallbackMaxHops.
+	RegionFallback *RegionFallbackConfig `json:"regionFallback,omitempty"`
+
 	Roles            map[string]interface{} `json:"roles"`
 	HealthThresholds *HealthThresholds      `json:"healthThresholds"`
 	PathTrust        *PathTrustConfig       `json:"pathTrust,omitempty"`
@@ -228,6 +232,10 @@ type Config struct {
 	// BatteryThresholds: voltage cutoffs for low/critical alerts (#663).
 	BatteryThresholds *BatteryThresholdsConfig `json:"batteryThresholds,omitempty"`
 
+	// DutyCycleWarnPct: rolling 1 h TX airtime share (percent) at which the
+	// RF Health view and observer list warn. 0/missing => 10 (EU g3, #661).
+	DutyCycleWarnPct float64 `json:"dutyCycleWarnPct,omitempty"`
+
 	// Customizer controls operator-side knobs for the in-app customizer modal
 	// (theme/branding/etc.). See CustomizerConfig and issue #1508.
 	Customizer *CustomizerConfig `json:"customizer,omitempty"`
@@ -238,6 +246,10 @@ type Config struct {
 	KnownChannelsURL string `json:"knownChannelsUrl,omitempty"`
 	// Refresh interval in milliseconds. 0/missing => default 24h.
 	KnownChannelsRefreshMs int64 `json:"knownChannelsRefreshMs,omitempty"`
+
+	// LoRa RF parameters per node from the MeshCore map (issue #1268).
+	// OPT-IN: nil or an empty nodesUrl starts no fetch.
+	RfParams *RfParamsConfig `json:"rfParams,omitempty"`
 }
 
 // CustomizerConfig holds operator-side knobs for the in-app customizer modal.
@@ -357,8 +369,10 @@ type NeighborGraphConfig struct {
 
 	// CacheRecomputeIntervalSeconds: cadence for the background
 	// recomputer that rebuilds the default-shape neighbor-graph
-	// response (#1481 P0-1). 0/missing = default 300 (5 min).
-	// Lower = fresher data, more CPU per minute. #1483.
+	// response (#1481 P0-1) and the neighbor graph itself, which
+	// /api/nodes/{pk}/neighbors serves until the next tick (#2221).
+	// 0/missing = default 300 (5 min). Lower = fresher data, and a
+	// full graph build on every tick. #1483.
 	CacheRecomputeIntervalSeconds int `json:"cacheRecomputeIntervalSeconds,omitempty"`
 }
 
@@ -1071,6 +1085,26 @@ func SaveGeoFilter(configDir string, gf *GeoFilterConfig) error {
 		return fmt.Errorf("config.json not found in %s", configDir)
 	}
 
+	// Follow a symlink at configPath to the file it points at before the
+	// tmp+rename below. In the Docker image /app/config.json is a symlink to
+	// the bind-mounted /app/data/config.json (docker/entrypoint-go.sh), and
+	// os.Rename onto the link path would replace the link with a regular
+	// file inside the container: the mounted file would keep the old
+	// geo_filter, the saved one would be invisible on the host and would go
+	// away with the container. Resolving first keeps the write atomic and
+	// the result where the operator (and the next container) will read it.
+	//
+	// Unlike the stats file (writeStatsAtomic, refs #1170), replacing a
+	// symlink at the destination is not wanted here: this path is not
+	// world-writable, and the link is one the image itself creates. Only a
+	// regular file is followed, so a link to a device or a fifo is left
+	// alone and handled as before.
+	if resolved, err := filepath.EvalSymlinks(configPath); err == nil && resolved != configPath {
+		if fi, err := os.Lstat(resolved); err == nil && fi.Mode().IsRegular() {
+			configPath = resolved
+		}
+	}
+
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
@@ -1102,12 +1136,21 @@ func SaveGeoFilter(configDir string, gf *GeoFilterConfig) error {
 	// config.json holds the API key and broker passwords, and an operator
 	// who made it 0600 should not find it 0644 after a geo-filter save.
 	mode := os.FileMode(0644)
-	if fi, err := os.Stat(configPath); err == nil {
-		mode = fi.Mode().Perm()
+	orig, origErr := os.Stat(configPath)
+	if origErr == nil {
+		mode = orig.Mode().Perm()
 	}
 	tmp := configPath + ".tmp"
 	if err := os.WriteFile(tmp, out, mode); err != nil {
 		return fmt.Errorf("write config: %w", err)
+	}
+	// Keep the owner as well. The image runs the server as root by default,
+	// and without this the rename would hand the operator's bind-mounted
+	// config.json to root:root, which at 0600 they could no longer edit
+	// without sudo. Best effort: a server that may not chown leaves the file
+	// as it was created.
+	if origErr == nil {
+		copyOwner(tmp, orig)
 	}
 	if err := os.Rename(tmp, configPath); err != nil {
 		os.Remove(tmp)
@@ -1269,4 +1312,21 @@ func (c *Config) configuredChannelNames() map[string]bool {
 		names[name] = true
 	}
 	return names
+}
+
+// RegionFallbackConfig is the regionFallback block (#1879).
+type RegionFallbackConfig struct {
+	// MaxHops caps the fallback for nodes never heard zero-hop: a node whose
+	// closest hearing took more hops than this is in no region. Default 3.
+	MaxHops *int `json:"maxHops,omitempty"`
+}
+
+// RegionFallbackMaxHops returns regionFallback.maxHops, or the default
+// (regionFallbackMaxHopsDefault, 3) when it is unset or negative. 0 is valid:
+// only nodes some observer heard over an empty path are placed.
+func (c *Config) RegionFallbackMaxHops() int {
+	if c != nil && c.RegionFallback != nil && c.RegionFallback.MaxHops != nil && *c.RegionFallback.MaxHops >= 0 {
+		return *c.RegionFallback.MaxHops
+	}
+	return regionFallbackMaxHopsDefault
 }

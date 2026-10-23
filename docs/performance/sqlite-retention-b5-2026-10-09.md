@@ -1,5 +1,7 @@
 # SQLite retention scheduling: five-pair B comparison
 
+This report describes the October 9 comparison at the revisions pinned below. Its figures do not measure the rebased PR against current master.
+
 The yield between committed retention batches reduced queue-inclusive ingestion tails in this workload, with a service-time tradeoff. Additional-observation p95 was **5.0% lower** and p99 **8.1% lower** by median paired ratio; its service-time p99 was **29.1% higher**. Cleanup was **0.5% longer**. This supports a narrow scheduling benefit, not a general database or application speed claim.
 
 [Successful run 37975105215](https://github.com/Kpa-clawbot/CoreScope/actions/runs/37975105215), attempt 1; [primary artifact 11641718171](https://github.com/Kpa-clawbot/CoreScope/actions/runs/37975105215/artifacts/11641718171).
@@ -62,4 +64,4 @@ Measured sampled cgroup memory never exceeded 4.061GiB. The separately reset, FD
 
 The manifest records identical production-server binary hashes between revisions. Startup and isolated SQL controls precede concurrent retention; their differences are not attributed to the ingestor scheduling change. Full-ready startup C/B was 0.9998; isolated channel-message SQL p95 was 1.0529. This comparison measures one fixed corpus/seed on one warm-cache host, five pairs and a short replay—not OS-cold startup, arbitrary fanout, long soak, saturation capacity, later upstream cache/locking changes, or PostgreSQL.
 
-Query plans were captured after replay/retention and cannot establish the initial workload plan. The [machine-readable summary](sqlite-retention-b5-2026-10-09.json) includes every class/timing, per-pair absolute values and ratios, resource windows, settings, source hashes and raw-file hashes. Reproduce from the linked primary artifact using the pinned harness definitions: group measured events per class/leg, compute nearest-rank quantiles, then median the five candidate/baseline ratios. Resource deltas use each leg’s shared replay origin + 60s through origin + 240s.
+Query plans were captured after replay/retention and cannot establish the initial workload plan. The [machine-readable summary](https://github.com/n30nex/CoreScope/blob/323b18d4221e83c9827b4722145e2a9d5b9d9599/docs/performance/sqlite-retention-b5-2026-10-09.json) includes every class/timing, per-pair absolute values and ratios, resource windows, settings, source hashes and raw-file hashes. Reproduce from the linked primary artifact using the pinned harness definitions: group measured events per class/leg, compute nearest-rank quantiles, then median the five candidate/baseline ratios. Resource deltas use each leg’s shared replay origin + 60s through origin + 240s.

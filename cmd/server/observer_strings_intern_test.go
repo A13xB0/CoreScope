@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ func assertObserverStringsShared(t *testing.T, store *PacketStore, wantObs int) 
 	}{
 		{"ObserverID", func(o *StoreObs) string { return o.ObserverID }},
 		{"ObserverName", func(o *StoreObs) string { return o.ObserverName() }},
+		{"ObserverIATA", func(o *StoreObs) string { return o.ObserverIATA() }},
 		{"Direction", func(o *StoreObs) string { return o.Direction }},
 	} {
 		want := f.get(first)
@@ -59,6 +61,16 @@ func openInternTestStore(t *testing.T, numTx int) *PacketStore {
 	dbPath := filepath.Join(dir, "intern.db")
 	createTestDBAt(t, dbPath, numTx)
 	t.Cleanup(func() { os.RemoveAll(dir) })
+	// The shared fixture leaves observers empty; give each an IATA code so
+	// the loaders read one for every observation.
+	conn, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`INSERT INTO observers (id, name, iata) SELECT DISTINCT observer_id, observer_name, 'EDI' FROM observations`); err != nil {
+		t.Fatalf("fixture observers: %v", err)
+	}
+	conn.Close()
 	db, err := OpenDB(dbPath)
 	if err != nil {
 		t.Fatalf("OpenDB: %v", err)

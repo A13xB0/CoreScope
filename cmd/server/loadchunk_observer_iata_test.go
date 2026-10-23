@@ -21,7 +21,7 @@ func TestLoadChunkKeepsObserverIATA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs1', 'Obs1', 'EDI')`); err != nil {
+	if _, err := conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs1', 'Obs1', 'SJC')`); err != nil {
 		t.Fatal(err)
 	}
 	conn.Close()
@@ -43,12 +43,12 @@ func TestLoadChunkKeepsObserverIATA(t *testing.T) {
 	}
 	for _, tx := range store.packets {
 		for _, o := range tx.Observations {
-			if o.ObserverIATA() != "EDI" {
-				t.Fatalf("tx %d: observation IATA = %q, want EDI", tx.ID, o.ObserverIATA())
+			if o.ObserverIATA() != "SJC" {
+				t.Fatalf("tx %d: observation IATA = %q, want SJC", tx.ID, o.ObserverIATA())
 			}
 		}
-		if tx.ObserverIATA != "EDI" {
-			t.Fatalf("tx %d: IATA = %q, want EDI", tx.ID, tx.ObserverIATA)
+		if tx.ObserverIATA != "SJC" {
+			t.Fatalf("tx %d: IATA = %q, want SJC", tx.ID, tx.ObserverIATA)
 		}
 	}
 }

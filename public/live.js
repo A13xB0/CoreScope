@@ -2967,10 +2967,9 @@
       const roleLabel = (ROLE_LABELS[n.role] || n.role || 'unknown').replace(/s$/, '');
       const hasLoc = n.lat != null && n.lon != null;
       const lastSeen = formatLiveTimestampHtml(n.last_seen);
-      const thresholds = window.getHealthThresholds ? getHealthThresholds(n.role) : { degradedMs: 3600000, silentMs: 86400000 };
-      const ageMs = n.last_seen ? Date.now() - new Date(n.last_seen).getTime() : Infinity;
-      const statusDot = ageMs < thresholds.degradedMs ? 'health-green' : ageMs < thresholds.silentMs ? 'health-yellow' : 'health-red';
-      const statusLabel = ageMs < thresholds.degradedMs ? 'Online' : ageMs < thresholds.silentMs ? 'Degraded' : 'Offline';
+      const health = getHealthStatus(n.role, n.last_seen);
+      const statusDot = health === 'healthy' ? 'health-green' : health === 'degraded' ? 'health-yellow' : 'health-red';
+      const statusLabel = health === 'healthy' ? 'Online' : health === 'degraded' ? 'Degraded' : 'Offline';
 
       let html = `
         <div style="padding:16px;">
@@ -3526,8 +3525,8 @@
   // #1598: infra nodes (repeater/room) are ALWAYS dimmed, never deleted —
   // a dimmed marker still tells operators "infrastructure exists here,
   // advert stale", whereas deletion silently rewrites the map. Staleness
-  // itself is relay-aware via getNodeStatus(node) (max of advert-based
-  // freshness and last_relayed for infra).
+  // itself comes from getNodeStatus(node), whose last_heard includes the
+  // relays that can only be this node (#2260).
   // Remaining WS-only non-infra nodes are removed to prevent memory leaks.
   function pruneStaleNodes() {
     var now = Date.now();
@@ -3537,7 +3536,10 @@
       if (!n) continue;
       var lastSeen = n._liveSeen || (n.last_heard ? new Date(n.last_heard).getTime() : null) || (n.last_seen ? new Date(n.last_seen).getTime() : null);
       if (lastSeen == null) continue;
+      // #2260: 'uncertain' (only a shared hop prefix seen) dims like stale;
+      // it only occurs for repeaters and rooms, which are never removed.
       var status = window.getNodeStatus ? getNodeStatus(n) : 'active';
+      if (status === 'uncertain') status = 'stale';
       var isInfra = n.role === 'repeater' || n.role === 'room';
       var marker = nodeMarkers[key];
       if (status === 'stale') {

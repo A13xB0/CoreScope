@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func evictionResolvedStore(t *testing.T, n int) (*PacketStore, []int) {
+func evictionResolvedStore(t testing.TB, n int) (*PacketStore, []int) {
 	t.Helper()
 	db := setupTestDB(t)
 	t.Cleanup(func() { db.Close() })

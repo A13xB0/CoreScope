@@ -127,7 +127,7 @@ console.log('\n=== #2097: packets.js never resolves a hop without its observer =
     'multi-packet call sites group their hops by observer');
 
   // renderHop reads the per-observer key; something has to write it.
-  assert(/hopNameCache\[hopCacheKey\(h, observerId\)\] = entry/.test(src),
+  assert(/hopNameCache\[hopCacheKey\(h, observerId(, direct)?\)\] = entry/.test(src),
     'resolveHops writes the per-observer cache key that renderHop reads');
 }
 
@@ -171,7 +171,8 @@ console.log('\n=== #2097: the list summarises, the detail pane does not ===');
     'renderPath takes an options object');
   assert(/summary: true/.test(src),
     'at least one call site asks for the summarised form');
-  assert(/renderPath\(pathHops, effectivePkt\.observer_id\)/.test(src),
+  const detailCall = (src.match(/renderPath\(pathHops, effectivePkt\.observer_id[^)]*\)/) || [''])[0];
+  assert(detailCall && !/summary/.test(detailCall),
     'the detail pane calls renderPath without summary, so it keeps per-hop badges');
   assert(/hop-path-warn/.test(src),
     'the summarised form emits a single per-path indicator');
@@ -220,7 +221,7 @@ console.log('\n=== #2097: the observer position anchors the pick ===');
 
 {
   const src = fs.readFileSync(REPO_ROOT + '/public/packets.js', 'utf8');
-  assert(/HopResolver\.resolve\(unknown, null, null, obsLat, obsLon, observerId\)/.test(src),
+  assert(/HopResolver\.resolve\(unknown, null, null, obsLat, obsLon, observerId[,)]/.test(src),
     'resolveHops passes the observer position as the anchor');
   const withId = src.match(/HopResolver\.resolve\([^)]*observer_id[^)]*\)/g) || [];
   assert(withId.every(c => !/null, null, null, null/.test(c)),

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,21 +34,24 @@ func TestParsedDecodedDropsUnreadKeys(t *testing.T) {
 	}
 }
 
-// The live feed still sends the whole payload: it is decoded afresh rather
-// than copied from the cache, so the frontend sees every field.
+// The live feed still sends the whole payload: the stored JSON goes out as
+// it is, without decoding it again under the store lock or copying the
+// cache, so the frontend sees every field.
 func TestBroadcastPayloadKeepsEveryKey(t *testing.T) {
 	tx := &StoreTx{DecodedJSON: decodedCacheFixture}
 	tx.ParsedDecoded()
-	p := broadcastPayload(tx)
+	raw := broadcastPayload(tx)
+	var p map[string]interface{}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("broadcast payload is not JSON: %v", err)
+	}
 	for _, k := range append([]string{"type", "pubKey", "flags"}, decodedCacheDroppedKeys...) {
 		if _, ok := p[k]; !ok {
 			t.Errorf("broadcast payload is missing %q", k)
 		}
 	}
-	p["pubKey"] = "changed"
-	p["flags"].(map[string]interface{})["repeater"] = false
-	if tx.ParsedDecoded()["pubKey"] != "ab12" || tx.ParsedDecoded()["flags"].(map[string]interface{})["repeater"] != true {
-		t.Error("changing the broadcast payload changed the cache")
+	if broadcastPayload(&StoreTx{DecodedJSON: "{not json"}) != nil {
+		t.Error("an unreadable payload must be left out of the broadcast")
 	}
 }
 
