@@ -108,6 +108,7 @@ node tests/unit/test-issue-1518-home-url.js
 node tests/unit/test-issue-1532-live-fullscreen.js
 node tests/unit/test-issue-1562-observers-summary.js
 node tests/unit/test-issue-748-node-analytics-coverage.js
+node tests/unit/test-node-analytics-battery-observers.js
 node tests/unit/test-node-analytics-certain-timeline.js
 node tests/unit/test-issue-661-observer-airtime.js
 node tests/unit/test-issue-1268-rf-params.js
