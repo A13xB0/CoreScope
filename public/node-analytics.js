@@ -481,10 +481,15 @@
     let i = 0;
     for (const sr of series.values()) {
       const color = BATTERY_LINE_COLORS[i++ % BATTERY_LINE_COLORS.length];
-      datasets.push({ label: sr.label, data: sr.points, borderColor: color, backgroundColor: color, tension: 0.25, pointRadius: 3, fill: false });
+      datasets.push({ label: sr.label, data: sr.points, borderColor: color, backgroundColor: color, tension: 0.25, pointRadius: 4, fill: false });
     }
     datasets.push({ label: 'Low threshold', data: [{ x: xMin, y: thr.low_mv }, { x: xMax, y: thr.low_mv }], borderColor: '#fcc419', borderDash: [6, 4], pointRadius: 0, fill: false });
     datasets.push({ label: 'Critical', data: [{ x: xMin, y: thr.critical_mv }, { x: xMax, y: thr.critical_mv }], borderColor: '#ff6b6b', borderDash: [6, 4], pointRadius: 0, fill: false });
+
+    // Keep readings and both thresholds off the chart's edges.
+    const ys = samples.map(p => p.battery_mv).concat([thr.critical_mv, thr.low_mv]);
+    const yMin = Math.min.apply(null, ys) - 100;
+    const yMax = Math.max.apply(null, ys) + 100;
 
     const tickLabel = v => {
       const d = new Date(v);
@@ -506,7 +511,7 @@
         },
         scales: {
           x: { type: 'linear', min: xMin, max: xMax, ticks: { callback: tickLabel, maxTicksLimit: 8, maxRotation: 45 } },
-          y: { title: { display: true, text: 'mV' } }
+          y: { title: { display: true, text: 'mV' }, suggestedMin: yMin, suggestedMax: yMax }
         }
       }
     });
