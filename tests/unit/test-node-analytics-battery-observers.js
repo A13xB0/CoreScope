@@ -98,10 +98,28 @@ const B = { source: 'neighbor', observer_id: OBS_B, observer_name: 'Pentland <OB
   assert(a.data.length === 2 && a.data[1].y === 3850, 'each line holds that observer\'s readings');
   assert(labels.includes('Low threshold') && labels.includes('Critical'), 'threshold lines stay');
 
+  const badge = t.els.batteryStatusBadge.innerHTML;
+  assert(badge.includes('<svg') && badge.includes('3850 mV'), 'the status badge renders its icon as markup, not text');
+
   const table = t.els.batteryReadings.innerHTML;
   assert(t.els.batteryReadings.style.display === '', 'the readings table is shown');
   assert(table.indexOf('Pentland') < table.indexOf('Corstorphine'), 'newest reading first');
   assert(table.includes('via 2 hops') && table.includes('-4.0 dB'), 'rows carry route and SNR');
+
+  console.log('Node Analytics: a single reading');
+  {
+    const w = load();
+    w.page.init(w.app, PK + '/analytics');
+    w.call('/nodes/')[0].resolve(analyticsData());
+    await flush();
+    w.call('/nodes/' + PK + '/battery')[0].resolve({
+      status: 'ok', latest_mv: 3994, thresholds: { low_mv: 3300, critical_mv: 3000 },
+      samples: [sample('2026-10-23T23:56:10Z', 3994, OBS_A, 'Corstorphine OBS', -5, 0)], sources: [A], selected: A,
+    });
+    await flush();
+    const x = w.charts[w.charts.length - 1].options.scales.x;
+    assert(x.max - x.min > 0, 'the time axis has a span, so the lone point is drawn');
+  }
 
   console.log('Node Analytics: own status reports only');
   const u = load();
