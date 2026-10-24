@@ -109,6 +109,7 @@ node tests/unit/test-issue-1562-observers-summary.js
 node tests/unit/test-issue-748-node-analytics-coverage.js
 node tests/unit/test-node-analytics-battery-observers.js
 node tests/unit/test-node-analytics-certain-timeline.js
+node tests/unit/test-node-battery-line.js
 node tests/unit/test-issue-661-observer-airtime.js
 node tests/unit/test-issue-1268-rf-params.js
 node tests/unit/test-issue-1563-aggregate-and-inflight.js
