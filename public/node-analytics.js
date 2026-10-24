@@ -449,8 +449,8 @@
         : data && data.status === 'critical' ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-battery-low"/></svg> Critical'
         : data && data.status === 'no_battery' ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-prohibit"/></svg> No battery fitted'
         : 'No data';
-      const mv = data && data.latest_mv ? ' · ' + data.latest_mv + ' mV' : '';
-      badge.textContent = label + mv;
+      const mv = data && data.latest_mv ? ' · ' + Number(data.latest_mv) + ' mV' : '';
+      badge.innerHTML = label + mv;
       badge.style.color = STATUS_COLOR[(data && data.status) || 'unknown'];
     }
     renderBatteryReportedBy(document.getElementById('batteryReportedBy'), data);
@@ -473,13 +473,15 @@
       series.get(key).points.push({ x: new Date(s.timestamp).getTime(), y: s.battery_mv });
     }
     const xs = samples.map(s => new Date(s.timestamp).getTime());
-    const xMin = Math.min.apply(null, xs);
-    const xMax = Math.max.apply(null, xs);
+    // A lone reading still needs a time span to sit in.
+    const pad = xs.length && Math.min.apply(null, xs) === Math.max.apply(null, xs) ? 3600e3 : 0;
+    const xMin = Math.min.apply(null, xs) - pad;
+    const xMax = Math.max.apply(null, xs) + pad;
     const datasets = [];
     let i = 0;
     for (const sr of series.values()) {
       const color = BATTERY_LINE_COLORS[i++ % BATTERY_LINE_COLORS.length];
-      datasets.push({ label: sr.label, data: sr.points, borderColor: color, backgroundColor: color, tension: 0.25, pointRadius: 2, fill: false });
+      datasets.push({ label: sr.label, data: sr.points, borderColor: color, backgroundColor: color, tension: 0.25, pointRadius: 3, fill: false });
     }
     datasets.push({ label: 'Low threshold', data: [{ x: xMin, y: thr.low_mv }, { x: xMax, y: thr.low_mv }], borderColor: '#fcc419', borderDash: [6, 4], pointRadius: 0, fill: false });
     datasets.push({ label: 'Critical', data: [{ x: xMin, y: thr.critical_mv }, { x: xMax, y: thr.critical_mv }], borderColor: '#ff6b6b', borderDash: [6, 4], pointRadius: 0, fill: false });
