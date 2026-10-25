@@ -1033,10 +1033,10 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		return
 	}
 
-	// Shared-key claim: meshcore/<region>/<observer>/sharedclaim names the
+	// Shared-key claim: meshcore/<region>/<observer>/polling names the
 	// nodes this observer polls under the shared key, so a decoded reply is
 	// credited to the poller that requested it.
-	if len(parts) >= 4 && parts[3] == "sharedclaim" {
+	if len(parts) >= 4 && parts[3] == "polling" {
 		if sharedGuest != nil {
 			sharedGuest.HandleClaim(parts[2], msg, time.Now().UTC())
 		}

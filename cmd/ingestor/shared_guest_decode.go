@@ -116,7 +116,7 @@ func newSharedGuestDecoder(store *Store) *sharedGuestDecoder {
 }
 
 // HandleClaim records a poller's claim over the repeaters it polls under the
-// shared key: meshcore/<region>/<observer>/sharedclaim with
+// shared key: meshcore/<region>/<observer>/polling with
 // {"nodes":[{"node_id":<64-hex>,"reply_hops":N,"via":<64-hex>},…]}.
 func (d *sharedGuestDecoder) HandleClaim(observerID string, msg map[string]interface{}, now time.Time) {
 	if d == nil {
