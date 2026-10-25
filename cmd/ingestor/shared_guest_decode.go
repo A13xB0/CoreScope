@@ -135,6 +135,7 @@ func (d *sharedGuestDecoder) HandleClaim(observerID string, msg map[string]inter
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.evictStaleClaims(now)
+	added := 0
 	for _, n := range nodes {
 		entry, ok := n.(map[string]interface{})
 		if !ok {
@@ -161,6 +162,10 @@ func (d *sharedGuestDecoder) HandleClaim(observerID string, msg map[string]inter
 			}
 		}
 		d.claims[node] = c
+		added++
+	}
+	if added > 0 {
+		log.Printf("[shared-guest] claim from %.8s for %d node(s)", observerID, added)
 	}
 }
 
