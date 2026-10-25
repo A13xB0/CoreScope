@@ -132,6 +132,12 @@ func (db *DB) fillNodeNames(nodes map[string]string) {
 // keeps the lookup on the primary key.
 func (db *DB) fillObserverNames(observers map[string]string) {
 	for id := range observers {
+		// Shared-key readings are credited to the shared key itself, not an
+		// observer; name it plainly so the page reads "via the shared key".
+		if strings.EqualFold(id, sharedGuestKeyPublic) {
+			observers[id] = "shared key"
+			continue
+		}
 		var name string
 		err := db.conn.QueryRow(`SELECT COALESCE(name, '') FROM observers WHERE id IN (?, ?) LIMIT 1`,
 			strings.ToUpper(id), strings.ToLower(id)).Scan(&name)

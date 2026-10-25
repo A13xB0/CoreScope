@@ -58,16 +58,16 @@ var sgStatusFields = []struct {
 var sharedGuest *sharedGuestDecoder
 
 type sharedGuestDecoder struct {
-	store   *Store
-	seed    []byte
-	hash    byte // first byte of the shared public key
-	minGap  time.Duration
-	mu      sync.Mutex
-	cand    map[byte][][]byte // repeater pubkeys by first byte
-	candAt  time.Time
+	store     *Store
+	seed      []byte
+	hash      byte   // first byte of the shared public key
+	sharedObs string // the shared key's pubkey, used as the observer id for every decode
+	mu        sync.Mutex
+	cand      map[byte][][]byte // repeater pubkeys by first byte
+	candAt    time.Time
 }
 
-func newSharedGuestDecoder(store *Store, cfg *Config) *sharedGuestDecoder {
+func newSharedGuestDecoder(store *Store) *sharedGuestDecoder {
 	seed, err := hex.DecodeString(sharedGuestKeyPrivate)
 	if err != nil || len(seed) != 32 {
 		log.Printf("[shared-guest] disabled: bad private key constant")
@@ -78,11 +78,8 @@ func newSharedGuestDecoder(store *Store, cfg *Config) *sharedGuestDecoder {
 		log.Printf("[shared-guest] disabled: bad public key constant")
 		return nil
 	}
-	gap := time.Duration(batteryDefaultMinMinutes) * time.Minute
-	if cfg != nil {
-		gap = time.Duration(cfg.NeighborBatteryMinIntervalMinutes()) * time.Minute
-	}
-	return &sharedGuestDecoder{store: store, seed: seed, hash: pub[0], minGap: gap}
+	return &sharedGuestDecoder{store: store, seed: seed, hash: pub[0],
+		sharedObs: strings.ToLower(sharedGuestKeyPublic)}
 }
 
 // candidates returns the known repeater/room pubkeys whose first byte is b,
@@ -121,7 +118,7 @@ func (d *sharedGuestDecoder) loadCandidates() map[byte][][]byte {
 // Handle decodes a decoded packet if it is a shared-key reply and stores the
 // reading credited to the observer that uploaded it. Cheap and silent for
 // everything else.
-func (d *sharedGuestDecoder) Handle(observerID string, p *DecodedPacket, snr *float64, rssi *int64, now time.Time) {
+func (d *sharedGuestDecoder) Handle(observerID string, p *DecodedPacket, now time.Time) {
 	if d == nil || p == nil || p.Header.PayloadType != PayloadRESPONSE {
 		return
 	}
@@ -144,31 +141,43 @@ func (d *sharedGuestDecoder) Handle(observerID string, p *DecodedPacket, snr *fl
 		if !ok || len(plain) < 4 {
 			continue
 		}
-		body := plain[4:] // after the 4-byte tag
-		r := d.reading(hex.EncodeToString(pub), observerID, body, snr, rssi, now)
+		// The tag is the request timestamp the repeater reflects; it is the same
+		// in every observer's copy of this one reply, so using it as the
+		// reading's time (with a fixed "shared key" observer) collapses all those
+		// copies to a single row — the reading is the repeater's own, not each
+		// observer's.
+		tag := binary.LittleEndian.Uint32(plain[:4])
+		r := d.reading(hex.EncodeToString(pub), tag, plain[4:])
 		if r == nil {
 			return // authentic reply, but not a battery/telemetry answer (e.g. a login) — leave it
 		}
-		stored, err := d.store.InsertNeighborBattery(r, d.minGap)
+		stored, err := d.store.InsertNeighborBattery(r, 0)
 		if err != nil {
-			log.Printf("[shared-guest] insert for %.8s via %.8s: %v", r.NodeID, observerID, err)
+			log.Printf("[shared-guest] insert for %.8s: %v", r.NodeID, err)
 		} else if stored {
-			log.Printf("[shared-guest] decoded %s for %.8s from observer %.8s (%d mV)",
-				r.Method, r.NodeID, observerID, r.BatteryMv)
+			log.Printf("[shared-guest] decoded %s for %.8s via the shared key (%d mV, heard by %.8s)",
+				r.Method, r.NodeID, r.BatteryMv, observerID)
 		}
 		return
 	}
 }
 
 // reading builds a NeighborBatteryReading from a decrypted reply body, or nil
-// when the body is not a status or telemetry answer.
-func (d *sharedGuestDecoder) reading(nodeHex, observerID string, body []byte, snr *float64, rssi *int64, now time.Time) *NeighborBatteryReading {
+// when the body is not a status or telemetry answer. The reading is credited to
+// the shared key (not the observer that happened to hear it) and timed by the
+// reply's tag, so every observer's copy of one reply is the same row.
+func (d *sharedGuestDecoder) reading(nodeHex string, tag uint32, body []byte) *NeighborBatteryReading {
+	// Guard a nonsense tag (a misparse would date the row to 1970); authentic
+	// replies carry the request's epoch-second timestamp.
+	if tag < 1_600_000_000 {
+		return nil
+	}
+	at := time.Unix(int64(tag), 0).UTC().Format(batteryTimeLayout)
 	base := func(mv int, method string) *NeighborBatteryReading {
 		return &NeighborBatteryReading{
-			NodeID: nodeHex, ObserverID: observerID, BatteryMv: mv, Method: method,
-			Source: "poll", KeyMode: "shared", ReplyHops: 0, SNR: snr, RSSI: rssi,
-			SampledAt:  now.UTC().Format(batteryTimeLayout),
-			ReceivedAt: now.UTC().Format(batteryTimeLayout),
+			NodeID: nodeHex, ObserverID: d.sharedObs, BatteryMv: mv, Method: method,
+			Source: "poll", KeyMode: "shared", ReplyHops: 0,
+			SampledAt: at, ReceivedAt: at,
 		}
 	}
 	// Telemetry first: CayenneLPP for the node itself (channel 1).

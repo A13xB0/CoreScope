@@ -16,7 +16,7 @@ func TestSharedGuestHandleStoresReading(t *testing.T) {
 		time.Now().UTC().Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
-	d := newSharedGuestDecoder(s, nil)
+	d := newSharedGuestDecoder(s)
 	if d == nil {
 		t.Fatal("decoder nil")
 	}
@@ -28,21 +28,30 @@ func TestSharedGuestHandleStoresReading(t *testing.T) {
 	pkt.Payload.MAC = hex.EncodeToString(payload[2:4])
 	pkt.Payload.EncryptedData = hex.EncodeToString(payload[4:])
 
-	observer := "7e76aa00112233445566778899aabbccddeeff00112233445566778899009400"
-	d.Handle(observer, pkt, nil, nil, time.Now().UTC())
+	// The same reply, heard by three different observers, is one reading.
+	for _, obs := range []string{
+		"7e76aa00112233445566778899aabbccddeeff00112233445566778899009400",
+		"aabbcc00112233445566778899aabbccddeeff00112233445566778899001122",
+		"ccddee00112233445566778899aabbccddeeff00112233445566778899003344",
+	} {
+		d.Handle(obs, pkt, time.Now().UTC())
+	}
 
 	if batteryRows(t, s) != 1 {
-		t.Fatalf("battery rows = %d, want 1", batteryRows(t, s))
+		t.Fatalf("battery rows = %d, want 1 (one reading per reply)", batteryRows(t, s))
 	}
-	var nodeID, obs, keyMode string
+	var nodeID, obs, keyMode, sampledAt string
 	var mv int
-	err := s.db.QueryRow(`SELECT node_id, observer_id, battery_mv, COALESCE(key_mode,'') FROM neighbor_battery`).
-		Scan(&nodeID, &obs, &mv, &keyMode)
+	err := s.db.QueryRow(`SELECT node_id, observer_id, battery_mv, COALESCE(key_mode,''), sampled_at FROM neighbor_battery`).
+		Scan(&nodeID, &obs, &mv, &keyMode, &sampledAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nodeID != repPub || obs != observer {
-		t.Errorf("node=%s obs=%s", nodeID, obs)
+	if nodeID != repPub {
+		t.Errorf("node=%s", nodeID)
+	}
+	if obs != d.sharedObs { // credited to the shared key, not an observer
+		t.Errorf("observer=%s, want the shared key %s", obs, d.sharedObs)
 	}
 	if mv != vecBatteryV {
 		t.Errorf("battery_mv = %d, want %d", mv, vecBatteryV)
@@ -50,13 +59,17 @@ func TestSharedGuestHandleStoresReading(t *testing.T) {
 	if keyMode != "shared" {
 		t.Errorf("key_mode = %q, want shared", keyMode)
 	}
+	// Timed by the reply's tag, not ingest time, so every observer agrees.
+	if want := time.Unix(int64(vecTag), 0).UTC().Format(batteryTimeLayout); sampledAt != want {
+		t.Errorf("sampled_at = %s, want %s (the tag time)", sampledAt, want)
+	}
 }
 
 // A packet not addressed to the shared key, or with no known repeater, stores
 // nothing.
 func TestSharedGuestHandleIgnoresOthers(t *testing.T) {
 	s := newTestStore(t)
-	d := newSharedGuestDecoder(s, nil)
+	d := newSharedGuestDecoder(s)
 	payload := hexb(t, vecRespPay)
 	pkt := &DecodedPacket{}
 	pkt.Header.PayloadType = PayloadRESPONSE
@@ -65,7 +78,7 @@ func TestSharedGuestHandleIgnoresOthers(t *testing.T) {
 	pkt.Payload.SrcHash = hex.EncodeToString(payload[1:2])
 	pkt.Payload.MAC = hex.EncodeToString(payload[2:4])
 	pkt.Payload.EncryptedData = hex.EncodeToString(payload[4:])
-	d.Handle("7e76aa00112233445566778899aabbccddeeff00112233445566778899009400", pkt, nil, nil, time.Now().UTC())
+	d.Handle("7e76aa00112233445566778899aabbccddeeff00112233445566778899009400", pkt, time.Now().UTC())
 	if batteryRows(t, s) != 0 {
 		t.Fatalf("stored a reading for a non-shared packet")
 	}

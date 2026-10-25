@@ -103,7 +103,7 @@ func main() {
 		log.Printf("No channel keys loaded — GRP_TXT packets will not be decrypted")
 	}
 
-	sharedGuest = newSharedGuestDecoder(store, cfg)
+	sharedGuest = newSharedGuestDecoder(store)
 
 	keySet := newChannelKeySet(channelKeys, cfg.UsersDBPath(), cfg.ApprovedChannelsMax())
 	if cfg.ApprovedChannelsEnabled() {
@@ -1285,19 +1285,10 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		}
 
 		// Shared guest key: if this is a repeater reply under the shared key
-		// that this observer overheard, decode it into a reading credited to
-		// the observer. Cheap and silent for everything else.
+		// that this observer overheard, decode it into one reading credited to
+		// the shared key. Cheap and silent for everything else.
 		if sharedGuest != nil {
-			var snr *float64
-			var rssi *int64
-			if f, ok := toFloat64(firstPresent(msg, "SNR", "snr")); ok {
-				snr = &f
-			}
-			if f, ok := toFloat64(firstPresent(msg, "RSSI", "rssi")); ok {
-				v := int64(f)
-				rssi = &v
-			}
-			sharedGuest.Handle(observerID, decoded, snr, rssi, time.Now().UTC())
+			sharedGuest.Handle(observerID, decoded, time.Now().UTC())
 		}
 
 		// Upsert observer

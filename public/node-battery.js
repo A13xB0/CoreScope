@@ -33,10 +33,10 @@
 
   function reporter(s) {
     if (s.source !== 'neighbor') return 'own report';
-    // "shared key" marks a reading taken under the shared guest key, which
-    // any observer holding the key could have heard.
-    const key = s.key_mode === 'shared' ? ' · shared key' : '';
-    return 'by ' + observerLink(s.observer_id, s.observer_name) + key;
+    // A shared-key reading is the repeater's own value, decoded from whichever
+    // observers heard it, so it is credited to the shared key, not an observer.
+    if (s.key_mode === 'shared') return 'via the shared key';
+    return 'by ' + observerLink(s.observer_id, s.observer_name);
   }
 
   // html returns the line for a battery response, or '' when there is none
