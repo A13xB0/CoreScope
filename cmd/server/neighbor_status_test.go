@@ -44,7 +44,7 @@ func insertStatus(t *testing.T, db *DB, observer string, at time.Time, uptime, r
 	}
 }
 
-func getJSON(t *testing.T, path string, db *DB) map[string]interface{} {
+func getNodeJSON(t *testing.T, path string, db *DB) map[string]interface{} {
 	t.Helper()
 	w := httptest.NewRecorder()
 	batteryRouter(t, db).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
@@ -71,7 +71,7 @@ func TestNodeBatteryTemperatureAndVia(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := getJSON(t, "/api/nodes/"+nbNode+"/battery?days=7", db)
+	body := getNodeJSON(t, "/api/nodes/"+nbNode+"/battery?days=7", db)
 	temp := body["temperature"].(map[string]interface{})
 	if temp["celsius"].(float64) != 16.2 || temp["source"] != "neighbor" || temp["observer_name"] != "Corstorphine OBS" || temp["stale"] != false {
 		t.Errorf("temperature = %v", temp)
@@ -91,7 +91,7 @@ func TestNodeBatteryWithoutV2Columns(t *testing.T) {
 	db := setupTestDB(t)
 	now := seedNeighborNode(t, db)
 	insertNeighborBattery(t, db, nbObsA, now.Add(-time.Hour), 3900, 7.5, 0)
-	body := getJSON(t, "/api/nodes/"+nbNode+"/battery?days=7", db)
+	body := getNodeJSON(t, "/api/nodes/"+nbNode+"/battery?days=7", db)
 	if body["temperature"] != nil {
 		t.Errorf("temperature = %v, want null", body["temperature"])
 	}
@@ -108,7 +108,7 @@ func TestNodeBatteryAdvertTemperatureFallbackAndStale(t *testing.T) {
 	db.conn.Exec(`UPDATE nodes SET temperature_c = 21.5, last_seen = ? WHERE public_key = ?`, old.Format(time.RFC3339), nbNode)
 	insertNeighborBattery(t, db, nbObsA, now.Add(-26*time.Hour), 3900, 7.5, 0)
 
-	body := getJSON(t, "/api/nodes/"+nbNode+"/battery?days=7", db)
+	body := getNodeJSON(t, "/api/nodes/"+nbNode+"/battery?days=7", db)
 	temp := body["temperature"].(map[string]interface{})
 	if temp["celsius"].(float64) != 21.5 || temp["source"] != "advert" || temp["stale"] != true {
 		t.Errorf("temperature = %v", temp)
@@ -148,7 +148,7 @@ func TestNodeStatusHistoryRatesAndReboot(t *testing.T) {
 	insertStatus(t, db, nbObsA, t0.Add(2*time.Hour), 600, 30, 20, 2) // rebooted
 	insertStatus(t, db, nbObsB, t0, 9000, 900, 600, 40)
 
-	body := getJSON(t, "/api/nodes/"+nbNode+"/status-history?days=7", db)
+	body := getNodeJSON(t, "/api/nodes/"+nbNode+"/status-history?days=7", db)
 	series := body["series"].([]interface{})
 	if len(series) != 2 {
 		t.Fatalf("series = %d, want 2", len(series))
@@ -179,7 +179,7 @@ func TestNodeStatusHistoryRatesAndReboot(t *testing.T) {
 func TestNodeStatusHistoryEmptyAndUnknown(t *testing.T) {
 	db := setupTestDB(t)
 	seedNeighborNode(t, db)
-	body := getJSON(t, "/api/nodes/"+nbNode+"/status-history", db)
+	body := getNodeJSON(t, "/api/nodes/"+nbNode+"/status-history", db)
 	if len(body["series"].([]interface{})) != 0 {
 		t.Errorf("want no series without the table")
 	}
