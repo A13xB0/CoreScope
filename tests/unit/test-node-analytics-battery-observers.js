@@ -93,10 +93,15 @@ const B = { source: 'neighbor', observer_id: OBS_B, observer_name: 'Pentland <OB
 
   const cfg = t.charts[t.charts.length - 1];
   const labels = cfg.data.datasets.map((d) => d.label);
-  assert(labels.includes('Corstorphine OBS') && labels.includes('Pentland <OBS>'), 'one chart line per observer');
-  const a = cfg.data.datasets.find((d) => d.label === 'Corstorphine OBS');
-  assert(a.data.length === 2 && a.data[1].y === 3850, 'each line holds that observer\'s readings');
+  // The battery is one line (the repeater's own voltage), not a line per
+  // observer; who reported each reading is in the table below.
+  assert(!labels.includes('Corstorphine OBS') && !labels.includes('Pentland <OBS>'), 'no per-observer chart lines');
+  const batt = cfg.data.datasets.find((d) => d.label === 'Battery');
+  assert(batt && batt.data.length === 3, 'one battery line holds every reading');
   assert(labels.includes('Low threshold') && labels.includes('Critical'), 'threshold lines stay');
+  // The table still names every reading's reporter.
+  assert(t.els.batteryReadings.innerHTML.includes('Corstorphine OBS') && t.els.batteryReadings.innerHTML.includes('Pentland &lt;OBS>'),
+    'the readings table keeps the per-reading observer');
 
   const badge = t.els.batteryStatusBadge.innerHTML;
   assert(badge.includes('<svg') && badge.includes('3850 mV'), 'the status badge renders its icon as markup, not text');

@@ -491,25 +491,22 @@
     if (empty) empty.style.display = 'none';
     ctx.style.display = '';
 
-    // One line per source, on a shared time axis: readings from different
-    // observers land at different times.
-    const series = new Map();
-    for (const s of samples) {
-      const key = batterySourceKey(s);
-      if (!series.has(key)) series.set(key, { label: batterySourceLabel(s), points: [] });
-      series.get(key).points.push({ x: new Date(s.timestamp).getTime(), y: s.battery_mv });
-    }
+    // One battery line: the voltage is the repeater's own, the same whichever
+    // observer reported it, so it is drawn as a single series. Who reported or
+    // requested each reading is in the table below, not a colour per observer.
+    const batteryPoints = samples
+      .map(s => ({ x: new Date(s.timestamp).getTime(), y: s.battery_mv }))
+      .sort((a, b) => a.x - b.x);
     const xs = samples.map(s => new Date(s.timestamp).getTime());
     // A lone reading still needs a time span to sit in.
     const pad = xs.length && Math.min.apply(null, xs) === Math.max.apply(null, xs) ? 3600e3 : 0;
     const xMin = Math.min.apply(null, xs) - pad;
     const xMax = Math.max.apply(null, xs) + pad;
-    const datasets = [];
-    let i = 0;
-    for (const sr of series.values()) {
-      const color = BATTERY_LINE_COLORS[i++ % BATTERY_LINE_COLORS.length];
-      datasets.push({ label: sr.label, data: sr.points, borderColor: color, backgroundColor: color, tension: 0.25, pointRadius: 4, fill: false });
-    }
+    const datasets = [{
+      label: 'Battery', data: batteryPoints,
+      borderColor: BATTERY_LINE_COLORS[0], backgroundColor: BATTERY_LINE_COLORS[0],
+      tension: 0.25, pointRadius: 3, fill: false,
+    }];
     // Chip temperature, where observers read it, on its own right-hand axis.
     const temps = samples.filter(s => s.temperature_c != null)
       .map(s => ({ x: new Date(s.timestamp).getTime(), y: Number(s.temperature_c) }));
