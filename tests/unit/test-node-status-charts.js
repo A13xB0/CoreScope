@@ -77,6 +77,12 @@ console.log('Node status charts');
   assert(c.grid.innerHTML.includes('-117 dBm'), 'heading shows the newest value');
 }
 {
+  const { ns, made } = load();
+  ns.render(card(), { series: [{ observer_id: OBS, samples: [sample('2026-10-25T10:00:00Z', { uptime_secs: 5 })] }] }, 7);
+  const x = made[0].cfg.options.scales.x;
+  assert(x.max - x.min === 2 * 3600e3, 'a lone sample gets a two-hour axis, not months');
+}
+{
   const { ns } = load();
   const c = card();
   const sparse = { series: [{ observer_id: OBS, samples: [sample('2026-10-25T10:00:00Z', { uptime_secs: 5, noise_floor: null })] }] };

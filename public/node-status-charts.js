@@ -102,8 +102,12 @@
           pointRadius: 5, pointStyle: 'triangle', borderColor: css('--status-red', '#ef4444'), backgroundColor: css('--status-red', '#ef4444') });
       }
     }
+    // Pin the time axis to the samples; a lone sample still needs a span.
+    const xs = samples.map(s => new Date(s.timestamp).getTime());
+    const pad = Math.min.apply(null, xs) === Math.max.apply(null, xs) ? 3600e3 : 0;
     const scales = {
-      x: { type: 'linear', ticks: { callback: tickLabel(days), maxTicksLimit: 6, maxRotation: 0 } },
+      x: { type: 'linear', min: Math.min.apply(null, xs) - pad, max: Math.max.apply(null, xs) + pad,
+        ticks: { callback: tickLabel(days), maxTicksLimit: 6, maxRotation: 0 } },
       y: { title: { display: true, text: def.unit }, min: def.min, max: def.max },
     };
     if (def.unit1) scales.y1 = { position: 'right', title: { display: true, text: def.unit1 }, grid: { drawOnChartArea: false } };
