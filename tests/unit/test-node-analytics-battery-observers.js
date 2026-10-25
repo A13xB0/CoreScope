@@ -121,6 +121,31 @@ const B = { source: 'neighbor', observer_id: OBS_B, observer_name: 'Pentland <OB
     assert(x.max - x.min > 0, 'the time axis has a span, so the lone point is drawn');
   }
 
+  console.log('Node Analytics: one-hop readings with chip temperature');
+  {
+    const r = load();
+    r.page.init(r.app, PK + '/analytics');
+    r.call('/nodes/')[0].resolve(analyticsData());
+    await flush();
+    const RELAY = 'cd'.repeat(32);
+    const one = Object.assign(sample('2026-10-25T11:29:49Z', 3999, OBS_A, 'Corstorphine OBS', -5, 1),
+      { via: RELAY, via_name: 'sco-edi-garvald', temperature_c: 16.2 });
+    const two = sample('2026-10-25T10:29:49Z', 3990, OBS_A, 'Corstorphine OBS', -5, 1);
+    const sel = Object.assign({}, A, { reply_hops: 1, via: RELAY, via_name: 'sco-edi-garvald' });
+    r.call('/nodes/' + PK + '/battery')[0].resolve({
+      status: 'ok', latest_mv: 3999, thresholds: { low_mv: 3300, critical_mv: 3000 },
+      samples: [two, one], sources: [sel], selected: sel,
+    });
+    await flush();
+    assert(r.els.batteryReportedBy.innerHTML.includes('via sco-edi-garvald'), 'the route names the relay');
+    const table = r.els.batteryReadings.innerHTML;
+    assert(table.includes('Chip temp') && table.includes('16.2 °C') && table.includes('—'), 'readings table gains a chip temperature column');
+    const cfg = r.charts[r.charts.length - 1];
+    const temp = cfg.data.datasets.find((d) => d.yAxisID === 'y1');
+    assert(temp && temp.data.length === 1 && temp.data[0].y === 16.2, 'temperature drawn on its own axis');
+    assert(cfg.options.scales.y1.display === true, 'the temperature axis is shown');
+  }
+
   console.log('Node Analytics: own status reports only');
   const u = load();
   u.page.init(u.app, PK + '/analytics');
@@ -136,6 +161,11 @@ const B = { source: 'neighbor', observer_id: OBS_B, observer_name: 'Pentland <OB
   assert(u.els.batteryReportedBy.innerHTML.includes('Own status report') && !u.els.batteryReportedBy.innerHTML.includes('<a '),
     'a self report says so, with no observer link');
   assert(!u.els.batteryReportedBy.innerHTML.includes('also reported by'), 'no other sources listed');
+  {
+    const cfg = u.charts[u.charts.length - 1];
+    assert(!cfg.data.datasets.some((d) => d.yAxisID === 'y1') && cfg.options.scales.y1.display === false,
+      'no temperature axis without temperatures');
+  }
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
   if (failed) process.exit(1);

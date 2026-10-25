@@ -189,6 +189,12 @@
             <div id="batteryEmpty" style="display:none;padding:20px;text-align:center;color:var(--text-muted);font-size:12px">No battery telemetry recorded for this node in this window.</div>
             <div id="batteryReadings" class="analytics-table-scroll" style="display:none"></div>
           </div>
+          <div class="analytics-chart-card full" id="nodeStatusCard" hidden>
+            <h4>Repeater Status</h4>
+            <div class="analytics-chart-desc">From the status replies an observer polling this repeater directly publishes with its battery. Rates are per hour between two replies; a reboot resets the counters.</div>
+            <div class="battery-reported-by ns-by"></div>
+            <div class="ns-grid"></div>
+          </div>
           <div class="analytics-chart-card full">
             <h4>Uptime Heatmap</h4>
             <div class="analytics-chart-desc">Hour-by-hour activity grid — darker = more packets in that slot</div>
@@ -225,6 +231,7 @@
     buildHopChart(data);
     buildHeatmap(data);
     loadBatteryChart(pubkey, currentDays, isCurrent);
+    if (window.NodeStatusCharts) NodeStatusCharts.load(document.getElementById('nodeStatusCard'), pubkey, currentDays, isCurrent);
     NodeHopAnalytics.load(document.getElementById('hopCountSection'), pubkey, currentDays);
   }
 
@@ -379,7 +386,9 @@
 
   function batteryRoute(s) {
     if (s.source !== 'neighbor' || s.reply_hops == null) return '';
-    return s.reply_hops === 0 ? 'direct' : 'via ' + s.reply_hops + ' hop' + (s.reply_hops === 1 ? '' : 's');
+    if (s.reply_hops === 0) return 'direct';
+    if (s.via) return 'via ' + (s.via_name || String(s.via).slice(0, 8));
+    return 'via ' + s.reply_hops + ' hop' + (s.reply_hops === 1 ? '' : 's');
   }
 
   function batteryObserverLink(s) {
@@ -412,15 +421,19 @@
   function renderBatteryReadings(el, samples) {
     if (!el) return;
     if (!samples.length) { el.style.display = 'none'; return; }
-    const rows = samples.slice(-10).reverse().map(s => '<tr>'
+    const recent = samples.slice(-10).reverse();
+    const withTemp = recent.some(s => s.temperature_c != null);
+    const rows = recent.map(s => '<tr>'
       + '<td>' + escapeHtml(new Date(s.timestamp).toLocaleString()) + '</td>'
       + '<td>' + (s.battery_mv === 0 ? 'none fitted' : s.battery_mv + ' mV') + '</td>'
+      + (withTemp ? '<td>' + (s.temperature_c != null ? Number(s.temperature_c).toFixed(1) + ' °C' : '—') + '</td>' : '')
       + '<td>' + batteryObserverLink(s) + '</td>'
       + '<td>' + formatSnr(s.snr) + '</td>'
       + '<td>' + escapeHtml(batteryRoute(s) || '—') + '</td>'
       + '</tr>').join('');
     el.innerHTML = '<table class="analytics-peer-table"><caption style="text-align:left;font-size:12px;color:var(--text-muted)">Recent readings</caption>'
-      + '<thead><tr><th scope="col">Time</th><th scope="col">Voltage</th><th scope="col">Reported by</th><th scope="col">SNR</th><th scope="col">Route</th></tr></thead>'
+      + '<thead><tr><th scope="col">Time</th><th scope="col">Voltage</th>' + (withTemp ? '<th scope="col">Chip temp</th>' : '')
+      + '<th scope="col">Reported by</th><th scope="col">SNR</th><th scope="col">Route</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table>';
     el.style.display = '';
   }
@@ -483,6 +496,13 @@
       const color = BATTERY_LINE_COLORS[i++ % BATTERY_LINE_COLORS.length];
       datasets.push({ label: sr.label, data: sr.points, borderColor: color, backgroundColor: color, tension: 0.25, pointRadius: 4, fill: false });
     }
+    // Chip temperature, where observers read it, on its own right-hand axis.
+    const temps = samples.filter(s => s.temperature_c != null)
+      .map(s => ({ x: new Date(s.timestamp).getTime(), y: Number(s.temperature_c) }));
+    if (temps.length) {
+      datasets.push({ label: 'Chip temperature (°C)', data: temps, yAxisID: 'y1', borderColor: '#e8590c', backgroundColor: '#e8590c',
+        borderWidth: 1.5, tension: 0.25, pointRadius: 2, fill: false });
+    }
     datasets.push({ label: 'Low threshold', data: [{ x: xMin, y: thr.low_mv }, { x: xMax, y: thr.low_mv }], borderColor: '#fcc419', borderDash: [6, 4], pointRadius: 0, fill: false });
     datasets.push({ label: 'Critical', data: [{ x: xMin, y: thr.critical_mv }, { x: xMax, y: thr.critical_mv }], borderColor: '#ff6b6b', borderDash: [6, 4], pointRadius: 0, fill: false });
 
@@ -511,7 +531,8 @@
         },
         scales: {
           x: { type: 'linear', min: xMin, max: xMax, ticks: { callback: tickLabel, maxTicksLimit: 8, maxRotation: 45 } },
-          y: { title: { display: true, text: 'mV' }, suggestedMin: yMin, suggestedMax: yMax }
+          y: { title: { display: true, text: 'mV' }, suggestedMin: yMin, suggestedMax: yMax },
+          y1: { display: temps.length > 0, position: 'right', title: { display: true, text: '°C' }, grid: { drawOnChartArea: false } }
         }
       }
     });
@@ -531,6 +552,7 @@
   function destroy() {
     destroyCharts();
     NodeHopAnalytics.destroy();
+    if (window.NodeStatusCharts) NodeStatusCharts.destroy();
     currentPubkey = null;
   }
 

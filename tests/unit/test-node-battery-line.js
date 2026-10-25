@@ -82,6 +82,53 @@ const neighbour = { source: 'neighbor', observer_id: OBS, observer_name: 'Cadham
     await nb.mount(row, PK);
     assert(row.hidden, 'nothing written once the page moved on');
   }
+  {
+    const nb = load({ status: 'ok', latest_mv: 3994, stale: true, selected: neighbour, sources: [neighbour] });
+    const row = el('TR');
+    await nb.mount(row, PK);
+    assert(row.hidden, 'battery hidden when the reading is stale');
+  }
+  {
+    const viaSel = Object.assign({}, neighbour, { reply_hops: 1, via: 'cd'.repeat(32), via_name: 'sco-edi-<garvald>' });
+    const nb = load({ status: 'ok', latest_mv: 3994, selected: viaSel, sources: [viaSel] });
+    const row = el('TR');
+    await nb.mount(row, PK);
+    const h = row.val.innerHTML;
+    assert(h.includes('via <a href="#/nodes/' + 'cd'.repeat(32) + '">sco-edi-&lt;garvald></a>'), 'one-hop reading names and links the relay');
+  }
+  {
+    const temperature = { celsius: 16.2, timestamp: '2026-10-25T11:28:12Z', source: 'neighbor', observer_id: OBS, observer_name: 'The Pole', stale: false };
+    const nb = load({ status: 'ok', latest_mv: 3994, selected: neighbour, sources: [neighbour], temperature });
+    const row = el('TR');
+    const trow = el('TR');
+    await nb.mount(row, PK, trow);
+    const h = trow.val.innerHTML;
+    assert(!trow.hidden && h.includes('16.2 °C') && h.includes('chip'), 'temperature line, labelled chip');
+    assert(h.includes('#/observers/' + OBS.toUpperCase()) && h.includes('The Pole'), 'temperature names its observer');
+  }
+  {
+    const temperature = { celsius: 21.5, timestamp: '2026-10-25T11:28:12Z', source: 'advert', stale: false };
+    const nb = load({ status: 'unknown', selected: null, sources: [], temperature });
+    const row = el('TR');
+    const trow = el('TR');
+    await nb.mount(row, PK, trow);
+    assert(row.hidden && !trow.hidden && trow.val.innerHTML.includes('from its adverts'), 'advert temperature shows without a battery line');
+  }
+  {
+    const temperature = { celsius: 21.5, timestamp: '2026-10-23T11:28:12Z', source: 'advert', stale: true };
+    const nb = load({ status: 'ok', latest_mv: 3994, selected: neighbour, sources: [neighbour], temperature });
+    const row = el('TR');
+    const trow = el('TR');
+    await nb.mount(row, PK, trow);
+    assert(!row.hidden && trow.hidden, 'stale temperature hidden on its own, battery still shown');
+  }
+  {
+    const nb = load({ status: 'ok', latest_mv: 3994, selected: neighbour, sources: [neighbour], temperature: null });
+    const row = el('TR');
+    const trow = el('TR');
+    await nb.mount(row, PK, trow);
+    assert(trow.hidden && trow.val.innerHTML === '', 'no temperature, no line');
+  }
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
   if (failed) process.exit(1);
 })();
