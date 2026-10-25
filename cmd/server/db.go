@@ -42,6 +42,8 @@ type DB struct {
 	txRewriteFeedTable      atomic.Bool // tx_rewrite_feed present (#2107); re-probed while absent
 	clientNodeNamesTable    atomic.Bool // client_node_names present; re-probed while absent (clientNodeNamesPresent)
 	neighborBatteryTable    atomic.Bool // neighbor_battery present; re-probed while absent (neighborBatteryPresent)
+	neighborBatteryV2       atomic.Bool // neighbor_battery has temperature_c and via (neighborBatteryV2Present)
+	neighborStatusTable     atomic.Bool // neighbor_status present (neighborStatusPresent)
 	inactiveNodesTable      atomic.Bool // inactive_nodes present; re-probed while absent (clientNameHeard)
 	advertEvidenceReadHook  func()      // test-only: immediately before a bulk mask query
 	conn                    *sql.DB

@@ -31,7 +31,9 @@ func createNeighborBatteryTable(t *testing.T, db *DB) {
 func insertNeighborBattery(t *testing.T, db *DB, observer string, at time.Time, mv int, snr float64, hops int) {
 	t.Helper()
 	ts := at.UTC().Format("2006-01-02T15:04:05Z")
-	if _, err := db.conn.Exec(`INSERT INTO neighbor_battery VALUES (?,?,?,?,?,?,?,?,?,?)`,
+	if _, err := db.conn.Exec(`INSERT INTO neighbor_battery
+		(node_id, observer_id, sampled_at, battery_mv, snr, rssi, method, source, reply_hops, received_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		nbNode, observer, ts, mv, snr, -90, "status", "poll", hops, ts); err != nil {
 		t.Fatal(err)
 	}

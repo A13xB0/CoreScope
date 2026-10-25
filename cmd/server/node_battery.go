@@ -45,6 +45,10 @@ type NodeBatterySample struct {
 	ObserverName string   `json:"observer_name,omitempty"`
 	SNR          *float64 `json:"snr,omitempty"`
 	ReplyHops    *int     `json:"reply_hops,omitempty"`
+	// Via is the relay a one-hop reading went through, ViaName its name.
+	Via          string   `json:"via,omitempty"`
+	ViaName      string   `json:"via_name,omitempty"`
+	TemperatureC *float64 `json:"temperature_c,omitempty"`
 }
 
 // nodeBatteryHistorySQL matches the observer ID in lowercase and in
@@ -145,7 +149,10 @@ func (s *Server) handleNodeBattery(w http.ResponseWriter, r *http.Request) {
 	sources := summariseBatterySources(samples)
 	selected := selectBatterySource(sources, time.Now().UTC())
 
+	now := time.Now().UTC()
+	hideAfter := s.cfg.NeighborBatteryHideAfterHours()
 	status := "unknown"
+	stale := false
 	var latestMv interface{}
 	var latestTs interface{}
 	var selectedOut interface{}
@@ -155,7 +162,9 @@ func (s *Server) handleNodeBattery(w http.ResponseWriter, r *http.Request) {
 		latestTs = selected.LatestTs
 		selectedOut = selected
 		status = batteryStatus(mv, low, crit)
+		stale = isStale(selected.LatestTs, hideAfter, now)
 	}
+	temperature := latestTemperature(samples, node, hideAfter, now)
 
 	writeJSON(w, map[string]interface{}{
 		"public_key": strings.ToLower(pubkey),
@@ -166,6 +175,11 @@ func (s *Server) handleNodeBattery(w http.ResponseWriter, r *http.Request) {
 		"latest_mv":  latestMv,
 		"latest_ts":  latestTs,
 		"status":     status,
+		// stale: the selected reading is older than neighborBattery.hideAfterHours.
+		// The data is still returned; the UI decides to hide the line.
+		"stale":            stale,
+		"hide_after_hours": hideAfter,
+		"temperature":      temperature,
 		"thresholds": map[string]interface{}{
 			"low_mv":      low,
 			"critical_mv": crit,

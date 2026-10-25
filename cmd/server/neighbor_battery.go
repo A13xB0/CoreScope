@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"sort"
 	"strings"
 	"time"
@@ -33,6 +34,8 @@ type BatterySource struct {
 	Samples      int      `json:"samples"`
 	MedianSNR    *float64 `json:"median_snr,omitempty"`
 	ReplyHops    *int     `json:"reply_hops,omitempty"` // of the latest reading
+	Via          string   `json:"via,omitempty"`        // relay of the latest reading
+	ViaName      string   `json:"via_name,omitempty"`
 }
 
 // neighborBatteryPresent reports whether neighbor_battery exists. The
@@ -60,8 +63,14 @@ func (db *DB) GetNeighborBatteryHistory(pubkey, since string) ([]NodeBatterySamp
 	if t, err := time.Parse(time.RFC3339, since); err == nil {
 		since = t.UTC().Format("2006-01-02T15:04:05Z")
 	}
+	// temperature_c and via arrive with a later ingestor; until it has
+	// migrated the table they read as NULL.
+	extra := "NULL, NULL"
+	if db.neighborBatteryV2Present() {
+		extra = "temperature_c, via"
+	}
 	rows, err := db.conn.Query(`
-		SELECT sampled_at, battery_mv, observer_id, snr, reply_hops
+		SELECT sampled_at, battery_mv, observer_id, snr, reply_hops, `+extra+`
 		FROM neighbor_battery
 		WHERE node_id = ? AND sampled_at >= ?
 		ORDER BY sampled_at ASC`, strings.ToLower(pubkey), since)
@@ -72,14 +81,20 @@ func (db *DB) GetNeighborBatteryHistory(pubkey, since string) ([]NodeBatterySamp
 
 	var out []NodeBatterySample
 	observers := map[string]string{}
+	relays := map[string]string{}
 	for rows.Next() {
 		var s NodeBatterySample
 		var hops int
-		if err := rows.Scan(&s.Timestamp, &s.BatteryMv, &s.ObserverID, &s.SNR, &hops); err != nil {
+		var via sql.NullString
+		if err := rows.Scan(&s.Timestamp, &s.BatteryMv, &s.ObserverID, &s.SNR, &hops, &s.TemperatureC, &via); err != nil {
 			return nil, err
 		}
 		s.Source = batterySourceNeighbor
 		s.ReplyHops = &hops
+		if via.Valid && via.String != "" {
+			s.Via = via.String
+			relays[s.Via] = ""
+		}
 		observers[s.ObserverID] = ""
 		out = append(out, s)
 	}
@@ -90,10 +105,22 @@ func (db *DB) GetNeighborBatteryHistory(pubkey, since string) ([]NodeBatterySamp
 		return nil, nil
 	}
 	db.fillObserverNames(observers)
+	db.fillNodeNames(relays)
 	for i := range out {
 		out[i].ObserverName = observers[out[i].ObserverID]
+		out[i].ViaName = relays[out[i].Via]
 	}
 	return out, nil
+}
+
+// fillNodeNames looks up the advertised name of each node key in the map.
+func (db *DB) fillNodeNames(nodes map[string]string) {
+	for id := range nodes {
+		var name string
+		if err := db.conn.QueryRow(`SELECT COALESCE(name, '') FROM nodes WHERE public_key = ?`, strings.ToLower(id)).Scan(&name); err == nil {
+			nodes[id] = name
+		}
+	}
 }
 
 // fillObserverNames looks up the name of each observer key in the map.
@@ -150,6 +177,8 @@ func summariseBatterySources(samples []NodeBatterySample) []BatterySource {
 		src.LatestMv = s.BatteryMv
 		src.LatestTs = s.Timestamp
 		src.ReplyHops = s.ReplyHops
+		src.Via = s.Via
+		src.ViaName = s.ViaName
 		if s.SNR != nil {
 			snrs[key] = append(snrs[key], *s.SNR)
 		}
