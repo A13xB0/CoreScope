@@ -264,3 +264,117 @@ func TestBatteryTopicGate(t *testing.T) {
 		t.Errorf("observers = %d, want 0: a battery report is not an observer heartbeat", obs)
 	}
 }
+
+const testBatteryRelay = "4128a6aa112233445566778899aabbccddeeff00112233445566778899001100"
+
+func TestHandleBatteryReportStoresTemperatureViaAndStats(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now().UTC().Add(-time.Minute)
+	r := batteryReading(testTargetPK, 4038, now)
+	r["reply_hops"] = 1.0
+	r["via"] = strings.ToUpper(testBatteryRelay)
+	r["temperature_c"] = 16.2
+	r["stats"] = map[string]interface{}{
+		"uptime_secs": 788089.0, "noise_floor": -116.0, "last_snr": 1.25, "recv_flood": 76198.0,
+		"flood_dups": 56298.0, "recv_errors": 28074.0,
+		"tx_queue":      1.5, // not a whole number: dropped
+		"noise_floor_x": 1.0, // unknown: ignored
+	}
+	handleBatteryReport(s, batteryCfg(), "test", testBatteryObserver, batteryMsg(r))
+
+	var temp float64
+	var via string
+	if err := s.db.QueryRow(`SELECT temperature_c, via FROM neighbor_battery`).Scan(&temp, &via); err != nil {
+		t.Fatal(err)
+	}
+	if temp != 16.2 || via != testBatteryRelay {
+		t.Fatalf("temperature_c=%v via=%q", temp, via)
+	}
+	var uptime, noise, recvFlood int64
+	var snr float64
+	var txQueue, recvDirect *int64
+	if err := s.db.QueryRow(`SELECT uptime_secs, noise_floor, last_snr, recv_flood, tx_queue, recv_direct FROM neighbor_status`).
+		Scan(&uptime, &noise, &snr, &recvFlood, &txQueue, &recvDirect); err != nil {
+		t.Fatal(err)
+	}
+	if uptime != 788089 || noise != -116 || snr != 1.25 || recvFlood != 76198 {
+		t.Fatalf("status row: uptime=%d noise=%d snr=%v recv_flood=%d", uptime, noise, snr, recvFlood)
+	}
+	if txQueue != nil || recvDirect != nil {
+		t.Fatalf("absent or bad fields must be NULL: tx_queue=%v recv_direct=%v", txQueue, recvDirect)
+	}
+}
+
+func TestBatteryReadingOptionalFieldsBounds(t *testing.T) {
+	now := time.Now().UTC()
+	r := batteryReading(testTargetPK, 3900, now)
+	r["temperature_c"] = 999.0
+	got, why := parseBatteryReading(testBatteryObserver, r, now)
+	if why != "" || got.TemperatureC != nil || got.Stats != nil || got.Via != "" {
+		t.Fatalf("out-of-range temperature must be dropped, not the reading: %+v %q", got, why)
+	}
+	r["via"] = "nope"
+	if _, why := parseBatteryReading(testBatteryObserver, r, now); why != "bad via" {
+		t.Fatalf("bad via: got %q", why)
+	}
+	r["via"] = testTargetPK
+	if _, why := parseBatteryReading(testBatteryObserver, r, now); why != "bad via" {
+		t.Fatalf("via equal to the node: got %q", why)
+	}
+}
+
+func TestNoStatusRowWithoutStats(t *testing.T) {
+	s := newTestStore(t)
+	handleBatteryReport(s, batteryCfg(), "test", testBatteryObserver, batteryMsg(batteryReading(testTargetPK, 3900, time.Now().UTC())))
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM neighbor_status`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || batteryRows(t, s) != 1 {
+		t.Fatalf("status rows=%d battery rows=%d", n, batteryRows(t, s))
+	}
+}
+
+func TestMigrateNeighborBatteryV2AddsColumns(t *testing.T) {
+	s := newTestStore(t)
+	// Rebuild the table as the first version created it.
+	if _, err := s.db.Exec(`DROP TABLE neighbor_battery`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`CREATE TABLE neighbor_battery (
+		node_id TEXT NOT NULL, observer_id TEXT NOT NULL, sampled_at TEXT NOT NULL,
+		battery_mv INTEGER NOT NULL, snr REAL, rssi INTEGER, method TEXT NOT NULL,
+		source TEXT NOT NULL, reply_hops INTEGER NOT NULL, received_at TEXT NOT NULL,
+		PRIMARY KEY (node_id, observer_id, sampled_at)) WITHOUT ROWID`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // and again: a second run changes nothing
+		if err := migrateNeighborBatteryV2(s.db); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := batteryReading(testTargetPK, 3900, time.Now().UTC())
+	r["temperature_c"] = 20.0
+	handleBatteryReport(s, batteryCfg(), "test", testBatteryObserver, batteryMsg(r))
+	var temp float64
+	if err := s.db.QueryRow(`SELECT temperature_c FROM neighbor_battery`).Scan(&temp); err != nil || temp != 20 {
+		t.Fatalf("temperature after migration: %v %v", temp, err)
+	}
+}
+
+func TestPruneOldNeighborStatus(t *testing.T) {
+	s := newTestStore(t)
+	old := time.Now().UTC().AddDate(0, 0, -40).Format(batteryTimeLayout)
+	if _, err := s.db.Exec(`INSERT INTO neighbor_status (node_id, observer_id, sampled_at, uptime_secs) VALUES (?,?,?,1)`,
+		testTargetPK, testBatteryObserver, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PruneOldNeighborBattery(30); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM neighbor_status`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("old status row kept")
+	}
+}

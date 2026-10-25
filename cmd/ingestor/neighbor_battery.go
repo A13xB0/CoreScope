@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"math"
@@ -18,7 +19,14 @@ import (
 //	{"v":1, "origin":"…", "origin_id":"<observer key>", "timestamp":"…",
 //	 "readings":[{"node_id":"<64-hex>", "battery_mv":3240, "snr":7.4,
 //	              "rssi":-88, "source":"poll", "reply_hops":0,
-//	              "method":"status", "sampled_at":"…"}]}
+//	              "method":"status", "sampled_at":"…",
+//	              "via":"<64-hex relay>", "temperature_c":31.5,
+//	              "stats":{"uptime_secs":788089, "noise_floor":-116, …}}]}
+//
+// via, temperature_c and stats are optional. via names the relay a one-hop
+// request went through; temperature_c is the repeater's own (chip)
+// temperature from a telemetry request; stats is the rest of the status
+// reply (MeshCore RepeaterStats), stored in neighbor_status.
 //
 // Readings are observations, never state: one row per (node, observer,
 // sampled_at). 0 mV is kept and means "no battery fitted" (an openHop
@@ -32,7 +40,35 @@ const (
 	batteryMaxFuture         = 5 * time.Minute
 	batteryDefaultMinMinutes = 10
 	batteryTimeLayout        = "2006-01-02T15:04:05Z"
+	batteryMinTempC          = -60
+	batteryMaxTempC          = 150
 )
+
+// statusFields are the stats keys stored in neighbor_status, in column
+// order, with the bounds a value must fall in to be kept.
+var statusFields = []struct {
+	Key      string
+	Min, Max float64
+	Float    bool
+}{
+	{"uptime_secs", 0, math.MaxUint32, false},
+	{"noise_floor", -200, 0, false},
+	{"last_rssi", -200, 0, false},
+	{"last_snr", -64, 64, true},
+	{"tx_queue", 0, 65535, false},
+	{"packets_recv", 0, math.MaxUint32, false},
+	{"packets_sent", 0, math.MaxUint32, false},
+	{"recv_flood", 0, math.MaxUint32, false},
+	{"recv_direct", 0, math.MaxUint32, false},
+	{"sent_flood", 0, math.MaxUint32, false},
+	{"sent_direct", 0, math.MaxUint32, false},
+	{"tx_air_secs", 0, math.MaxUint32, false},
+	{"rx_air_secs", 0, math.MaxUint32, false},
+	{"flood_dups", 0, 65535, false},
+	{"direct_dups", 0, 65535, false},
+	{"recv_errors", 0, math.MaxUint32, false},
+	{"err_events", 0, 65535, false},
+}
 
 var batteryMethodRe = regexp.MustCompile(`^[a-z_]{1,16}$`)
 
@@ -48,6 +84,12 @@ type NeighborBatteryReading struct {
 	Source     string
 	ReplyHops  int
 	ReceivedAt string
+	// Via is the relay a one-hop request went through; "" when direct.
+	Via          string
+	TemperatureC *float64
+	// Stats holds the status-reply fields that were present and in range,
+	// keyed as in statusFields; nil when the reading carried none.
+	Stats map[string]float64
 }
 
 // parseBatteryReport validates a /battery message and returns the readings
@@ -155,7 +197,37 @@ func parseBatteryReading(observerID string, r map[string]interface{}, now time.T
 		v := int64(rssi)
 		out.RSSI = &v
 	}
+	if via, ok := r["via"].(string); ok && via != "" {
+		via = strings.ToLower(strings.TrimSpace(via))
+		if !targetPubkeyRe.MatchString(via) || via == node {
+			return z, "bad via"
+		}
+		out.Via = via
+	}
+	if t, ok := toFloat64(r["temperature_c"]); ok && t >= batteryMinTempC && t <= batteryMaxTempC {
+		out.TemperatureC = &t
+	}
+	if raw, ok := r["stats"].(map[string]interface{}); ok {
+		out.Stats = parseStatusStats(raw)
+	}
 	return out, ""
+}
+
+// parseStatusStats keeps the known fields that are numbers in range; the
+// rest are dropped one by one, so an odd field never costs the reading.
+func parseStatusStats(raw map[string]interface{}) map[string]float64 {
+	out := map[string]float64{}
+	for _, f := range statusFields {
+		v, ok := toFloat64(raw[f.Key])
+		if !ok || v < f.Min || v > f.Max || (!f.Float && v != math.Trunc(v)) {
+			continue
+		}
+		out[f.Key] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // handleBatteryReport ingests a /battery message from an observer.
@@ -203,17 +275,70 @@ func (s *Store) InsertNeighborBattery(r *NeighborBatteryReading, minGap time.Dur
 			return false, nil
 		}
 	}
+	var via interface{}
+	if r.Via != "" {
+		via = r.Via
+	}
 	res, err := s.db.Exec(`
 		INSERT INTO neighbor_battery
-			(node_id, observer_id, sampled_at, battery_mv, snr, rssi, method, source, reply_hops, received_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?)
+			(node_id, observer_id, sampled_at, battery_mv, snr, rssi, method, source, reply_hops, received_at,
+			 temperature_c, via)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(node_id, observer_id, sampled_at) DO NOTHING`,
-		r.NodeID, r.ObserverID, r.SampledAt, r.BatteryMv, r.SNR, r.RSSI, r.Method, r.Source, r.ReplyHops, r.ReceivedAt)
+		r.NodeID, r.ObserverID, r.SampledAt, r.BatteryMv, r.SNR, r.RSSI, r.Method, r.Source, r.ReplyHops, r.ReceivedAt,
+		r.TemperatureC, via)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
+	if n > 0 && r.Stats != nil {
+		if err := s.insertNeighborStatus(r); err != nil {
+			return true, err
+		}
+	}
 	return n > 0, nil
+}
+
+// insertNeighborStatus stores a reading's status stats beside its battery row.
+func (s *Store) insertNeighborStatus(r *NeighborBatteryReading) error {
+	cols := []string{"node_id", "observer_id", "sampled_at"}
+	args := []interface{}{r.NodeID, r.ObserverID, r.SampledAt}
+	for _, f := range statusFields {
+		cols = append(cols, f.Key)
+		if v, ok := r.Stats[f.Key]; ok {
+			if f.Float {
+				args = append(args, v)
+			} else {
+				args = append(args, int64(v))
+			}
+		} else {
+			args = append(args, nil)
+		}
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?,", len(cols)), ",")
+	_, err := s.db.Exec(`INSERT INTO neighbor_status (`+strings.Join(cols, ", ")+`) VALUES (`+marks+`)
+		ON CONFLICT(node_id, observer_id, sampled_at) DO NOTHING`, args...)
+	return err
+}
+
+// migrateNeighborBatteryV2 adds temperature_c and via to a neighbor_battery
+// table created before them. CREATE TABLE IF NOT EXISTS leaves an existing
+// table as it was, so the columns are added here.
+func migrateNeighborBatteryV2(db *sql.DB) error {
+	for _, col := range []struct{ name, typ string }{{"temperature_c", "REAL"}, {"via", "TEXT"}} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('neighbor_battery') WHERE name = ?`, col.name).Scan(&n); err != nil {
+			return fmt.Errorf("neighbor_battery columns: %w", err)
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE neighbor_battery ADD COLUMN ` + col.name + ` ` + col.typ); err != nil {
+			return fmt.Errorf("adding neighbor_battery.%s: %w", col.name, err)
+		}
+		log.Printf("[migration] neighbor_battery.%s added", col.name)
+	}
+	return nil
 }
 
 // PruneOldNeighborBattery deletes readings older than days (by sampled_at).
@@ -226,6 +351,9 @@ func (s *Store) PruneOldNeighborBattery(days int) (int64, error) {
 	res, err := s.db.Exec(`DELETE FROM neighbor_battery WHERE sampled_at < ?`, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("prune neighbor_battery: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM neighbor_status WHERE sampled_at < ?`, cutoff); err != nil {
+		return 0, fmt.Errorf("prune neighbor_status: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {
