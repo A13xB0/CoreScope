@@ -90,6 +90,16 @@ console.log('Node status charts');
   assert(c.grid.innerHTML.includes('data-ns="uptime"') && !c.grid.innerHTML.includes('data-ns="noise"'), 'charts without data are left out');
 }
 {
+  const { ns, made } = load();
+  const c = card();
+  const stale = { series: [{ observer_id: OBS, stale: true, samples: [sample('2026-10-20T10:00:00Z', { uptime_secs: 5 })] }] };
+  assert(ns.render(c, stale, 7) === false && c.hidden === true && made.length === 0, 'hidden when every series is stale');
+  const mixed = { series: [stale.series[0], { observer_id: '3b'.repeat(32), observer_name: 'Fresh', stale: false,
+    samples: [sample('2026-10-25T10:00:00Z', { uptime_secs: 5 })] }] };
+  ns.render(c, mixed, 7);
+  assert(!c.hidden && c.by.innerHTML.includes('Fresh'), 'a fresh series is drawn ahead of a stale one');
+}
+{
   const { ns } = load();
   const c = card();
   assert(ns.render(c, { series: [] }, 7) === false && c.hidden === true, 'hidden with no series');

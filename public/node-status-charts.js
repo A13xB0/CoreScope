@@ -3,8 +3,10 @@
 // Repeater status on the node analytics page: the rest of the status reply an
 // observer polling the node directly publishes with its battery (MeshCore
 // RepeaterStats). Data: GET /api/nodes/{pubkey}/status-history?days=N, one
-// series per observer; the one with most samples is drawn. The card stays
-// hidden when no observer has published any.
+// series per observer; the one with most samples that is not stale is drawn.
+// The card stays hidden when no observer has published any, or when every
+// series is stale (newest sample older than neighborBattery.hideAfterHours),
+// as for a repeater now polled by telemetry only.
 (function () {
   let charts = [];
 
@@ -129,9 +131,12 @@
   // render fills the card from a status-history response. It returns false
   // (and leaves the card hidden) when there is nothing to show.
   function render(card, data, days) {
-    const series = (data && data.series) || [];
+    const series = ((data && data.series) || []).filter(s => !s.stale);
     const first = series[0];
-    if (!card || !first || !first.samples || !first.samples.length) return false;
+    if (!card || !first || !first.samples || !first.samples.length) {
+      if (card) card.hidden = true;
+      return false;
+    }
     const samples = first.samples;
     const defs = chartDefs().filter(d => d.lines.some(ln => points(samples, ln.get).length));
     if (!defs.length) return false;

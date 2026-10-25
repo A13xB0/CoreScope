@@ -170,9 +170,27 @@ func TestNodeStatusHistoryRatesAndReboot(t *testing.T) {
 	if s2["reboot"] != true || s2["per_hour"] != nil {
 		t.Errorf("reboot sample = %v", s2)
 	}
+	if a["stale"] != false {
+		t.Errorf("a series sampled 1 h ago is not stale")
+	}
+	if body["hide_after_hours"].(float64) != 24 {
+		t.Errorf("hide_after_hours = %v", body["hide_after_hours"])
+	}
 	vals := s1["values"].(map[string]interface{})
 	if vals["noise_floor"].(float64) != -116 || vals["last_rssi"] != nil {
 		t.Errorf("values = %v", vals)
+	}
+}
+
+func TestNodeStatusHistoryStaleSeries(t *testing.T) {
+	db := setupTestDB(t)
+	now := seedNeighborNode(t, db)
+	createNeighborStatusTable(t, db)
+	insertStatus(t, db, nbObsA, now.Add(-30*time.Hour), 10000, 1000, 700, 50)
+	body := getNodeJSON(t, "/api/nodes/"+nbNode+"/status-history?days=7", db)
+	series := body["series"].([]interface{})
+	if len(series) != 1 || series[0].(map[string]interface{})["stale"] != true {
+		t.Errorf("a 30 h old series must be stale: %v", series)
 	}
 }
 

@@ -135,6 +135,9 @@ type StatusSeries struct {
 	ObserverID   string         `json:"observer_id"`
 	ObserverName string         `json:"observer_name,omitempty"`
 	Samples      []StatusSample `json:"samples"`
+	// Stale: this observer's newest sample is older than
+	// neighborBattery.hideAfterHours. The UI hides a stale series' charts.
+	Stale bool `json:"stale"`
 }
 
 // GetNeighborStatusHistory returns a node's status samples since the given
@@ -262,9 +265,17 @@ func (s *Server) handleNodeStatusHistory(w http.ResponseWriter, r *http.Request)
 	if series == nil {
 		series = []StatusSeries{}
 	}
+	hideAfter := s.cfg.NeighborBatteryHideAfterHours()
+	now := time.Now().UTC()
+	for i := range series {
+		if n := len(series[i].Samples); n > 0 {
+			series[i].Stale = isStale(series[i].Samples[n-1].Timestamp, hideAfter, now)
+		}
+	}
 	writeJSON(w, map[string]interface{}{
-		"public_key": strings.ToLower(pubkey),
-		"days":       days,
-		"series":     series,
+		"public_key":       strings.ToLower(pubkey),
+		"days":             days,
+		"series":           series,
+		"hide_after_hours": hideAfter,
 	})
 }
