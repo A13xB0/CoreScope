@@ -33,9 +33,14 @@
 
   function reporter(s) {
     if (s.source !== 'neighbor') return 'own report';
-    // A shared-key reading is the repeater's own value, decoded from whichever
-    // observers heard it, so it is credited to the shared key, not an observer.
-    if (s.key_mode === 'shared') return 'via the shared key';
+    // A shared-key reading is credited to the poller that requested it, decoded
+    // from whichever observers heard the reply. When no poller is known it is
+    // credited to the shared key itself.
+    if (s.key_mode === 'shared') {
+      return s.observer_name && s.observer_name !== 'shared key'
+        ? 'requested by ' + observerLink(s.observer_id, s.observer_name)
+        : 'via the shared key';
+    }
     return 'by ' + observerLink(s.observer_id, s.observer_name);
   }
 

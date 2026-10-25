@@ -83,3 +83,34 @@ func TestSharedGuestHandleIgnoresOthers(t *testing.T) {
 		t.Fatalf("stored a reading for a non-shared packet")
 	}
 }
+
+// With a claim in place, a decoded reply is credited to the poller that
+// requested it, not the shared-key fallback.
+func TestSharedGuestClaimCreditsThePoller(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.UpsertNode(vecRepPub, "Test Repeater", "repeater", nil, nil,
+		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	d := newSharedGuestDecoder(s)
+	poller := "aa11bb00112233445566778899aabbccddeeff00112233445566778899001122"
+	d.HandleClaim(poller, map[string]interface{}{"nodes": []interface{}{vecRepPub}}, time.Now().UTC())
+
+	payload := hexb(t, vecRespPay)
+	pkt := &DecodedPacket{}
+	pkt.Header.PayloadType = PayloadRESPONSE
+	pkt.Payload.DestHash = hex.EncodeToString(payload[0:1])
+	pkt.Payload.SrcHash = hex.EncodeToString(payload[1:2])
+	pkt.Payload.MAC = hex.EncodeToString(payload[2:4])
+	pkt.Payload.EncryptedData = hex.EncodeToString(payload[4:])
+	// Overheard by a different observer than the poller.
+	d.Handle("ccddee00112233445566778899aabbccddeeff00112233445566778899003344", pkt, time.Now().UTC())
+
+	var obs string
+	if err := s.db.QueryRow(`SELECT observer_id FROM neighbor_battery`).Scan(&obs); err != nil {
+		t.Fatal(err)
+	}
+	if obs != poller {
+		t.Errorf("observer = %s, want the poller %s", obs, poller)
+	}
+}

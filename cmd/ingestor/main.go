@@ -1033,6 +1033,16 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		return
 	}
 
+	// Shared-key claim: meshcore/<region>/<observer>/sharedclaim names the
+	// nodes this observer polls under the shared key, so a decoded reply is
+	// credited to the poller that requested it.
+	if len(parts) >= 4 && parts[3] == "sharedclaim" {
+		if sharedGuest != nil {
+			sharedGuest.HandleClaim(parts[2], msg, time.Now().UTC())
+		}
+		return
+	}
+
 	// Status topic: meshcore/<region>/<observer_id>/status
 	// Per-source IATA filter does NOT apply here — observer metadata (noise_floor, battery, etc.)
 	// is region-independent and should be accepted from all observers regardless of

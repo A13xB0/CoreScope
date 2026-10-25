@@ -130,17 +130,27 @@ const neighbour = { source: 'neighbor', observer_id: OBS, observer_name: 'Cadham
     assert(trow.hidden && trow.val.innerHTML === '', 'no temperature, no line');
   }
   {
-    const shared = Object.assign({}, neighbour, { key_mode: 'shared' });
+    const shared = Object.assign({}, neighbour, { key_mode: 'shared', observer_name: 'Cadham Village' });
     const nb = load({ status: 'ok', latest_mv: 3994, selected: shared, sources: [shared] });
     const row = el('TR');
     await nb.mount(row, PK);
-    assert(row.val.innerHTML.includes('shared key'), 'a shared-key reading is credited as shared key');
+    assert(row.val.innerHTML.includes('requested by') && row.val.innerHTML.includes('Cadham Village'),
+      'a shared-key reading is credited "requested by" the poller');
+  }
+  {
+    const shared = Object.assign({}, neighbour, { key_mode: 'shared', observer_name: 'shared key' });
+    const nb = load({ status: 'ok', latest_mv: 3994, selected: shared, sources: [shared] });
+    const row = el('TR');
+    await nb.mount(row, PK);
+    assert(row.val.innerHTML.includes('via the shared key'),
+      'an unclaimed shared reading says via the shared key');
   }
   {
     const nb = load({ status: 'ok', latest_mv: 3994, selected: neighbour, sources: [neighbour] });
     const row = el('TR');
     await nb.mount(row, PK);
-    assert(!row.val.innerHTML.includes('shared key'), 'an own-key reading says nothing about the shared key');
+    assert(!row.val.innerHTML.includes('shared key') && !row.val.innerHTML.includes('requested by'),
+      'an own-key reading says nothing about the shared key');
   }
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
   if (failed) process.exit(1);

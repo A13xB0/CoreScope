@@ -57,14 +57,25 @@ var sgStatusFields = []struct {
 // exist. nil-safe: Handle does nothing when it is nil.
 var sharedGuest *sharedGuestDecoder
 
+// sgClaim records that an observer polls a node under the shared key, so a
+// decoded reply is credited to that poller ("requested by …") and not to the
+// incidental observer that overheard it. It lapses after sgClaimTTL.
+type sgClaim struct {
+	observer string
+	at       time.Time
+}
+
+const sgClaimTTL = 3 * time.Hour
+
 type sharedGuestDecoder struct {
 	store     *Store
 	seed      []byte
 	hash      byte   // first byte of the shared public key
-	sharedObs string // the shared key's pubkey, used as the observer id for every decode
+	sharedObs string // the shared key's pubkey, the fallback observer id when no one claims the node
 	mu        sync.Mutex
 	cand      map[byte][][]byte // repeater pubkeys by first byte
 	candAt    time.Time
+	claims    map[string]sgClaim // node -> who polls it under the shared key
 }
 
 func newSharedGuestDecoder(store *Store) *sharedGuestDecoder {
@@ -79,7 +90,40 @@ func newSharedGuestDecoder(store *Store) *sharedGuestDecoder {
 		return nil
 	}
 	return &sharedGuestDecoder{store: store, seed: seed, hash: pub[0],
-		sharedObs: strings.ToLower(sharedGuestKeyPublic)}
+		sharedObs: strings.ToLower(sharedGuestKeyPublic), claims: map[string]sgClaim{}}
+}
+
+// HandleClaim records a poller's claim over the nodes it polls under the shared
+// key: meshcore/<region>/<observer>/sharedclaim with {"nodes":[<64-hex>,…]}.
+func (d *sharedGuestDecoder) HandleClaim(observerID string, msg map[string]interface{}, now time.Time) {
+	if d == nil {
+		return
+	}
+	observerID = strings.ToLower(strings.TrimSpace(observerID))
+	if !targetPubkeyRe.MatchString(observerID) {
+		return
+	}
+	nodes, _ := msg["nodes"].([]interface{})
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, n := range nodes {
+		node, _ := n.(string)
+		node = strings.ToLower(strings.TrimSpace(node))
+		if targetPubkeyRe.MatchString(node) {
+			d.claims[node] = sgClaim{observer: observerID, at: now}
+		}
+	}
+}
+
+// claimantOf is the observer that polls a node under the shared key, or "" when
+// no fresh claim exists.
+func (d *sharedGuestDecoder) claimantOf(node string, now time.Time) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if c, ok := d.claims[node]; ok && now.Sub(c.at) < sgClaimTTL {
+		return c.observer
+	}
+	return ""
 }
 
 // candidates returns the known repeater/room pubkeys whose first byte is b,
@@ -147,7 +191,14 @@ func (d *sharedGuestDecoder) Handle(observerID string, p *DecodedPacket, now tim
 		// copies to a single row — the reading is the repeater's own, not each
 		// observer's.
 		tag := binary.LittleEndian.Uint32(plain[:4])
-		r := d.reading(hex.EncodeToString(pub), tag, plain[4:])
+		nodeHex := hex.EncodeToString(pub)
+		// Credit the poller that claimed this node ("requested by …"); fall
+		// back to the shared key itself when no one has claimed it.
+		requester := d.claimantOf(nodeHex, now)
+		if requester == "" {
+			requester = d.sharedObs
+		}
+		r := d.reading(nodeHex, requester, tag, plain[4:])
 		if r == nil {
 			return // authentic reply, but not a battery/telemetry answer (e.g. a login) — leave it
 		}
@@ -155,8 +206,8 @@ func (d *sharedGuestDecoder) Handle(observerID string, p *DecodedPacket, now tim
 		if err != nil {
 			log.Printf("[shared-guest] insert for %.8s: %v", r.NodeID, err)
 		} else if stored {
-			log.Printf("[shared-guest] decoded %s for %.8s via the shared key (%d mV, heard by %.8s)",
-				r.Method, r.NodeID, r.BatteryMv, observerID)
+			log.Printf("[shared-guest] decoded %s for %.8s requested by %.8s (%d mV, heard by %.8s)",
+				r.Method, r.NodeID, requester, r.BatteryMv, observerID)
 		}
 		return
 	}
@@ -166,7 +217,7 @@ func (d *sharedGuestDecoder) Handle(observerID string, p *DecodedPacket, now tim
 // when the body is not a status or telemetry answer. The reading is credited to
 // the shared key (not the observer that happened to hear it) and timed by the
 // reply's tag, so every observer's copy of one reply is the same row.
-func (d *sharedGuestDecoder) reading(nodeHex string, tag uint32, body []byte) *NeighborBatteryReading {
+func (d *sharedGuestDecoder) reading(nodeHex, requester string, tag uint32, body []byte) *NeighborBatteryReading {
 	// Guard a nonsense tag (a misparse would date the row to 1970); authentic
 	// replies carry the request's epoch-second timestamp.
 	if tag < 1_600_000_000 {
@@ -175,7 +226,7 @@ func (d *sharedGuestDecoder) reading(nodeHex string, tag uint32, body []byte) *N
 	at := time.Unix(int64(tag), 0).UTC().Format(batteryTimeLayout)
 	base := func(mv int, method string) *NeighborBatteryReading {
 		return &NeighborBatteryReading{
-			NodeID: nodeHex, ObserverID: d.sharedObs, BatteryMv: mv, Method: method,
+			NodeID: nodeHex, ObserverID: requester, BatteryMv: mv, Method: method,
 			Source: "poll", KeyMode: "shared", ReplyHops: 0,
 			SampledAt: at, ReceivedAt: at,
 		}
