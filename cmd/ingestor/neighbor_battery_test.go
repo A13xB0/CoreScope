@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -376,5 +377,29 @@ func TestPruneOldNeighborStatus(t *testing.T) {
 	s.db.QueryRow(`SELECT COUNT(*) FROM neighbor_status`).Scan(&n)
 	if n != 0 {
 		t.Fatalf("old status row kept")
+	}
+}
+
+func TestBatteryKeyModeShared(t *testing.T) {
+	s := newTestStore(t)
+	r := batteryReading(testTargetPK, 4012, time.Now().UTC())
+	r["key"] = "shared"
+	handleBatteryReport(s, batteryCfg(), "test", testBatteryObserver, batteryMsg(r))
+	var key string
+	if err := s.db.QueryRow(`SELECT COALESCE(key_mode, '') FROM neighbor_battery`).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if key != "shared" {
+		t.Fatalf("key_mode = %q, want shared", key)
+	}
+	// A reading with no key marker stores NULL (own key).
+	r2 := batteryReading(testTargetPK, 4010, time.Now().UTC().Add(-time.Hour))
+	handleBatteryReport(s, batteryCfg(), "test", testBatteryObserver, batteryMsg(r2))
+	var own sql.NullString
+	if err := s.db.QueryRow(`SELECT key_mode FROM neighbor_battery WHERE battery_mv = 4010`).Scan(&own); err != nil {
+		t.Fatal(err)
+	}
+	if own.Valid {
+		t.Fatalf("own-key reading stored key_mode = %q, want NULL", own.String)
 	}
 }

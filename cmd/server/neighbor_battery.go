@@ -36,6 +36,7 @@ type BatterySource struct {
 	ReplyHops    *int     `json:"reply_hops,omitempty"` // of the latest reading
 	Via          string   `json:"via,omitempty"`        // relay of the latest reading
 	ViaName      string   `json:"via_name,omitempty"`
+	KeyMode      string   `json:"key_mode,omitempty"` // "shared" for the shared guest key
 }
 
 // neighborBatteryPresent reports whether neighbor_battery exists. The
@@ -63,11 +64,11 @@ func (db *DB) GetNeighborBatteryHistory(pubkey, since string) ([]NodeBatterySamp
 	if t, err := time.Parse(time.RFC3339, since); err == nil {
 		since = t.UTC().Format("2006-01-02T15:04:05Z")
 	}
-	// temperature_c and via arrive with a later ingestor; until it has
-	// migrated the table they read as NULL.
-	extra := "NULL, NULL"
+	// temperature_c, via and key_mode arrive with a later ingestor; until it
+	// has migrated the table they read as NULL.
+	extra := "NULL, NULL, NULL"
 	if db.neighborBatteryV2Present() {
-		extra = "temperature_c, via"
+		extra = "temperature_c, via, key_mode"
 	}
 	rows, err := db.conn.Query(`
 		SELECT sampled_at, battery_mv, observer_id, snr, reply_hops, `+extra+`
@@ -85,8 +86,8 @@ func (db *DB) GetNeighborBatteryHistory(pubkey, since string) ([]NodeBatterySamp
 	for rows.Next() {
 		var s NodeBatterySample
 		var hops int
-		var via sql.NullString
-		if err := rows.Scan(&s.Timestamp, &s.BatteryMv, &s.ObserverID, &s.SNR, &hops, &s.TemperatureC, &via); err != nil {
+		var via, keyMode sql.NullString
+		if err := rows.Scan(&s.Timestamp, &s.BatteryMv, &s.ObserverID, &s.SNR, &hops, &s.TemperatureC, &via, &keyMode); err != nil {
 			return nil, err
 		}
 		s.Source = batterySourceNeighbor
@@ -94,6 +95,9 @@ func (db *DB) GetNeighborBatteryHistory(pubkey, since string) ([]NodeBatterySamp
 		if via.Valid && via.String != "" {
 			s.Via = via.String
 			relays[s.Via] = ""
+		}
+		if keyMode.Valid && keyMode.String == "shared" {
+			s.KeyMode = "shared"
 		}
 		observers[s.ObserverID] = ""
 		out = append(out, s)
@@ -179,6 +183,7 @@ func summariseBatterySources(samples []NodeBatterySample) []BatterySource {
 		src.ReplyHops = s.ReplyHops
 		src.Via = s.Via
 		src.ViaName = s.ViaName
+		src.KeyMode = s.KeyMode
 		if s.SNR != nil {
 			snrs[key] = append(snrs[key], *s.SNR)
 		}

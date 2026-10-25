@@ -59,10 +59,12 @@ func (db *DB) columnPresent(flag interface {
 }
 
 // neighborBatteryV2Present reports whether neighbor_battery has the
-// temperature_c and via columns; re-probed until it does.
+// temperature_c, via and key_mode columns; re-probed until it does. The
+// ingestor's migrateNeighborBatteryV2 adds all three together, so one check
+// covers them.
 func (db *DB) neighborBatteryV2Present() bool {
 	return db.columnPresent(&db.neighborBatteryV2,
-		`SELECT COUNT(*) FROM pragma_table_info('neighbor_battery') WHERE name IN ('temperature_c', 'via') HAVING COUNT(*) = 2`)
+		`SELECT COUNT(*) FROM pragma_table_info('neighbor_battery') WHERE name IN ('temperature_c', 'via', 'key_mode') HAVING COUNT(*) = 3`)
 }
 
 // neighborStatusPresent reports whether neighbor_status exists.

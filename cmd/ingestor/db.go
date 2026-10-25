@@ -503,8 +503,10 @@ func applySchema(db *sql.DB) error {
 		-- 'reused' (a reply to someone else's); reply_hops is how many hops the
 		-- reply took and via the relay it went through (64-hex, NULL when
 		-- direct). temperature_c is the repeater's own (chip) temperature,
-		-- NULL when it sent none. temperature_c and via are added by
-		-- migrateNeighborBatteryV2 on databases created before them.
+		-- NULL when it sent none. key_mode is 'shared' for a reading taken
+		-- under the shared guest key, NULL for this observer's own key.
+		-- temperature_c, via and key_mode are added by migrateNeighborBatteryV2
+		-- on databases created before them.
 		CREATE TABLE IF NOT EXISTS neighbor_battery (
 			node_id       TEXT    NOT NULL,
 			observer_id   TEXT    NOT NULL,
@@ -518,6 +520,7 @@ func applySchema(db *sql.DB) error {
 			received_at   TEXT    NOT NULL,
 			temperature_c REAL,
 			via           TEXT,
+			key_mode      TEXT,
 			PRIMARY KEY (node_id, observer_id, sampled_at)
 		) WITHOUT ROWID;
 		CREATE INDEX IF NOT EXISTS idx_nb_prune ON neighbor_battery(sampled_at);

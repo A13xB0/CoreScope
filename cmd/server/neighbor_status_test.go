@@ -15,6 +15,7 @@ func addNeighborBatteryV2(t *testing.T, db *DB) {
 	for _, q := range []string{
 		`ALTER TABLE neighbor_battery ADD COLUMN temperature_c REAL`,
 		`ALTER TABLE neighbor_battery ADD COLUMN via TEXT`,
+		`ALTER TABLE neighbor_battery ADD COLUMN key_mode TEXT`,
 	} {
 		if _, err := db.conn.Exec(q); err != nil {
 			t.Fatal(err)
@@ -66,8 +67,8 @@ func TestNodeBatteryTemperatureAndVia(t *testing.T) {
 		nbRelay, now.Format(time.RFC3339), now.Format(time.RFC3339))
 	insertNeighborBattery(t, db, nbObsA, now.Add(-2*time.Hour), 3900, 7.5, 1)
 	ts := now.Add(-time.Hour).UTC().Format("2006-01-02T15:04:05Z")
-	if _, err := db.conn.Exec(`INSERT INTO neighbor_battery VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-		nbNode, nbObsA, ts, 3950, 7.0, nil, "status", "poll", 1, ts, 16.2, nbRelay); err != nil {
+	if _, err := db.conn.Exec(`INSERT INTO neighbor_battery VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		nbNode, nbObsA, ts, 3950, 7.0, nil, "status", "poll", 1, ts, 16.2, nbRelay, nil); err != nil {
 		t.Fatal(err)
 	}
 

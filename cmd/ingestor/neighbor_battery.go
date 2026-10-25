@@ -85,7 +85,10 @@ type NeighborBatteryReading struct {
 	ReplyHops  int
 	ReceivedAt string
 	// Via is the relay a one-hop request went through; "" when direct.
-	Via          string
+	Via string
+	// KeyMode is "shared" when the reading was taken under the shared guest
+	// key; "" for this observer's own key.
+	KeyMode      string
 	TemperatureC *float64
 	// Stats holds the status-reply fields that were present and in range,
 	// keyed as in statusFields; nil when the reading carried none.
@@ -204,6 +207,9 @@ func parseBatteryReading(observerID string, r map[string]interface{}, now time.T
 		}
 		out.Via = via
 	}
+	if k, ok := r["key"].(string); ok && k == "shared" {
+		out.KeyMode = "shared"
+	}
 	if t, ok := toFloat64(r["temperature_c"]); ok && t >= batteryMinTempC && t <= batteryMaxTempC {
 		out.TemperatureC = &t
 	}
@@ -279,14 +285,18 @@ func (s *Store) InsertNeighborBattery(r *NeighborBatteryReading, minGap time.Dur
 	if r.Via != "" {
 		via = r.Via
 	}
+	var keyMode interface{}
+	if r.KeyMode != "" {
+		keyMode = r.KeyMode
+	}
 	res, err := s.db.Exec(`
 		INSERT INTO neighbor_battery
 			(node_id, observer_id, sampled_at, battery_mv, snr, rssi, method, source, reply_hops, received_at,
-			 temperature_c, via)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+			 temperature_c, via, key_mode)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(node_id, observer_id, sampled_at) DO NOTHING`,
 		r.NodeID, r.ObserverID, r.SampledAt, r.BatteryMv, r.SNR, r.RSSI, r.Method, r.Source, r.ReplyHops, r.ReceivedAt,
-		r.TemperatureC, via)
+		r.TemperatureC, via, keyMode)
 	if err != nil {
 		return false, err
 	}
@@ -325,7 +335,7 @@ func (s *Store) insertNeighborStatus(r *NeighborBatteryReading) error {
 // table created before them. CREATE TABLE IF NOT EXISTS leaves an existing
 // table as it was, so the columns are added here.
 func migrateNeighborBatteryV2(db *sql.DB) error {
-	for _, col := range []struct{ name, typ string }{{"temperature_c", "REAL"}, {"via", "TEXT"}} {
+	for _, col := range []struct{ name, typ string }{{"temperature_c", "REAL"}, {"via", "TEXT"}, {"key_mode", "TEXT"}} {
 		var n int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('neighbor_battery') WHERE name = ?`, col.name).Scan(&n); err != nil {
 			return fmt.Errorf("neighbor_battery columns: %w", err)

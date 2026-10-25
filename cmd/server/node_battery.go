@@ -49,6 +49,9 @@ type NodeBatterySample struct {
 	Via          string   `json:"via,omitempty"`
 	ViaName      string   `json:"via_name,omitempty"`
 	TemperatureC *float64 `json:"temperature_c,omitempty"`
+	// KeyMode is "shared" when the reading was taken under the shared guest
+	// key; "" for an observer's own key.
+	KeyMode string `json:"key_mode,omitempty"`
 }
 
 // nodeBatteryHistorySQL matches the observer ID in lowercase and in

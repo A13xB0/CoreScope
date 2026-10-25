@@ -129,6 +129,19 @@ const neighbour = { source: 'neighbor', observer_id: OBS, observer_name: 'Cadham
     await nb.mount(row, PK, trow);
     assert(trow.hidden && trow.val.innerHTML === '', 'no temperature, no line');
   }
+  {
+    const shared = Object.assign({}, neighbour, { key_mode: 'shared' });
+    const nb = load({ status: 'ok', latest_mv: 3994, selected: shared, sources: [shared] });
+    const row = el('TR');
+    await nb.mount(row, PK);
+    assert(row.val.innerHTML.includes('shared key'), 'a shared-key reading is credited as shared key');
+  }
+  {
+    const nb = load({ status: 'ok', latest_mv: 3994, selected: neighbour, sources: [neighbour] });
+    const row = el('TR');
+    await nb.mount(row, PK);
+    assert(!row.val.innerHTML.includes('shared key'), 'an own-key reading says nothing about the shared key');
+  }
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
   if (failed) process.exit(1);
 })();

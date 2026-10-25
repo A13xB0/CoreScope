@@ -33,7 +33,10 @@
 
   function reporter(s) {
     if (s.source !== 'neighbor') return 'own report';
-    return 'by ' + observerLink(s.observer_id, s.observer_name);
+    // "shared key" marks a reading taken under the shared guest key, which
+    // any observer holding the key could have heard.
+    const key = s.key_mode === 'shared' ? ' · shared key' : '';
+    return 'by ' + observerLink(s.observer_id, s.observer_name) + key;
   }
 
   // html returns the line for a battery response, or '' when there is none
