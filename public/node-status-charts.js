@@ -142,10 +142,14 @@
     if (!defs.length) return false;
     const by = card.querySelector('.ns-by');
     if (by) {
-      const name = escapeHtml(first.observer_name || String(first.observer_id).slice(0, 8));
       const others = series.length - 1;
-      by.innerHTML = 'Reported by <a href="#/observers/' + encodeURIComponent(String(first.observer_id).toUpperCase()) + '">'
-        + name + '</a> · ' + samples.length + ' status repl' + (samples.length === 1 ? 'y' : 'ies')
+      // Status decoded under the shared key is credited to the shared key
+      // itself when no poller claimed it: not a real observer, so no link.
+      const who = first.observer_name === 'shared key'
+        ? 'Via the shared key'
+        : 'Reported by <a href="#/observers/' + encodeURIComponent(String(first.observer_id).toUpperCase()) + '">'
+          + escapeHtml(first.observer_name || String(first.observer_id).slice(0, 8)) + '</a>';
+      by.innerHTML = who + ' · ' + samples.length + ' status repl' + (samples.length === 1 ? 'y' : 'ies')
         + (others > 0 ? ' · ' + others + ' other observer' + (others === 1 ? '' : 's') + ' not shown' : '');
     }
     const grid = card.querySelector('.ns-grid');

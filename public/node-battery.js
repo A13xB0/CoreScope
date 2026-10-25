@@ -18,6 +18,9 @@
 
   function route(s) {
     if (s.source !== 'neighbor' || s.reply_hops == null) return '';
+    // A shared reading credited to the shared key itself (no poller claimed it)
+    // has no known route, so don't call it "direct".
+    if (s.key_mode === 'shared' && s.observer_name === 'shared key') return '';
     if (s.reply_hops === 0) return 'direct';
     if (s.via) {
       const name = escapeHtml(s.via_name || String(s.via).slice(0, 8));
@@ -73,6 +76,7 @@
     if (!t || t.stale || typeof t.celsius !== 'number') return '';
     const parts = ['<strong>' + t.celsius.toFixed(1) + ' °C</strong> chip'];
     if (t.source === 'advert') parts.push('from its adverts');
+    else if (t.observer_name === 'shared key') parts.push('via the shared key');
     else parts.push('by ' + observerLink(t.observer_id, t.observer_name));
     if (t.timestamp) parts.push(escapeHtml(timeAgo(t.timestamp)));
     return parts.join(' · ');

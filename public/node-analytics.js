@@ -384,17 +384,31 @@
     return s.observer_name || (s.observer_id || '').slice(0, 8);
   }
 
+  // The shared key itself credited the reading (no poller claimed it): it is
+  // not a real observer, so it has no observer page and no known route.
+  function isSharedKeySource(s) {
+    return s && s.key_mode === 'shared' && s.observer_name === 'shared key';
+  }
+
   function batteryRoute(s) {
-    if (s.source !== 'neighbor' || s.reply_hops == null) return '';
+    if (s.source !== 'neighbor' || s.reply_hops == null || isSharedKeySource(s)) return '';
     if (s.reply_hops === 0) return 'direct';
     if (s.via) return 'via ' + (s.via_name || String(s.via).slice(0, 8));
     return 'via ' + s.reply_hops + ' hop' + (s.reply_hops === 1 ? '' : 's');
   }
 
   function batteryObserverLink(s) {
+    if (isSharedKeySource(s)) return 'the shared key';
     const label = escapeHtml(batterySourceLabel(s));
     if (s.source !== 'neighbor' || !s.observer_id) return label;
     return '<a href="#/observers/' + encodeURIComponent(s.observer_id.toUpperCase()) + '">' + label + '</a>';
+  }
+
+  // How a source is introduced: a shared-key reading was requested by its
+  // poller (or taken via the key when unclaimed), an own-key reading reported.
+  function batteryLead(s) {
+    if (isSharedKeySource(s)) return 'Via';
+    return s.key_mode === 'shared' ? 'Requested by' : 'Reported by';
   }
 
   function formatSnr(v) {
@@ -405,7 +419,7 @@
     const sel = data && data.selected;
     if (!el) return;
     if (!sel) { el.style.display = 'none'; return; }
-    const parts = ['Reported by <strong>' + batteryObserverLink(sel) + '</strong>'];
+    const parts = [batteryLead(sel) + ' <strong>' + batteryObserverLink(sel) + '</strong>'];
     const route = batteryRoute(sel);
     if (route) parts.push(route);
     if (sel.median_snr != null) parts.push('SNR ' + formatSnr(sel.median_snr));

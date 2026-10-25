@@ -167,6 +167,45 @@ const B = { source: 'neighbor', observer_id: OBS_B, observer_name: 'Pentland <OB
       'no temperature axis without temperatures');
   }
 
+  // Shared-key readings: credited to the poller ("Requested by"), or to the
+  // shared key itself when unclaimed ("Via the shared key", no fake link).
+  {
+    const sh = load();
+    sh.page.init(sh.app, PK + '/analytics');
+    sh.call('/nodes/')[0].resolve(analyticsData());
+    await flush();
+    const claimed = { source: 'neighbor', observer_id: OBS_A, observer_name: 'Cadham Village', key_mode: 'shared',
+      latest_mv: 4050, latest_ts: '2026-10-23T18:00:00Z', samples: 1, reply_hops: 1, via: OBS_B, via_name: 'West Lomond' };
+    sh.call('/nodes/' + PK + '/battery')[0].resolve({
+      status: 'ok', latest_mv: 4050, thresholds: { low_mv: 3300, critical_mv: 3000 },
+      samples: [{ timestamp: '2026-10-23T18:00:00Z', battery_mv: 4050, source: 'neighbor',
+        observer_id: OBS_A, observer_name: 'Cadham Village', key_mode: 'shared', reply_hops: 1, via: OBS_B, via_name: 'West Lomond' }],
+      sources: [claimed], selected: claimed,
+    });
+    await flush();
+    const h = sh.els.batteryReportedBy.innerHTML;
+    assert(h.includes('Requested by') && h.includes('Cadham Village'), 'a claimed shared reading says "Requested by" the poller');
+    assert(h.includes('West Lomond') && !h.includes('direct'), 'with the claimed route, not "direct"');
+  }
+  {
+    const un = load();
+    un.page.init(un.app, PK + '/analytics');
+    un.call('/nodes/')[0].resolve(analyticsData());
+    await flush();
+    const sentinel = { source: 'neighbor', observer_id: 'f0'.repeat(32), observer_name: 'shared key', key_mode: 'shared',
+      latest_mv: 4050, latest_ts: '2026-10-23T18:00:00Z', samples: 1, reply_hops: 0 };
+    un.call('/nodes/' + PK + '/battery')[0].resolve({
+      status: 'ok', latest_mv: 4050, thresholds: { low_mv: 3300, critical_mv: 3000 },
+      samples: [{ timestamp: '2026-10-23T18:00:00Z', battery_mv: 4050, source: 'neighbor',
+        observer_id: 'f0'.repeat(32), observer_name: 'shared key', key_mode: 'shared', reply_hops: 0 }],
+      sources: [sentinel], selected: sentinel,
+    });
+    await flush();
+    const h = un.els.batteryReportedBy.innerHTML;
+    assert(h.includes('Via') && h.includes('the shared key') && !h.includes('<a '), 'an unclaimed shared reading says "Via the shared key", no link');
+    assert(!h.includes('direct'), 'and is not called "direct"');
+  }
+
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
   if (failed) process.exit(1);
 })();

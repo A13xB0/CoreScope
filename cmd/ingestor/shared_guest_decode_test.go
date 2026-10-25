@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,7 +35,7 @@ func TestSharedGuestHandleStoresReading(t *testing.T) {
 		"aabbcc00112233445566778899aabbccddeeff00112233445566778899001122",
 		"ccddee00112233445566778899aabbccddeeff00112233445566778899003344",
 	} {
-		d.Handle(obs, pkt, time.Now().UTC())
+		d.Handle(obs, pkt, time.Unix(int64(vecTag), 30).UTC())
 	}
 
 	if batteryRows(t, s) != 1 {
@@ -94,7 +95,10 @@ func TestSharedGuestClaimCreditsThePoller(t *testing.T) {
 	}
 	d := newSharedGuestDecoder(s)
 	poller := "aa11bb00112233445566778899aabbccddeeff00112233445566778899001122"
-	d.HandleClaim(poller, map[string]interface{}{"nodes": []interface{}{vecRepPub}}, time.Now().UTC())
+	d.HandleClaim(poller, map[string]interface{}{
+		"origin_id": poller,
+		"nodes":     []interface{}{map[string]interface{}{"node_id": vecRepPub, "reply_hops": float64(1), "via": strings.Repeat("ab", 32)}},
+	}, time.Unix(int64(vecTag), 10).UTC())
 
 	payload := hexb(t, vecRespPay)
 	pkt := &DecodedPacket{}
@@ -104,13 +108,19 @@ func TestSharedGuestClaimCreditsThePoller(t *testing.T) {
 	pkt.Payload.MAC = hex.EncodeToString(payload[2:4])
 	pkt.Payload.EncryptedData = hex.EncodeToString(payload[4:])
 	// Overheard by a different observer than the poller.
-	d.Handle("ccddee00112233445566778899aabbccddeeff00112233445566778899003344", pkt, time.Now().UTC())
+	d.Handle("ccddee00112233445566778899aabbccddeeff00112233445566778899003344", pkt, time.Unix(int64(vecTag), 30).UTC())
 
-	var obs string
-	if err := s.db.QueryRow(`SELECT observer_id FROM neighbor_battery`).Scan(&obs); err != nil {
+	var obs, via string
+	var hops int
+	if err := s.db.QueryRow(`SELECT observer_id, reply_hops, COALESCE(via,'') FROM neighbor_battery`).
+		Scan(&obs, &hops, &via); err != nil {
 		t.Fatal(err)
 	}
 	if obs != poller {
 		t.Errorf("observer = %s, want the poller %s", obs, poller)
+	}
+	// The route comes from the claim, not the overheard reply.
+	if hops != 1 || via != strings.Repeat("ab", 32) {
+		t.Errorf("route = %d hops via %s, want 1 via the claimed relay", hops, via)
 	}
 }
