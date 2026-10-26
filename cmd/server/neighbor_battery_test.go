@@ -193,3 +193,60 @@ func TestSelectBatterySourceFallsBackToNewest(t *testing.T) {
 		t.Error("no sources should select nothing")
 	}
 }
+
+// A shared-key reading is credited to its poller, but the endpoint also lists
+// the observers that overheard the decoded reply as selected.heard_by.
+func TestNodeBatteryEndpoint_SharedHeardBy(t *testing.T) {
+	db := setupTestDB(t)
+	now := time.Now().UTC()
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, last_seen, first_seen) VALUES (?, 'West Lomond', 'repeater', ?, ?)`,
+		nbNode, now.Format(time.RFC3339), now.Add(-72*time.Hour).Format(time.RFC3339))
+	poller := nbObsA
+	heardC := "ccddee00112233445566778899aabbccddeeff00112233445566778899003344"
+	db.conn.Exec(`INSERT INTO observers (id, name, last_seen, first_seen) VALUES (?, 'Cadham Village', ?, ?)`,
+		strings.ToUpper(poller), now.Format(time.RFC3339), now.Format(time.RFC3339))
+	db.conn.Exec(`INSERT INTO observers (id, name, last_seen, first_seen) VALUES (?, 'Pole', ?, ?)`,
+		strings.ToUpper(nbObsB), now.Format(time.RFC3339), now.Format(time.RFC3339))
+	db.conn.Exec(`INSERT INTO observers (id, name, last_seen, first_seen) VALUES (?, 'Repeater McRepeaterface', ?, ?)`,
+		strings.ToUpper(heardC), now.Format(time.RFC3339), now.Format(time.RFC3339))
+
+	db.conn.Exec(`CREATE TABLE neighbor_battery (
+		node_id TEXT NOT NULL, observer_id TEXT NOT NULL, sampled_at TEXT NOT NULL,
+		battery_mv INTEGER NOT NULL, snr REAL, rssi INTEGER, method TEXT NOT NULL,
+		source TEXT NOT NULL, reply_hops INTEGER NOT NULL, received_at TEXT NOT NULL,
+		temperature_c REAL, via TEXT, key_mode TEXT,
+		PRIMARY KEY (node_id, observer_id, sampled_at)) WITHOUT ROWID`)
+	db.conn.Exec(`CREATE TABLE neighbor_battery_heard (
+		node_id TEXT NOT NULL, sampled_at TEXT NOT NULL, observer_id TEXT NOT NULL, heard_at TEXT NOT NULL,
+		PRIMARY KEY (node_id, sampled_at, observer_id)) WITHOUT ROWID`)
+
+	at := now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05Z")
+	db.conn.Exec(`INSERT INTO neighbor_battery
+		(node_id, observer_id, sampled_at, battery_mv, snr, rssi, method, source, reply_hops, received_at, key_mode)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		nbNode, strings.ToLower(poller), at, 4050, nil, nil, "status", "poll", 1, at, "shared")
+	for _, obs := range []string{nbObsB, heardC} {
+		db.conn.Exec(`INSERT INTO neighbor_battery_heard (node_id, sampled_at, observer_id, heard_at)
+			VALUES (?,?,?,?)`, nbNode, at, strings.ToLower(obs), at)
+	}
+
+	body := getBattery(t, batteryRouter(t, db))
+	sel, ok := body["selected"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("selected = %v", body["selected"])
+	}
+	if sel["key_mode"] != "shared" {
+		t.Errorf("selected key_mode = %v, want shared", sel["key_mode"])
+	}
+	heard, _ := sel["heard_by"].([]interface{})
+	if len(heard) != 2 {
+		t.Fatalf("heard_by = %v, want 2 observers", sel["heard_by"])
+	}
+	names := map[string]bool{}
+	for _, h := range heard {
+		names[h.(map[string]interface{})["observer_name"].(string)] = true
+	}
+	if !names["Pole"] || !names["Repeater McRepeaterface"] {
+		t.Errorf("heard_by names = %v, want Pole and Repeater McRepeaterface", names)
+	}
+}

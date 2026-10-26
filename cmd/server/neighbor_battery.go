@@ -37,6 +37,15 @@ type BatterySource struct {
 	Via          string   `json:"via,omitempty"`        // relay of the latest reading
 	ViaName      string   `json:"via_name,omitempty"`
 	KeyMode      string   `json:"key_mode,omitempty"` // "shared" for the shared guest key
+	// HeardBy names the observers whose overheard packets CoreScope decoded
+	// under the shared key, for a shared source. Empty for own-key sources.
+	HeardBy []BatteryHeard `json:"heard_by,omitempty"`
+}
+
+// BatteryHeard is one observer that overheard a decoded shared-key reply.
+type BatteryHeard struct {
+	ObserverID   string `json:"observer_id"`
+	ObserverName string `json:"observer_name,omitempty"`
 }
 
 // neighborBatteryPresent reports whether neighbor_battery exists. The
@@ -145,6 +154,62 @@ func (db *DB) fillObserverNames(observers map[string]string) {
 			observers[id] = name
 		}
 	}
+}
+
+// neighborBatteryHeardPresent reports whether neighbor_battery_heard exists;
+// re-probed until it does (a new ingestor creates it).
+func (db *DB) neighborBatteryHeardPresent() bool {
+	return db.columnPresent(&db.neighborBatteryHeard,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'neighbor_battery_heard'`)
+}
+
+// GetSharedHeardObservers lists the observers that overheard this node's
+// shared-key replies in the window — the stations whose packets CoreScope
+// decoded, as opposed to the poller credited with the reading. Named and
+// sorted for a stable "heard by …" line.
+func (db *DB) GetSharedHeardObservers(pubkey, since string) ([]BatteryHeard, error) {
+	if pubkey == "" || !db.neighborBatteryHeardPresent() {
+		return nil, nil
+	}
+	if t, err := time.Parse(time.RFC3339, since); err == nil {
+		since = t.UTC().Format("2006-01-02T15:04:05Z")
+	}
+	rows, err := db.conn.Query(`
+		SELECT DISTINCT observer_id FROM neighbor_battery_heard
+		WHERE node_id = ? AND sampled_at >= ?`, strings.ToLower(pubkey), since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	names := map[string]string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		names[id] = ""
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+	db.fillObserverNames(names)
+	out := make([]BatteryHeard, 0, len(names))
+	for id, name := range names {
+		out = append(out, BatteryHeard{ObserverID: id, ObserverName: name})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if (out[i].ObserverName == "") != (out[j].ObserverName == "") {
+			return out[i].ObserverName != "" // named observers first
+		}
+		if out[i].ObserverName != out[j].ObserverName {
+			return out[i].ObserverName < out[j].ObserverName
+		}
+		return out[i].ObserverID < out[j].ObserverID
+	})
+	return out, nil
 }
 
 // mergeBatterySamples interleaves two time-ordered sample lists. Timestamps

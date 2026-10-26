@@ -552,6 +552,19 @@ func applySchema(db *sql.DB) error {
 			PRIMARY KEY (node_id, observer_id, sampled_at)
 		) WITHOUT ROWID;
 		CREATE INDEX IF NOT EXISTS idx_ns_prune ON neighbor_status(sampled_at);
+
+		-- Which observers overheard each shared-guest-key reply CoreScope
+		-- decoded. The reading itself is deduped to one row (credited to the
+		-- poller), so the set of stations that actually heard it is kept here,
+		-- one row per observer, for the "heard by …" line.
+		CREATE TABLE IF NOT EXISTS neighbor_battery_heard (
+			node_id     TEXT NOT NULL,
+			sampled_at  TEXT NOT NULL,
+			observer_id TEXT NOT NULL,
+			heard_at    TEXT NOT NULL,
+			PRIMARY KEY (node_id, sampled_at, observer_id)
+		) WITHOUT ROWID;
+		CREATE INDEX IF NOT EXISTS idx_nbh_prune ON neighbor_battery_heard(sampled_at);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("base schema: %w", err)

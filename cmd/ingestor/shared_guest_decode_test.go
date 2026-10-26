@@ -41,6 +41,14 @@ func TestSharedGuestHandleStoresReading(t *testing.T) {
 	if batteryRows(t, s) != 1 {
 		t.Fatalf("battery rows = %d, want 1 (one reading per reply)", batteryRows(t, s))
 	}
+	// One reading, but all three observers are recorded as having heard it.
+	var heard int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM neighbor_battery_heard WHERE node_id = ?`, repPub).Scan(&heard); err != nil {
+		t.Fatal(err)
+	}
+	if heard != 3 {
+		t.Errorf("heard rows = %d, want 3 (one per observer that overheard the reply)", heard)
+	}
 	var nodeID, obs, keyMode, sampledAt string
 	var mv int
 	err := s.db.QueryRow(`SELECT node_id, observer_id, battery_mv, COALESCE(key_mode,''), sampled_at FROM neighbor_battery`).

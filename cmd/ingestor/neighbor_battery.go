@@ -309,6 +309,20 @@ func (s *Store) InsertNeighborBattery(r *NeighborBatteryReading, minGap time.Dur
 	return n > 0, nil
 }
 
+// RecordSharedHeard notes that an observer overheard a shared-key reply that
+// CoreScope decoded for a node at sampled_at. The reply itself is stored as
+// one deduped reading credited to the poller, so this is the only record of
+// which stations actually heard it. Idempotent: one row per (node, reply,
+// observer).
+func (s *Store) RecordSharedHeard(nodeID, sampledAt, observerID string, now time.Time) error {
+	_, err := s.db.Exec(`
+		INSERT INTO neighbor_battery_heard (node_id, sampled_at, observer_id, heard_at)
+		VALUES (?,?,?,?)
+		ON CONFLICT(node_id, sampled_at, observer_id) DO NOTHING`,
+		nodeID, sampledAt, observerID, now.UTC().Format(batteryTimeLayout))
+	return err
+}
+
 // insertNeighborStatus stores a reading's status stats beside its battery row.
 func (s *Store) insertNeighborStatus(r *NeighborBatteryReading) error {
 	cols := []string{"node_id", "observer_id", "sampled_at"}
@@ -364,6 +378,9 @@ func (s *Store) PruneOldNeighborBattery(days int) (int64, error) {
 	}
 	if _, err := s.db.Exec(`DELETE FROM neighbor_status WHERE sampled_at < ?`, cutoff); err != nil {
 		return 0, fmt.Errorf("prune neighbor_status: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM neighbor_battery_heard WHERE sampled_at < ?`, cutoff); err != nil {
+		return 0, fmt.Errorf("prune neighbor_battery_heard: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {

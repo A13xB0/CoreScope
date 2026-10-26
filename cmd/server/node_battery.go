@@ -150,6 +150,15 @@ func (s *Server) handleNodeBattery(w http.ResponseWriter, r *http.Request) {
 	crit := s.cfg.CriticalBatteryMv()
 
 	sources := summariseBatterySources(samples)
+	// Name the stations that overheard this node's shared-key replies, so a
+	// shared source can say who heard it as well as who requested it.
+	if heard, err := s.db.GetSharedHeardObservers(pubkey, since); err == nil && len(heard) > 0 {
+		for i := range sources {
+			if sources[i].KeyMode == "shared" {
+				sources[i].HeardBy = heard
+			}
+		}
+	}
 	selected := selectBatterySource(sources, time.Now().UTC())
 
 	now := time.Now().UTC()

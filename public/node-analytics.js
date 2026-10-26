@@ -404,6 +404,14 @@
     return '<a href="#/observers/' + encodeURIComponent(s.observer_id.toUpperCase()) + '">' + label + '</a>';
   }
 
+  // heardObserverLink names an observer that overheard a decoded shared-key
+  // reply (data.selected.heard_by) and links to its page.
+  function heardObserverLink(h) {
+    const label = escapeHtml(h.observer_name || String(h.observer_id || '').slice(0, 8));
+    if (!h.observer_id) return label;
+    return '<a href="#/observers/' + encodeURIComponent(String(h.observer_id).toUpperCase()) + '">' + label + '</a>';
+  }
+
   // How a source is introduced: a shared-key reading was requested by its
   // poller (or taken via the key when unclaimed), an own-key reading reported.
   function batteryLead(s) {
@@ -424,6 +432,13 @@
     if (route) parts.push(route);
     if (sel.median_snr != null) parts.push('SNR ' + formatSnr(sel.median_snr));
     if (sel.latest_ts) parts.push(escapeHtml(timeAgo(sel.latest_ts)));
+    // Observers that overheard the shared-key reply — the stations the reply
+    // reached, as opposed to the poller credited with requesting it. The
+    // poller usually hears its own reply too; it is already named above, so
+    // leave it out of this list.
+    const selId = sel.observer_id ? String(sel.observer_id).toLowerCase() : '';
+    const heard = (sel.heard_by || []).filter(h => String(h.observer_id || '').toLowerCase() !== selId);
+    if (heard.length) parts.push('heard by ' + heard.map(heardObserverLink).join(', '));
     const others = ((data && data.sources) || []).filter(s => batterySourceKey(s) !== batterySourceKey(sel));
     if (others.length) {
       parts.push('also reported by ' + others.map(batteryObserverLink).join(', '));

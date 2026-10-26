@@ -179,8 +179,14 @@ const B = { source: 'neighbor', observer_id: OBS_B, observer_name: 'Pentland <OB
     sh.page.init(sh.app, PK + '/analytics');
     sh.call('/nodes/')[0].resolve(analyticsData());
     await flush();
+    // Include the poller itself: it hears its own reply, but is already named
+    // in "Requested by", so it must not appear again under "heard by".
+    const heardBy = [{ observer_id: OBS_A, observer_name: 'Cadham Village' },
+      { observer_id: 'cc'.repeat(32), observer_name: 'Pole' },
+      { observer_id: 'dd'.repeat(32), observer_name: 'Repeater McRepeaterface' }];
     const claimed = { source: 'neighbor', observer_id: OBS_A, observer_name: 'Cadham Village', key_mode: 'shared',
-      latest_mv: 4050, latest_ts: '2026-10-23T18:00:00Z', samples: 1, reply_hops: 1, via: OBS_B, via_name: 'West Lomond' };
+      latest_mv: 4050, latest_ts: '2026-10-23T18:00:00Z', samples: 1, reply_hops: 1, via: OBS_B, via_name: 'West Lomond',
+      heard_by: heardBy };
     sh.call('/nodes/' + PK + '/battery')[0].resolve({
       status: 'ok', latest_mv: 4050, thresholds: { low_mv: 3300, critical_mv: 3000 },
       samples: [{ timestamp: '2026-10-23T18:00:00Z', battery_mv: 4050, source: 'neighbor',
@@ -191,6 +197,10 @@ const B = { source: 'neighbor', observer_id: OBS_B, observer_name: 'Pentland <OB
     const h = sh.els.batteryReportedBy.innerHTML;
     assert(h.includes('Requested by') && h.includes('Cadham Village'), 'a claimed shared reading says "Requested by" the poller');
     assert(h.includes('West Lomond') && !h.includes('direct'), 'with the claimed route, not "direct"');
+    assert(h.includes('heard by') && h.includes('Pole') && h.includes('Repeater McRepeaterface'),
+      'the observers that overheard the shared-key reply are listed');
+    assert(h.includes('#/observers/' + 'CC'.repeat(32)), 'a heard-by observer links to its page');
+    assert((h.match(/Cadham Village/g) || []).length === 1, 'the poller is named once, not repeated under "heard by"');
   }
   {
     const un = load();
@@ -198,7 +208,8 @@ const B = { source: 'neighbor', observer_id: OBS_B, observer_name: 'Pentland <OB
     un.call('/nodes/')[0].resolve(analyticsData());
     await flush();
     const sentinel = { source: 'neighbor', observer_id: 'f0'.repeat(32), observer_name: 'shared key', key_mode: 'shared',
-      latest_mv: 4050, latest_ts: '2026-10-23T18:00:00Z', samples: 1, reply_hops: 0 };
+      latest_mv: 4050, latest_ts: '2026-10-23T18:00:00Z', samples: 1, reply_hops: 0,
+      heard_by: [{ observer_id: 'cc'.repeat(32), observer_name: 'Pole' }] };
     un.call('/nodes/' + PK + '/battery')[0].resolve({
       status: 'ok', latest_mv: 4050, thresholds: { low_mv: 3300, critical_mv: 3000 },
       samples: [{ timestamp: '2026-10-23T18:00:00Z', battery_mv: 4050, source: 'neighbor',
@@ -207,8 +218,11 @@ const B = { source: 'neighbor', observer_id: OBS_B, observer_name: 'Pentland <OB
     });
     await flush();
     const h = un.els.batteryReportedBy.innerHTML;
-    assert(h.includes('Via') && h.includes('the shared key') && !h.includes('<a '), 'an unclaimed shared reading says "Via the shared key", no link');
+    assert(h.includes('Via') && h.includes('the shared key'), 'an unclaimed shared reading says "Via the shared key"');
     assert(!h.includes('direct'), 'and is not called "direct"');
+    // Even with no poller credited, the observers that heard it are named and linked.
+    assert(h.includes('heard by') && h.includes('Pole') && h.includes('#/observers/' + 'CC'.repeat(32)),
+      'the overhearing observer is still listed and linked');
   }
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');

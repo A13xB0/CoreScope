@@ -277,6 +277,12 @@ func (d *sharedGuestDecoder) Handle(observerID string, p *DecodedPacket, now tim
 		if r == nil {
 			return // authentic reply, but not a battery/telemetry answer (e.g. a login) — leave it
 		}
+		// Every observer's copy of this reply folds into one reading, so note
+		// who heard it separately — that is the only record of the stations the
+		// reply actually reached ("heard by …").
+		if err := d.store.RecordSharedHeard(r.NodeID, r.SampledAt, observerID, now); err != nil {
+			log.Printf("[shared-guest] record heard for %.8s: %v", r.NodeID, err)
+		}
 		stored, err := d.store.InsertNeighborBattery(r, 0)
 		if err != nil {
 			log.Printf("[shared-guest] insert for %.8s: %v", r.NodeID, err)
