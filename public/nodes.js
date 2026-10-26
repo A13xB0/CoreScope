@@ -65,6 +65,14 @@
       } else if (col === 'advert_count') {
         va = a.advert_count || 0; vb = b.advert_count || 0;
         return (va - vb) * dir;
+      } else if (col === 'battery') {
+        // Battery column: by mV of a fresh reading; rows with none (or only a
+        // stale one) always sort LAST, as First Seen's empties do.
+        var bv = window.NodeBattery ? window.NodeBattery.listValue : function () { return null; };
+        va = bv(a.battery); vb = bv(b.battery);
+        if ((va === null) !== (vb === null)) return va === null ? 1 : -1;
+        if (va === null) return 0;
+        return (va - vb) * dir;
       } else if (col === 'first_seen') {
         // Issue #1166: sort by node first_seen. Empty cells always sort
         // LAST (regardless of direction) so unknown timestamps don't
@@ -1564,6 +1572,7 @@
           <th scope="col" data-sort-key="last_seen" data-sort-default="desc" data-priority="1">Last Seen</th>
           <th scope="col" data-sort-key="first_seen" data-sort-default="desc" data-priority="3">First Seen</th>
           <th scope="col" data-sort-key="advert_count" data-sort-default="desc" data-priority="2">Adverts</th>
+          <th scope="col" data-sort-key="battery" data-sort-default="asc" data-priority="3" title="Latest battery voltage of a repeater or room: its own status report or an observer that polls it. A dash when there is none or it is stale.">Battery</th>
         </tr></thead>
         <tbody id="nodesBody"></tbody>
       </table></div>
@@ -1762,6 +1771,7 @@
         <td class="${lastSeenClass}">${renderNodeTimestampHtml(n.last_heard || n.last_seen)}</td>
         <td>${n.first_seen ? renderNodeTimestampHtml(n.first_seen) : '<span class="text-muted">—</span>'}</td>
         <td>${n.advert_count || 0}</td>
+        <td style="white-space:nowrap">${window.NodeBattery ? window.NodeBattery.listCell(n.battery) : ''}</td>
       </tr>`;
     }).join('');
     bindFavStars(tbody);

@@ -4,7 +4,8 @@
  * it (the node itself or the observer that polled it directly), with a link
  * to the history chart; and the latest chip temperature. Each line is hidden
  * when there is no reading, or when the API marks it stale (older than
- * neighborBattery.hideAfterHours).
+ * neighborBattery.hideAfterHours). Also the Battery cell of the nodes list
+ * (listCell), from the compact battery object on each /api/nodes row.
  */
 'use strict';
 
@@ -107,5 +108,28 @@
     show(tempEl, tempHtml(data));
   }
 
-  window.NodeBattery = { mount: mount, html: html, tempHtml: tempHtml };
+  // listValue is the number the nodes list sorts the Battery column by: the
+  // mV of a fresh reading, or null when there is none or it is stale (those
+  // sort last and show a dash).
+  function listValue(b) {
+    if (!b || b.stale || typeof b.mv !== 'number') return null;
+    return b.mv;
+  }
+
+  // listCell is the Battery cell of the nodes list for a row's compact
+  // /api/nodes battery object: the voltage in its status colour, "no battery"
+  // for 0 mV, a dash when missing or stale.
+  function listCell(b) {
+    const mv = listValue(b);
+    if (mv === null) return '<span class="text-muted">—</span>';
+    const st = STATUS[b.status] || { text: '', color: 'inherit' };
+    if (b.status === 'no_battery' || mv === 0) {
+      return '<span style="color:' + STATUS.no_battery.color + '">no battery</span>';
+    }
+    const title = st.text + (b.ts ? ' · ' + String(b.ts) : '');
+    return '<span style="color:' + st.color + '" title="' + title.replace(/"/g, '&quot;') + '">' +
+      (mv / 1000).toFixed(2) + ' V</span>';
+  }
+
+  window.NodeBattery = { mount: mount, html: html, tempHtml: tempHtml, listCell: listCell, listValue: listValue };
 })();
