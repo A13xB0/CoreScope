@@ -565,6 +565,22 @@ func applySchema(db *sql.DB) error {
 			PRIMARY KEY (node_id, sampled_at, observer_id)
 		) WITHOUT ROWID;
 		CREATE INDEX IF NOT EXISTS idx_nbh_prune ON neighbor_battery_heard(sampled_at);
+
+		-- Which observers poll which repeaters (meshcore/<region>/<observer>/polling),
+		-- so the server can pick one poller per repeater
+		-- (/api/guest-polling/owners). reply_hops and via are the route of the
+		-- newest claim; first_seen is when this observer first claimed the node.
+		-- Rows not renewed for 24 h are pruned (PrunePollingClaims).
+		CREATE TABLE IF NOT EXISTS guest_polling_claims (
+			node_id     TEXT    NOT NULL,
+			observer_id TEXT    NOT NULL,
+			reply_hops  INTEGER NOT NULL DEFAULT 0,
+			via         TEXT,
+			first_seen  TEXT    NOT NULL,
+			last_seen   TEXT    NOT NULL,
+			PRIMARY KEY (node_id, observer_id)
+		) WITHOUT ROWID;
+		CREATE INDEX IF NOT EXISTS idx_gpc_observer ON guest_polling_claims(observer_id, last_seen);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("base schema: %w", err)

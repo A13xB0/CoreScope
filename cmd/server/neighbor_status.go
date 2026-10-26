@@ -17,9 +17,19 @@ const defaultHideAfterHours = 24
 
 // NeighborBatteryServerConfig is the server's part of the neighborBattery
 // block. HideAfterHours: a Battery or Temperature line whose latest reading
-// is older than this is hidden; 0 never hides. Unset means 24.
+// is older than this is hidden; 0 never hides. Unset means 24. Enabled is the
+// same flag the ingestor stores readings under; the server gates the
+// per-observer polling keys, polling ownership and the /api/nodes battery
+// column on it.
 type NeighborBatteryServerConfig struct {
+	Enabled        bool `json:"enabled,omitempty"`
 	HideAfterHours *int `json:"hideAfterHours,omitempty"`
+}
+
+// NeighborBatteryEnabled reports neighborBattery.enabled. Default false;
+// nil-receiver-safe.
+func (c *Config) NeighborBatteryEnabled() bool {
+	return c != nil && c.NeighborBattery != nil && c.NeighborBattery.Enabled
 }
 
 // NeighborBatteryHideAfterHours returns neighborBattery.hideAfterHours, or 24.

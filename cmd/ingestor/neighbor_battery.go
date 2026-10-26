@@ -323,6 +323,51 @@ func (s *Store) RecordSharedHeard(nodeID, sampledAt, observerID string, now time
 	return err
 }
 
+// pollingClaim is one node in a /polling claim: the route the poller
+// reaches it by.
+type pollingClaim struct {
+	node string
+	hops int
+	via  string
+}
+
+// UpsertPollingClaims records that observer polls these nodes, for the
+// server's one-poller-per-repeater ownership (/api/guest-polling/owners).
+// first_seen is kept; the route and last_seen follow the newest claim.
+func (s *Store) UpsertPollingClaims(observer string, claims []pollingClaim, now time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ts := now.UTC().Format(batteryTimeLayout)
+	for _, c := range claims {
+		var via interface{}
+		if c.via != "" {
+			via = c.via
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO guest_polling_claims (node_id, observer_id, reply_hops, via, first_seen, last_seen)
+			VALUES (?,?,?,?,?,?)
+			ON CONFLICT(node_id, observer_id) DO UPDATE SET
+				reply_hops = excluded.reply_hops, via = excluded.via, last_seen = excluded.last_seen`,
+			c.node, observer, c.hops, via, ts, ts); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// PrunePollingClaims drops claims not renewed in the last 24 hours.
+func (s *Store) PrunePollingClaims(now time.Time) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM guest_polling_claims WHERE last_seen < ?`,
+		now.UTC().Add(-24*time.Hour).Format(batteryTimeLayout))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // insertNeighborStatus stores a reading's status stats beside its battery row.
 func (s *Store) insertNeighborStatus(r *NeighborBatteryReading) error {
 	cols := []string{"node_id", "observer_id", "sampled_at"}

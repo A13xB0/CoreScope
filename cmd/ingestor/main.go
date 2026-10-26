@@ -104,6 +104,18 @@ func main() {
 	}
 
 	sharedGuest = newSharedGuestDecoder(store)
+	// Per-observer polling keys the server registered (guest_keys.go);
+	// re-read every minute so a new or lapsed key takes effect promptly.
+	if sharedGuest != nil {
+		sharedGuest.UseGuestKeys(guestKeysDBPath(cfg.DBPath))
+		go func() {
+			t := time.NewTicker(guestKeysRefresh)
+			defer t.Stop()
+			for now := range t.C {
+				sharedGuest.RefreshGuestKeys(now)
+			}
+		}()
+	}
 
 	keySet := newChannelKeySet(channelKeys, cfg.UsersDBPath(), cfg.ApprovedChannelsMax())
 	if cfg.ApprovedChannelsEnabled() {

@@ -160,6 +160,11 @@ type Server struct {
 	// Optional user management (docs/specs/2026-10-06-user-management-design.md).
 	// Nil unless userManagement.enabled; see initUserManagement.
 	auth *authService
+
+	// guestKeys holds the per-observer polling keys (guest_keys.go); nil when
+	// neighborBattery is off or guest_keys.db could not be opened.
+	guestKeys     *guestKeyStore
+	guestKeysStop chan struct{}
 }
 
 // PerfStats tracks request performance.
@@ -341,6 +346,11 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/nodes/{pubkey}/battery", s.handleNodeBattery).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/status-history", s.handleNodeStatusHistory).Methods("GET")
 	r.HandleFunc("/api/shared-guest/key", s.handleSharedGuestKey).Methods("GET")
+	// Per-observer polling keys and polling ownership: registered always,
+	// 404 when neighborBattery is off.
+	r.HandleFunc("/api/guest-keys", s.handleGuestKeyUpload).Methods("POST")
+	r.HandleFunc("/api/guest-keys/{observer_id}", s.handleGuestKeyGet).Methods("GET")
+	r.HandleFunc("/api/guest-polling/owners", s.handleGuestPollingOwners).Methods("GET")
 	r.HandleFunc("/api/nodes/clock-skew", s.handleFleetClockSkew).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/clock-skew", s.handleNodeClockSkew).Methods("GET")
 	r.HandleFunc("/api/observers/clock-skew", s.handleObserverClockSkew).Methods("GET")
@@ -1587,6 +1597,9 @@ func (s *Server) buildNodesResponse(r *http.Request) (NodeListResponse, error) {
 	// stops on a short page strands every node behind it (#1606 fixed the
 	// no-filter case only). has_more survives those passes untouched.
 	hasMore := offset+len(nodes) < total
+	// Latest battery per repeater/room for the list's Battery column
+	// (node_battery_list.go); no-op unless neighborBattery is enabled.
+	s.enrichNodesBattery(nodes)
 	if s.store != nil {
 		hashInfo := s.store.GetNodeHashSizeInfo()
 		relayWindow := s.cfg.GetHealthThresholds().RelayActiveHours

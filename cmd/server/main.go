@@ -372,6 +372,7 @@ func main() {
 	if err := srv.initUserManagement(resolvedDB); err != nil {
 		log.Fatalf("[users] %v", err)
 	}
+	srv.initGuestKeys(resolvedDB)
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)
 
@@ -572,6 +573,7 @@ func main() {
 
 		// 3b. Close users.db (user management, opt-in; no-op when off).
 		srv.closeUserManagement()
+		srv.closeGuestKeys()
 
 		// 4. Close database (release SQLite WAL lock)
 		if err := dbClose(); err != nil {
