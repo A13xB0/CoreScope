@@ -52,6 +52,9 @@ type NodeBatterySample struct {
 	// KeyMode is "shared" when the reading was taken under the shared guest
 	// key; "" for an observer's own key.
 	KeyMode string `json:"key_mode,omitempty"`
+	// PacketHash is the reply a decoded (guest-key) reading came from, for a
+	// link to the packets page; "" for readings an observer published itself.
+	PacketHash string `json:"packet_hash,omitempty"`
 }
 
 // nodeBatteryHistorySQL matches the observer ID in lowercase and in

@@ -79,8 +79,17 @@ func (db *DB) GetNeighborBatteryHistory(pubkey, since string) ([]NodeBatterySamp
 	if db.neighborBatteryV2Present() {
 		extra = "temperature_c, via, key_mode"
 	}
+	// The reply a decoded reading came from (packet_hash arrives with a later
+	// ingestor; NULL until then, and for readings published by an observer).
+	packet := "NULL"
+	if db.neighborBatteryHeardPresent() && db.columnPresent(&db.neighborBatteryHeardHash,
+		`SELECT COUNT(*) FROM pragma_table_info('neighbor_battery_heard') WHERE name = 'packet_hash'`) {
+		packet = `(SELECT h.packet_hash FROM neighbor_battery_heard h
+			WHERE h.node_id = neighbor_battery.node_id AND h.sampled_at = neighbor_battery.sampled_at
+			AND h.packet_hash IS NOT NULL LIMIT 1)`
+	}
 	rows, err := db.conn.Query(`
-		SELECT sampled_at, battery_mv, observer_id, snr, reply_hops, `+extra+`
+		SELECT sampled_at, battery_mv, observer_id, snr, reply_hops, `+extra+`, `+packet+`
 		FROM neighbor_battery
 		WHERE node_id = ? AND sampled_at >= ?
 		ORDER BY sampled_at ASC`, strings.ToLower(pubkey), since)
@@ -95,9 +104,12 @@ func (db *DB) GetNeighborBatteryHistory(pubkey, since string) ([]NodeBatterySamp
 	for rows.Next() {
 		var s NodeBatterySample
 		var hops int
-		var via, keyMode sql.NullString
-		if err := rows.Scan(&s.Timestamp, &s.BatteryMv, &s.ObserverID, &s.SNR, &hops, &s.TemperatureC, &via, &keyMode); err != nil {
+		var via, keyMode, packetHash sql.NullString
+		if err := rows.Scan(&s.Timestamp, &s.BatteryMv, &s.ObserverID, &s.SNR, &hops, &s.TemperatureC, &via, &keyMode, &packetHash); err != nil {
 			return nil, err
+		}
+		if packetHash.Valid {
+			s.PacketHash = packetHash.String
 		}
 		s.Source = batterySourceNeighbor
 		s.ReplyHops = &hops
@@ -164,9 +176,11 @@ func (db *DB) neighborBatteryHeardPresent() bool {
 }
 
 // GetSharedHeardObservers lists the observers that overheard this node's
-// shared-key replies in the window — the stations whose packets CoreScope
-// decoded, as opposed to the poller credited with the reading. Named and
-// sorted for a stable "heard by …" line.
+// latest decoded shared-key reply in the window — the stations whose packets
+// CoreScope decoded, as opposed to the poller credited with the reading. Only
+// the latest reply: across the whole window the list mixed in every earlier
+// reply, so one old flooded reply made a direct one look heard Scotland-wide.
+// Named and sorted for a stable "heard by …" line.
 func (db *DB) GetSharedHeardObservers(pubkey, since string) ([]BatteryHeard, error) {
 	if pubkey == "" || !db.neighborBatteryHeardPresent() {
 		return nil, nil
@@ -176,7 +190,9 @@ func (db *DB) GetSharedHeardObservers(pubkey, since string) ([]BatteryHeard, err
 	}
 	rows, err := db.conn.Query(`
 		SELECT DISTINCT observer_id FROM neighbor_battery_heard
-		WHERE node_id = ? AND sampled_at >= ?`, strings.ToLower(pubkey), since)
+		WHERE node_id = ?1 AND sampled_at = (
+			SELECT MAX(sampled_at) FROM neighbor_battery_heard WHERE node_id = ?1 AND sampled_at >= ?2)`,
+		strings.ToLower(pubkey), since)
 	if err != nil {
 		return nil, err
 	}

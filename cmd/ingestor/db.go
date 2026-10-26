@@ -562,6 +562,7 @@ func applySchema(db *sql.DB) error {
 			sampled_at  TEXT NOT NULL,
 			observer_id TEXT NOT NULL,
 			heard_at    TEXT NOT NULL,
+			packet_hash TEXT,
 			PRIMARY KEY (node_id, sampled_at, observer_id)
 		) WITHOUT ROWID;
 		CREATE INDEX IF NOT EXISTS idx_nbh_prune ON neighbor_battery_heard(sampled_at);
@@ -586,6 +587,9 @@ func applySchema(db *sql.DB) error {
 		return fmt.Errorf("base schema: %w", err)
 	}
 	if err := migrateNeighborBatteryV2(db); err != nil {
+		return err
+	}
+	if err := migrateNeighborBatteryHeardHash(db); err != nil {
 		return err
 	}
 

@@ -452,6 +452,7 @@
     if (!samples.length) { el.style.display = 'none'; return; }
     const recent = samples.slice(-10).reverse();
     const withTemp = recent.some(s => s.temperature_c != null);
+    const withPacket = recent.some(s => s.packet_hash);
     const rows = recent.map(s => '<tr>'
       + '<td>' + escapeHtml(new Date(s.timestamp).toLocaleString()) + '</td>'
       + '<td>' + (s.battery_mv === 0 ? 'none fitted' : s.battery_mv + ' mV') + '</td>'
@@ -459,10 +460,14 @@
       + '<td>' + batteryObserverLink(s) + '</td>'
       + '<td>' + formatSnr(s.snr) + '</td>'
       + '<td>' + escapeHtml(batteryRoute(s) || '—') + '</td>'
+      + (withPacket ? '<td>' + (s.packet_hash
+        ? '<a href="#/packets/' + encodeURIComponent(s.packet_hash) + '" title="The reply this reading was decoded from">See packet</a>'
+        : '—') + '</td>' : '')
       + '</tr>').join('');
     el.innerHTML = '<table class="analytics-peer-table"><caption style="text-align:left;font-size:12px;color:var(--text-muted)">Recent readings</caption>'
       + '<thead><tr><th scope="col">Time</th><th scope="col">Voltage</th>' + (withTemp ? '<th scope="col">Chip temp</th>' : '')
-      + '<th scope="col">Reported by</th><th scope="col">SNR</th><th scope="col">Route</th></tr></thead>'
+      + '<th scope="col">Reported by</th><th scope="col">SNR</th><th scope="col">Route</th>'
+      + (withPacket ? '<th scope="col">Packet</th>' : '') + '</tr></thead>'
       + '<tbody>' + rows + '</tbody></table>';
     el.style.display = '';
   }

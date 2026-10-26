@@ -38,27 +38,28 @@ const routeTypeNonTransportSQL = "route_type IN (1, 2)"
 
 // DB wraps a read-only connection to the MeshCore SQLite database.
 type DB struct {
-	advertEvidenceTable     atomic.Bool
-	txRewriteFeedTable      atomic.Bool // tx_rewrite_feed present (#2107); re-probed while absent
-	clientNodeNamesTable    atomic.Bool // client_node_names present; re-probed while absent (clientNodeNamesPresent)
-	neighborBatteryTable    atomic.Bool // neighbor_battery present; re-probed while absent (neighborBatteryPresent)
-	neighborBatteryV2       atomic.Bool // neighbor_battery has temperature_c and via (neighborBatteryV2Present)
-	neighborStatusTable     atomic.Bool // neighbor_status present (neighborStatusPresent)
-	neighborBatteryHeard    atomic.Bool // neighbor_battery_heard present (neighborBatteryHeardPresent)
-	guestPollingClaims      atomic.Bool // guest_polling_claims present (guestPollingClaimsPresent)
-	inactiveNodesTable      atomic.Bool // inactive_nodes present; re-probed while absent (clientNameHeard)
-	advertEvidenceReadHook  func()      // test-only: immediately before a bulk mask query
-	conn                    *sql.DB
-	path                    string // filesystem path to the database file
-	isV3                    bool   // v3 schema: observer_idx in observations (vs observer_id in v2)
-	hasResolvedPath         bool   // observations table has resolved_path column
-	hasObsRawHex            bool   // observations table has raw_hex column (#881)
-	hasScopeName            bool   // transmissions.scope_name column exists (#899)
-	hasDefaultScope         bool   // nodes.default_scope column exists (#899)
-	hasConfiguredScope      bool   // nodes.configured_scope column exists (#1865)
-	hasDeclaredRegionsTable bool   // node_declared_regions table exists at startup (#1975); read via declaredRegionsTablePresent
-	hasMultibyteSupCols     bool   // nodes/inactive_nodes have multibyte_sup/multibyte_evidence (#903)
-	hasLastSeen             bool   // transmissions.last_seen column exists (#1690)
+	advertEvidenceTable      atomic.Bool
+	txRewriteFeedTable       atomic.Bool // tx_rewrite_feed present (#2107); re-probed while absent
+	clientNodeNamesTable     atomic.Bool // client_node_names present; re-probed while absent (clientNodeNamesPresent)
+	neighborBatteryTable     atomic.Bool // neighbor_battery present; re-probed while absent (neighborBatteryPresent)
+	neighborBatteryV2        atomic.Bool // neighbor_battery has temperature_c and via (neighborBatteryV2Present)
+	neighborStatusTable      atomic.Bool // neighbor_status present (neighborStatusPresent)
+	neighborBatteryHeard     atomic.Bool // neighbor_battery_heard present (neighborBatteryHeardPresent)
+	neighborBatteryHeardHash atomic.Bool // neighbor_battery_heard.packet_hash present
+	guestPollingClaims       atomic.Bool // guest_polling_claims present (guestPollingClaimsPresent)
+	inactiveNodesTable       atomic.Bool // inactive_nodes present; re-probed while absent (clientNameHeard)
+	advertEvidenceReadHook   func()      // test-only: immediately before a bulk mask query
+	conn                     *sql.DB
+	path                     string // filesystem path to the database file
+	isV3                     bool   // v3 schema: observer_idx in observations (vs observer_id in v2)
+	hasResolvedPath          bool   // observations table has resolved_path column
+	hasObsRawHex             bool   // observations table has raw_hex column (#881)
+	hasScopeName             bool   // transmissions.scope_name column exists (#899)
+	hasDefaultScope          bool   // nodes.default_scope column exists (#899)
+	hasConfiguredScope       bool   // nodes.configured_scope column exists (#1865)
+	hasDeclaredRegionsTable  bool   // node_declared_regions table exists at startup (#1975); read via declaredRegionsTablePresent
+	hasMultibyteSupCols      bool   // nodes/inactive_nodes have multibyte_sup/multibyte_evidence (#903)
+	hasLastSeen              bool   // transmissions.last_seen column exists (#1690)
 
 	// declaredRegionsTableLate latches true once node_declared_regions is found
 	// after startup. The ingestor creates that table, and the two processes

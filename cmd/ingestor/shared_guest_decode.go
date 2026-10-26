@@ -389,7 +389,9 @@ func (d *sharedGuestDecoder) Handle(observerID string, p *DecodedPacket, now tim
 			// Every observer's copy of this reply folds into one reading, so note
 			// who heard it separately — that is the only record of the stations the
 			// reply actually reached ("heard by …").
-			if err := d.store.RecordSharedHeard(r.NodeID, r.SampledAt, observerID, now); err != nil {
+			// The packet's content hash (as stored for the packets page) lets the
+			// reading link to the reply it was decoded from.
+			if err := d.store.RecordSharedHeard(r.NodeID, r.SampledAt, observerID, ComputeContentHash(p.Raw), now); err != nil {
 				log.Printf("[shared-guest] record heard for %.8s: %v", r.NodeID, err)
 			}
 			stored, err := d.store.InsertNeighborBattery(r, 0)

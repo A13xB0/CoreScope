@@ -314,12 +314,12 @@ func (s *Store) InsertNeighborBattery(r *NeighborBatteryReading, minGap time.Dur
 // one deduped reading credited to the poller, so this is the only record of
 // which stations actually heard it. Idempotent: one row per (node, reply,
 // observer).
-func (s *Store) RecordSharedHeard(nodeID, sampledAt, observerID string, now time.Time) error {
+func (s *Store) RecordSharedHeard(nodeID, sampledAt, observerID, packetHash string, now time.Time) error {
 	_, err := s.db.Exec(`
-		INSERT INTO neighbor_battery_heard (node_id, sampled_at, observer_id, heard_at)
-		VALUES (?,?,?,?)
+		INSERT INTO neighbor_battery_heard (node_id, sampled_at, observer_id, heard_at, packet_hash)
+		VALUES (?,?,?,?,NULLIF(?, ''))
 		ON CONFLICT(node_id, sampled_at, observer_id) DO NOTHING`,
-		nodeID, sampledAt, observerID, now.UTC().Format(batteryTimeLayout))
+		nodeID, sampledAt, observerID, now.UTC().Format(batteryTimeLayout), packetHash)
 	return err
 }
 
@@ -407,6 +407,24 @@ func migrateNeighborBatteryV2(db *sql.DB) error {
 		}
 		log.Printf("[migration] neighbor_battery.%s added", col.name)
 	}
+	return nil
+}
+
+// migrateNeighborBatteryHeardHash adds neighbor_battery_heard.packet_hash: the
+// content hash of the reply a reading was decoded from, so the page can link
+// each reading to its packet.
+func migrateNeighborBatteryHeardHash(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('neighbor_battery_heard') WHERE name = 'packet_hash'`).Scan(&n); err != nil {
+		return fmt.Errorf("neighbor_battery_heard columns: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE neighbor_battery_heard ADD COLUMN packet_hash TEXT`); err != nil {
+		return fmt.Errorf("adding neighbor_battery_heard.packet_hash: %w", err)
+	}
+	log.Printf("[migration] neighbor_battery_heard.packet_hash added")
 	return nil
 }
 

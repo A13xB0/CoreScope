@@ -28,6 +28,7 @@ func TestSharedGuestHandleStoresReading(t *testing.T) {
 	pkt.Payload.SrcHash = hex.EncodeToString(payload[1:2])
 	pkt.Payload.MAC = hex.EncodeToString(payload[2:4])
 	pkt.Payload.EncryptedData = hex.EncodeToString(payload[4:])
+	pkt.Raw = "06" + "00" + strings.ToUpper(hex.EncodeToString(payload)) // direct RESPONSE, empty path
 
 	// The same reply, heard by three different observers, is one reading.
 	for _, obs := range []string{
@@ -48,6 +49,15 @@ func TestSharedGuestHandleStoresReading(t *testing.T) {
 	}
 	if heard != 3 {
 		t.Errorf("heard rows = %d, want 3 (one per observer that overheard the reply)", heard)
+	}
+	// Each row names the packet it came from, as the packets page hashes it.
+	var hashes int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM neighbor_battery_heard WHERE node_id = ? AND packet_hash = ?`,
+		repPub, ComputeContentHash(pkt.Raw)).Scan(&hashes); err != nil {
+		t.Fatal(err)
+	}
+	if hashes != 3 {
+		t.Errorf("rows with the packet's hash = %d, want 3", hashes)
 	}
 	var nodeID, obs, keyMode, sampledAt string
 	var mv int

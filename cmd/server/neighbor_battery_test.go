@@ -218,6 +218,7 @@ func TestNodeBatteryEndpoint_SharedHeardBy(t *testing.T) {
 		PRIMARY KEY (node_id, observer_id, sampled_at)) WITHOUT ROWID`)
 	db.conn.Exec(`CREATE TABLE neighbor_battery_heard (
 		node_id TEXT NOT NULL, sampled_at TEXT NOT NULL, observer_id TEXT NOT NULL, heard_at TEXT NOT NULL,
+		packet_hash TEXT,
 		PRIMARY KEY (node_id, sampled_at, observer_id)) WITHOUT ROWID`)
 
 	at := now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05Z")
@@ -226,9 +227,13 @@ func TestNodeBatteryEndpoint_SharedHeardBy(t *testing.T) {
 		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		nbNode, strings.ToLower(poller), at, 4050, nil, nil, "status", "poll", 1, at, "shared")
 	for _, obs := range []string{nbObsB, heardC} {
-		db.conn.Exec(`INSERT INTO neighbor_battery_heard (node_id, sampled_at, observer_id, heard_at)
-			VALUES (?,?,?,?)`, nbNode, at, strings.ToLower(obs), at)
+		db.conn.Exec(`INSERT INTO neighbor_battery_heard (node_id, sampled_at, observer_id, heard_at, packet_hash)
+			VALUES (?,?,?,?,?)`, nbNode, at, strings.ToLower(obs), at, "dfa133fdd92b2ee1")
 	}
+	// An older reply that flooded and was heard far and wide: not this reading's.
+	older := now.Add(-5 * time.Hour).Format("2006-01-02T15:04:05Z")
+	db.conn.Exec(`INSERT INTO neighbor_battery_heard (node_id, sampled_at, observer_id, heard_at)
+		VALUES (?,?,?,?)`, nbNode, older, strings.ToLower(poller), older)
 
 	body := getBattery(t, batteryRouter(t, db))
 	sel, ok := body["selected"].(map[string]interface{})
@@ -245,6 +250,11 @@ func TestNodeBatteryEndpoint_SharedHeardBy(t *testing.T) {
 	names := map[string]bool{}
 	for _, h := range heard {
 		names[h.(map[string]interface{})["observer_name"].(string)] = true
+	}
+	// The reading links to the reply it was decoded from.
+	samples, _ := body["samples"].([]interface{})
+	if len(samples) == 0 || samples[len(samples)-1].(map[string]interface{})["packet_hash"] != "dfa133fdd92b2ee1" {
+		t.Errorf("latest sample packet_hash missing: %v", samples)
 	}
 	if !names["Pole"] || !names["Repeater McRepeaterface"] {
 		t.Errorf("heard_by names = %v, want Pole and Repeater McRepeaterface", names)
