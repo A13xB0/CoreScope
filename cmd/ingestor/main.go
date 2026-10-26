@@ -103,6 +103,8 @@ func main() {
 		log.Printf("No channel keys loaded — GRP_TXT packets will not be decrypted")
 	}
 
+	sharedGuest = newSharedGuestDecoder(store)
+
 	keySet := newChannelKeySet(channelKeys, cfg.UsersDBPath(), cfg.ApprovedChannelsMax())
 	if cfg.ApprovedChannelsEnabled() {
 		logApprovedChannelsSource(cfg.UsersDBPath())
@@ -388,6 +390,16 @@ func main() {
 		}
 	}
 
+	// Neighbour battery retention. 0 = disabled.
+	neighborBatteryDays := cfg.NeighborBatteryDaysOrZero()
+	if neighborBatteryDays > 0 {
+		if n, err := store.PruneOldNeighborBattery(neighborBatteryDays); err != nil {
+			log.Printf("[prune] neighbor_battery: %v", err)
+		} else if n > 0 {
+			log.Printf("[prune] startup pruned %d neighbor_battery older than %d days", n, neighborBatteryDays)
+		}
+	}
+
 	vacuumPages := cfg.IncrementalVacuumPages()
 	store.RunIncrementalVacuum(vacuumPages)
 
@@ -486,7 +498,7 @@ func main() {
 	// node_declared_regions retention (Task 6) rather than starting a second
 	// ticker — the four flags are independent (0 disables each separately),
 	// so the ticker itself must run when any is set.
-	if clientRxDays > 0 || clientRxObsDays > 0 || clientRfDays > 0 || clientRegionsDays > 0 || clientNodeNamesDays > 0 {
+	if clientRxDays > 0 || clientRxObsDays > 0 || clientRfDays > 0 || clientRegionsDays > 0 || clientNodeNamesDays > 0 || neighborBatteryDays > 0 {
 		clientRxRetentionTicker := time.NewTicker(24 * time.Hour)
 		go func() {
 			for range clientRxRetentionTicker.C {
@@ -525,6 +537,13 @@ func main() {
 						store.RunIncrementalVacuum(vacuumPages)
 					}
 				}
+				if neighborBatteryDays > 0 {
+					if n, err := store.PruneOldNeighborBattery(neighborBatteryDays); err != nil {
+						log.Printf("[prune] neighbor_battery: %v", err)
+					} else if n > 0 {
+						store.RunIncrementalVacuum(vacuumPages)
+					}
+				}
 			}
 		}()
 		if clientRxDays > 0 {
@@ -541,6 +560,9 @@ func main() {
 		}
 		if clientNodeNamesDays > 0 {
 			log.Printf("[prune] auto-prune enabled: client_node_names older than %d days will be removed daily", clientNodeNamesDays)
+		}
+		if neighborBatteryDays > 0 {
+			log.Printf("[prune] auto-prune enabled: neighbor_battery older than %d days will be removed daily", neighborBatteryDays)
 		}
 	}
 
@@ -1001,6 +1023,26 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		return
 	}
 
+	// Battery topic: meshcore/<region>/<observer_id>/battery. Readings the
+	// observer took from repeaters it polls directly; observer metadata like
+	// /neighbors, so the per-source packet IATA filter does not apply.
+	if len(parts) >= 4 && parts[3] == "battery" {
+		if cfg.NeighborBatteryEnabled() {
+			handleBatteryReport(store, cfg, tag, parts[2], msg)
+		}
+		return
+	}
+
+	// Shared-key claim: meshcore/<region>/<observer>/polling names the
+	// nodes this observer polls under the shared key, so a decoded reply is
+	// credited to the poller that requested it.
+	if len(parts) >= 4 && parts[3] == "polling" {
+		if sharedGuest != nil {
+			sharedGuest.HandleClaim(parts[2], msg, time.Now().UTC())
+		}
+		return
+	}
+
 	// Status topic: meshcore/<region>/<observer_id>/status
 	// Per-source IATA filter does NOT apply here — observer metadata (noise_floor, battery, etc.)
 	// is region-independent and should be accepted from all observers regardless of
@@ -1250,6 +1292,13 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 			if _, err := store.InsertTransmission(pktData); err != nil {
 				log.Printf("MQTT [%s] db insert error: %v", tag, err)
 			}
+		}
+
+		// Shared guest key: if this is a repeater reply under the shared key
+		// that this observer overheard, decode it into one reading credited to
+		// the shared key. Cheap and silent for everything else.
+		if sharedGuest != nil {
+			sharedGuest.Handle(observerID, decoded, time.Now().UTC())
 		}
 
 		// Upsert observer

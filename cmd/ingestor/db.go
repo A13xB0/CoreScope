@@ -495,9 +495,82 @@ func applySchema(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_cnn_target ON client_node_names(target, observed_at);
 		CREATE INDEX IF NOT EXISTS idx_cnn_prune  ON client_node_names(observed_at);
+
+		-- Repeater battery readings published by observers that poll their
+		-- direct neighbours (meshcore/<region>/<observer>/battery). Observations,
+		-- never state: one row per reading. battery_mv 0 means no battery
+		-- fitted. source is 'poll' (the observer's own direct request) or
+		-- 'reused' (a reply to someone else's); reply_hops is how many hops the
+		-- reply took and via the relay it went through (64-hex, NULL when
+		-- direct). temperature_c is the repeater's own (chip) temperature,
+		-- NULL when it sent none. key_mode is 'shared' for a reading taken
+		-- under the shared guest key, NULL for this observer's own key.
+		-- temperature_c, via and key_mode are added by migrateNeighborBatteryV2
+		-- on databases created before them.
+		CREATE TABLE IF NOT EXISTS neighbor_battery (
+			node_id       TEXT    NOT NULL,
+			observer_id   TEXT    NOT NULL,
+			sampled_at    TEXT    NOT NULL,
+			battery_mv    INTEGER NOT NULL,
+			snr           REAL,
+			rssi          INTEGER,
+			method        TEXT    NOT NULL,
+			source        TEXT    NOT NULL,
+			reply_hops    INTEGER NOT NULL,
+			received_at   TEXT    NOT NULL,
+			temperature_c REAL,
+			via           TEXT,
+			key_mode      TEXT,
+			PRIMARY KEY (node_id, observer_id, sampled_at)
+		) WITHOUT ROWID;
+		CREATE INDEX IF NOT EXISTS idx_nb_prune ON neighbor_battery(sampled_at);
+
+		-- The rest of a polled repeater's status reply (MeshCore RepeaterStats),
+		-- stored beside each neighbor_battery row. Counters are cumulative since
+		-- the repeater booted; a field the firmware didn't send is NULL.
+		CREATE TABLE IF NOT EXISTS neighbor_status (
+			node_id      TEXT    NOT NULL,
+			observer_id  TEXT    NOT NULL,
+			sampled_at   TEXT    NOT NULL,
+			uptime_secs  INTEGER,
+			noise_floor  INTEGER,
+			last_rssi    INTEGER,
+			last_snr     REAL,
+			tx_queue     INTEGER,
+			packets_recv INTEGER,
+			packets_sent INTEGER,
+			recv_flood   INTEGER,
+			recv_direct  INTEGER,
+			sent_flood   INTEGER,
+			sent_direct  INTEGER,
+			tx_air_secs  INTEGER,
+			rx_air_secs  INTEGER,
+			flood_dups   INTEGER,
+			direct_dups  INTEGER,
+			recv_errors  INTEGER,
+			err_events   INTEGER,
+			PRIMARY KEY (node_id, observer_id, sampled_at)
+		) WITHOUT ROWID;
+		CREATE INDEX IF NOT EXISTS idx_ns_prune ON neighbor_status(sampled_at);
+
+		-- Which observers overheard each shared-guest-key reply CoreScope
+		-- decoded. The reading itself is deduped to one row (credited to the
+		-- poller), so the set of stations that actually heard it is kept here,
+		-- one row per observer, for the "heard by …" line.
+		CREATE TABLE IF NOT EXISTS neighbor_battery_heard (
+			node_id     TEXT NOT NULL,
+			sampled_at  TEXT NOT NULL,
+			observer_id TEXT NOT NULL,
+			heard_at    TEXT NOT NULL,
+			PRIMARY KEY (node_id, sampled_at, observer_id)
+		) WITHOUT ROWID;
+		CREATE INDEX IF NOT EXISTS idx_nbh_prune ON neighbor_battery_heard(sampled_at);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("base schema: %w", err)
+	}
+	if err := migrateNeighborBatteryV2(db); err != nil {
+		return err
 	}
 
 	// Create observations table (v3 schema)

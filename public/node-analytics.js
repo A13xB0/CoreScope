@@ -183,9 +183,17 @@
           </div>
           <div class="analytics-chart-card full">
             <h4>Battery Voltage <span id="batteryStatusBadge" style="font-size:11px;font-weight:normal;margin-left:8px"></span></h4>
-            <div class="analytics-chart-desc">Battery voltage over time from observer status reports — flat line means full, downward slope means draining</div>
+            <div class="analytics-chart-desc">Battery voltage over time from the node's own status reports and from observers that poll it directly — flat line means full, downward slope means draining</div>
+            <div id="batteryReportedBy" class="battery-reported-by" style="display:none"></div>
             <canvas id="batteryChart" role="img" aria-label="Battery voltage trend chart"></canvas>
             <div id="batteryEmpty" style="display:none;padding:20px;text-align:center;color:var(--text-muted);font-size:12px">No battery telemetry recorded for this node in this window.</div>
+            <div id="batteryReadings" class="analytics-table-scroll" style="display:none"></div>
+          </div>
+          <div class="analytics-chart-card full" id="nodeStatusCard" hidden>
+            <h4>Repeater Status</h4>
+            <div class="analytics-chart-desc">From the status replies an observer polling this repeater directly publishes with its battery. Rates are per hour between two replies; a reboot resets the counters.</div>
+            <div class="battery-reported-by ns-by"></div>
+            <div class="ns-grid"></div>
           </div>
           <div class="analytics-chart-card full">
             <h4>Uptime Heatmap</h4>
@@ -223,6 +231,7 @@
     buildHopChart(data);
     buildHeatmap(data);
     loadBatteryChart(pubkey, currentDays, isCurrent);
+    if (window.NodeStatusCharts) NodeStatusCharts.load(document.getElementById('nodeStatusCard'), pubkey, currentDays, isCurrent);
     NodeHopAnalytics.load(document.getElementById('hopCountSection'), pubkey, currentDays);
   }
 
@@ -361,6 +370,103 @@
     }
   }
 
+  const BATTERY_LINE_COLORS = ['#4a9eff', '#be4bdb', '#20c997', '#fd7e14', '#e64980', '#15aabf', '#94d82d', '#868e96'];
+
+  // batterySourceKey identifies a source: the node itself, or one observer.
+  function batterySourceKey(s) {
+    return s.source === 'neighbor' ? 'neighbor/' + s.observer_id : 'self';
+  }
+
+  // batterySourceLabel names a source for people: the observer's name (or a
+  // short key), or "Own status report".
+  function batterySourceLabel(s) {
+    if (s.source !== 'neighbor') return 'Own status report';
+    return s.observer_name || (s.observer_id || '').slice(0, 8);
+  }
+
+  // The shared key itself credited the reading (no poller claimed it): it is
+  // not a real observer, so it has no observer page and no known route.
+  function isSharedKeySource(s) {
+    return s && s.key_mode === 'shared' && s.observer_name === 'shared key';
+  }
+
+  function batteryRoute(s) {
+    if (s.source !== 'neighbor' || s.reply_hops == null || isSharedKeySource(s)) return '';
+    if (s.reply_hops === 0) return 'direct';
+    if (s.via) return 'via ' + (s.via_name || String(s.via).slice(0, 8));
+    return 'via ' + s.reply_hops + ' hop' + (s.reply_hops === 1 ? '' : 's');
+  }
+
+  function batteryObserverLink(s) {
+    if (isSharedKeySource(s)) return 'the shared key';
+    const label = escapeHtml(batterySourceLabel(s));
+    if (s.source !== 'neighbor' || !s.observer_id) return label;
+    return '<a href="#/observers/' + encodeURIComponent(s.observer_id.toUpperCase()) + '">' + label + '</a>';
+  }
+
+  // heardObserverLink names an observer that overheard a decoded shared-key
+  // reply (data.selected.heard_by) and links to its page.
+  function heardObserverLink(h) {
+    const label = escapeHtml(h.observer_name || String(h.observer_id || '').slice(0, 8));
+    if (!h.observer_id) return label;
+    return '<a href="#/observers/' + encodeURIComponent(String(h.observer_id).toUpperCase()) + '">' + label + '</a>';
+  }
+
+  // How a source is introduced: a shared-key reading was requested by its
+  // poller (or taken via the key when unclaimed), an own-key reading reported.
+  function batteryLead(s) {
+    if (isSharedKeySource(s)) return 'Via';
+    return s.key_mode === 'shared' ? 'Requested by' : 'Reported by';
+  }
+
+  function formatSnr(v) {
+    return v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1) + ' dB';
+  }
+
+  function renderBatteryReportedBy(el, data) {
+    const sel = data && data.selected;
+    if (!el) return;
+    if (!sel) { el.style.display = 'none'; return; }
+    const parts = [batteryLead(sel) + ' <strong>' + batteryObserverLink(sel) + '</strong>'];
+    const route = batteryRoute(sel);
+    if (route) parts.push(route);
+    if (sel.median_snr != null) parts.push('SNR ' + formatSnr(sel.median_snr));
+    if (sel.latest_ts) parts.push(escapeHtml(timeAgo(sel.latest_ts)));
+    // Observers that overheard the shared-key reply — the stations the reply
+    // reached, as opposed to the poller credited with requesting it. The
+    // poller usually hears its own reply too; it is already named above, so
+    // leave it out of this list.
+    const selId = sel.observer_id ? String(sel.observer_id).toLowerCase() : '';
+    const heard = (sel.heard_by || []).filter(h => String(h.observer_id || '').toLowerCase() !== selId);
+    if (heard.length) parts.push('heard by ' + heard.map(heardObserverLink).join(', '));
+    const others = ((data && data.sources) || []).filter(s => batterySourceKey(s) !== batterySourceKey(sel));
+    if (others.length) {
+      parts.push('also reported by ' + others.map(batteryObserverLink).join(', '));
+    }
+    el.innerHTML = parts.join(' · ');
+    el.style.display = '';
+  }
+
+  function renderBatteryReadings(el, samples) {
+    if (!el) return;
+    if (!samples.length) { el.style.display = 'none'; return; }
+    const recent = samples.slice(-10).reverse();
+    const withTemp = recent.some(s => s.temperature_c != null);
+    const rows = recent.map(s => '<tr>'
+      + '<td>' + escapeHtml(new Date(s.timestamp).toLocaleString()) + '</td>'
+      + '<td>' + (s.battery_mv === 0 ? 'none fitted' : s.battery_mv + ' mV') + '</td>'
+      + (withTemp ? '<td>' + (s.temperature_c != null ? Number(s.temperature_c).toFixed(1) + ' °C' : '—') + '</td>' : '')
+      + '<td>' + batteryObserverLink(s) + '</td>'
+      + '<td>' + formatSnr(s.snr) + '</td>'
+      + '<td>' + escapeHtml(batteryRoute(s) || '—') + '</td>'
+      + '</tr>').join('');
+    el.innerHTML = '<table class="analytics-peer-table"><caption style="text-align:left;font-size:12px;color:var(--text-muted)">Recent readings</caption>'
+      + '<thead><tr><th scope="col">Time</th><th scope="col">Voltage</th>' + (withTemp ? '<th scope="col">Chip temp</th>' : '')
+      + '<th scope="col">Reported by</th><th scope="col">SNR</th><th scope="col">Route</th></tr></thead>'
+      + '<tbody>' + rows + '</tbody></table>';
+    el.style.display = '';
+  }
+
   async function loadBatteryChart(pubkey, days, isCurrent) {
     let data;
     try {
@@ -379,15 +485,18 @@
     const thr = (data && data.thresholds) || { low_mv: 3300, critical_mv: 3000 };
 
     if (badge) {
-      const STATUS_COLOR = { ok: '#51cf66', low: '#fcc419', critical: '#ff6b6b', unknown: 'var(--text-muted)' };
+      const STATUS_COLOR = { ok: '#51cf66', low: '#fcc419', critical: '#ff6b6b', no_battery: 'var(--text-muted)', unknown: 'var(--text-muted)' };
       const label = data && data.status === 'ok' ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-battery-high"/></svg> OK'
         : data && data.status === 'low' ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-warning"/></svg> Low'
         : data && data.status === 'critical' ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-battery-low"/></svg> Critical'
+        : data && data.status === 'no_battery' ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-prohibit"/></svg> No battery fitted'
         : 'No data';
-      const mv = data && data.latest_mv ? ' · ' + data.latest_mv + ' mV' : '';
-      badge.textContent = label + mv;
+      const mv = data && data.latest_mv ? ' · ' + Number(data.latest_mv) + ' mV' : '';
+      badge.innerHTML = label + mv;
       badge.style.color = STATUS_COLOR[(data && data.status) || 'unknown'];
     }
+    renderBatteryReportedBy(document.getElementById('batteryReportedBy'), data);
+    renderBatteryReadings(document.getElementById('batteryReadings'), samples);
 
     if (!ctx || samples.length === 0) {
       if (ctx) ctx.style.display = 'none';
@@ -397,29 +506,60 @@
     if (empty) empty.style.display = 'none';
     ctx.style.display = '';
 
-    const labels = samples.map(p => {
-      const d = new Date(p.timestamp);
+    // One battery line: the voltage is the repeater's own, the same whichever
+    // observer reported it, so it is drawn as a single series. Who reported or
+    // requested each reading is in the table below, not a colour per observer.
+    const batteryPoints = samples
+      .map(s => ({ x: new Date(s.timestamp).getTime(), y: s.battery_mv }))
+      .sort((a, b) => a.x - b.x);
+    const xs = samples.map(s => new Date(s.timestamp).getTime());
+    // A lone reading still needs a time span to sit in.
+    const pad = xs.length && Math.min.apply(null, xs) === Math.max.apply(null, xs) ? 3600e3 : 0;
+    const xMin = Math.min.apply(null, xs) - pad;
+    const xMax = Math.max.apply(null, xs) + pad;
+    const datasets = [{
+      label: 'Battery', data: batteryPoints,
+      borderColor: BATTERY_LINE_COLORS[0], backgroundColor: BATTERY_LINE_COLORS[0],
+      tension: 0.25, pointRadius: 3, fill: false,
+    }];
+    // Chip temperature, where observers read it, on its own right-hand axis.
+    const temps = samples.filter(s => s.temperature_c != null)
+      .map(s => ({ x: new Date(s.timestamp).getTime(), y: Number(s.temperature_c) }));
+    if (temps.length) {
+      datasets.push({ label: 'Chip temperature (°C)', data: temps, yAxisID: 'y1', borderColor: '#e8590c', backgroundColor: '#e8590c',
+        borderWidth: 1.5, tension: 0.25, pointRadius: 2, fill: false });
+    }
+    datasets.push({ label: 'Low threshold', data: [{ x: xMin, y: thr.low_mv }, { x: xMax, y: thr.low_mv }], borderColor: '#fcc419', borderDash: [6, 4], pointRadius: 0, fill: false });
+    datasets.push({ label: 'Critical', data: [{ x: xMin, y: thr.critical_mv }, { x: xMax, y: thr.critical_mv }], borderColor: '#ff6b6b', borderDash: [6, 4], pointRadius: 0, fill: false });
+
+    // Keep readings and both thresholds off the chart's edges.
+    const ys = samples.map(p => p.battery_mv).concat([thr.critical_mv, thr.low_mv]);
+    const yMin = Math.min.apply(null, ys) - 100;
+    const yMax = Math.max.apply(null, ys) + 100;
+
+    const tickLabel = v => {
+      const d = new Date(v);
       return (typeof formatChartAxisLabel === 'function')
         ? formatChartAxisLabel(d, days <= 3)
         : (days <= 3 ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                      : d.toLocaleDateString([], { month: 'short', day: 'numeric' }));
-    });
-    const values = samples.map(p => p.battery_mv);
+    };
 
     const c = new Chart(ctx, {
       type: 'line',
-      data: {
-        labels: labels,
-        datasets: [
-          { label: 'Battery (mV)', data: values, borderColor: '#4a9eff', backgroundColor: 'rgba(74,158,255,0.15)', tension: 0.25, pointRadius: 2, fill: true },
-          { label: 'Low threshold', data: values.map(() => thr.low_mv), borderColor: '#fcc419', borderDash: [6, 4], pointRadius: 0, fill: false },
-          { label: 'Critical', data: values.map(() => thr.critical_mv), borderColor: '#ff6b6b', borderDash: [6, 4], pointRadius: 0, fill: false }
-        ]
-      },
+      data: { datasets: datasets },
       options: {
         responsive: true,
-        plugins: { legend: { display: true, position: 'bottom' } },
-        scales: { x: { ticks: { maxTicksAutoSkip: true, maxRotation: 45 } }, y: { title: { display: true, text: 'mV' } } }
+        parsing: false,
+        plugins: {
+          legend: { display: true, position: 'bottom' },
+          tooltip: { callbacks: { title: items => items.length ? new Date(items[0].parsed.x).toLocaleString() : '' } }
+        },
+        scales: {
+          x: { type: 'linear', min: xMin, max: xMax, ticks: { callback: tickLabel, maxTicksLimit: 8, maxRotation: 45 } },
+          y: { title: { display: true, text: 'mV' }, suggestedMin: yMin, suggestedMax: yMax },
+          y1: { display: temps.length > 0, position: 'right', title: { display: true, text: '°C' }, grid: { drawOnChartArea: false } }
+        }
       }
     });
     charts.push(c);
@@ -438,6 +578,7 @@
   function destroy() {
     destroyCharts();
     NodeHopAnalytics.destroy();
+    if (window.NodeStatusCharts) NodeStatusCharts.destroy();
     currentPubkey = null;
   }
 

@@ -213,6 +213,10 @@ type Config struct {
 	// BatteryThresholds: voltage cutoffs for low/critical alerts (#663).
 	BatteryThresholds *BatteryThresholdsConfig `json:"batteryThresholds,omitempty"`
 
+	// NeighborBattery: the server reads hideAfterHours from the same block
+	// the ingestor reads enabled and minIntervalMinutes from.
+	NeighborBattery *NeighborBatteryServerConfig `json:"neighborBattery,omitempty"`
+
 	// DutyCycleWarnPct: rolling 1 h TX airtime share (percent) at which the
 	// RF Health view and observer list warn. 0/missing => 10 (EU g3, #661).
 	DutyCycleWarnPct float64 `json:"dutyCycleWarnPct,omitempty"`
