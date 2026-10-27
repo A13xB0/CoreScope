@@ -110,6 +110,7 @@ node tests/unit/test-issue-748-node-analytics-coverage.js
 node tests/unit/test-node-analytics-battery-observers.js
 node tests/unit/test-node-analytics-certain-timeline.js
 node tests/unit/test-node-battery-line.js
+node tests/unit/test-map-power.js
 node tests/unit/test-nodes-battery-column.js
 node tests/unit/test-node-status-charts.js
 node tests/unit/test-issue-661-observer-airtime.js

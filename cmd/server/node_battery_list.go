@@ -95,8 +95,56 @@ func (db *DB) GetLatestBatteries(pubkeys []string, since time.Time) map[string]l
 	return out
 }
 
+// GetLatestTemperatures returns the newest temperature per node key
+// (lowercase) that observers read from it (neighbor_battery) since the given
+// time. Same rules as GetLatestBatteries: a failed read yields nothing.
+func (db *DB) GetLatestTemperatures(pubkeys []string, since time.Time) map[string]latestTemp {
+	out := map[string]latestTemp{}
+	if !db.neighborBatteryPresent() {
+		return out
+	}
+	for start := 0; start < len(pubkeys); start += nodeListBatteryChunk {
+		end := start + nodeListBatteryChunk
+		if end > len(pubkeys) {
+			end = len(pubkeys)
+		}
+		chunk := pubkeys[start:end]
+		args := make([]interface{}, 0, len(chunk)+1)
+		for _, pk := range chunk {
+			args = append(args, strings.ToLower(pk))
+		}
+		args = append(args, since.UTC().Format(guestKeyTimeLayout))
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		rows, err := db.conn.Query(`
+			SELECT node_id, MAX(sampled_at), temperature_c FROM neighbor_battery
+			WHERE node_id IN (`+marks+`) AND sampled_at >= ? AND temperature_c IS NOT NULL
+			GROUP BY node_id`, args...)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var id, ts string
+			var c float64
+			if rows.Scan(&id, &ts, &c) != nil {
+				continue
+			}
+			if at, err := time.Parse(time.RFC3339, ts); err == nil {
+				out[strings.ToLower(id)] = latestTemp{c: c, at: at}
+			}
+		}
+		rows.Close()
+	}
+	return out
+}
+
+type latestTemp struct {
+	c  float64
+	at time.Time
+}
+
 // enrichNodesBattery sets node["battery"] on the repeater/room rows that have
-// a reading; rows without one are left without the field.
+// a reading, and node["temperature"] on those with a temperature reading;
+// rows without one are left without the field.
 func (s *Server) enrichNodesBattery(nodes []map[string]interface{}) {
 	if s.db == nil || !s.cfg.NeighborBatteryEnabled() {
 		return
@@ -114,18 +162,26 @@ func (s *Server) enrichNodesBattery(nodes []map[string]interface{}) {
 	}
 	now := time.Now().UTC()
 	latest := s.db.GetLatestBatteries(keys, now.Add(-nodeListBatteryWindow))
-	if len(latest) == 0 {
+	temps := s.db.GetLatestTemperatures(keys, now.Add(-nodeListBatteryWindow))
+	if len(latest) == 0 && len(temps) == 0 {
 		return
 	}
 	low, crit := s.cfg.LowBatteryMv(), s.cfg.CriticalBatteryMv()
 	hideAfter := s.cfg.NeighborBatteryHideAfterHours()
 	for _, n := range nodes {
-		pk, _ := n["public_key"].(string)
-		b, ok := latest[strings.ToLower(pk)]
-		if !ok {
+		if role, _ := n["role"].(string); role != "repeater" && role != "room" {
 			continue
 		}
-		if role, _ := n["role"].(string); role != "repeater" && role != "room" {
+		pk, _ := n["public_key"].(string)
+		// The map's Battery & temperature layer shows it (map-power.js).
+		if tc, ok := temps[strings.ToLower(pk)]; ok {
+			n["temperature"] = map[string]interface{}{
+				"c":  tc.c,
+				"ts": tc.at.UTC().Format(guestKeyTimeLayout),
+			}
+		}
+		b, ok := latest[strings.ToLower(pk)]
+		if !ok {
 			continue
 		}
 		ts := b.at.UTC().Format(guestKeyTimeLayout)

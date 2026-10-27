@@ -202,7 +202,8 @@
   // non-forwarding roles is active. The observer layer stands down while it
   // is (see observerLayerShown).
   function nodeFiltersNarrowed(f) {
-    return (!!f.scopeState && f.scopeState !== 'all') || !!f.regionScope;
+    return (!!f.scopeState && f.scopeState !== 'all') || !!f.regionScope ||
+      !!(window.MapPower && window.MapPower.narrows());
   }
 
   // observerLayerShown decides whether _renderMarkersInner draws the plain
@@ -249,6 +250,8 @@
     // applies to every role, so non-forwarding nodes drop out while a region
     // is picked.
     if (!regionFilterAccepts(n, f.regionScope)) return false;
+    // Battery & temperature "Only" filters (map-power.js).
+    if (window.MapPower && !window.MapPower.accepts(n)) return false;
     // Status filter
     if (f.statusFilter !== 'all') {
       const status = getNodeStatus(n); // #1598: relay-aware for infra
@@ -525,6 +528,7 @@
             <label id="mcGeoFilterLabel" for="mcGeoFilter" style="display:none"><input type="checkbox" id="mcGeoFilter"> Mesh live area</label>
           </fieldset>
           <div id="mapAreaFilter"></div>
+          ${window.MapPower ? window.MapPower.sectionHtml() : ''}
           <fieldset class="mc-section">
             <legend class="mc-label">Status</legend>
             <div class="filter-group" id="mcStatusFilter">
@@ -910,6 +914,8 @@
       estimatedEl.addEventListener('change', e => { filters.estimated = e.target.checked; localStorage.setItem('meshcore-map-estimated', e.target.checked); renderEstimated(); });
     }
     document.getElementById('mcLastHeard').addEventListener('change', e => { filters.lastHeard = e.target.value; loadNodes(); });
+    // Battery & temperature layer (map-power.js).
+    if (window.MapPower) window.MapPower.bind(controlsPanel, function () { renderMarkers(); });
 
     AreaFilter.init(document.getElementById('mapAreaFilter'));
     AreaFilter.onChange(function () { loadNodes(); });
@@ -1995,8 +2001,8 @@
 
     for (var i = 0; i < markers.length; i++) {
       var m = markers[i];
-      var w = m.isLabel ? 38 : 20;
-      var h = m.isLabel ? 24 : 20;
+      var w = m.w || (m.isLabel ? 38 : 20);
+      var h = m.h || (m.isLabel ? 24 : 20);
       var pt = mapRef.latLngToLayerPoint(m.latLng);
       var bestPt = pt;
       var box = { x: pt.x - w / 2, y: pt.y - h / 2, w: w, h: h };
@@ -2134,7 +2140,9 @@
       // scope overlay stands down rather than the two fighting over the fill.
       var scopeState = (scopeTintEnabled(filters.scopeOverlay, filters.scopeState) && !mbColor) ? (node.scope_config_state || null) : null;
       var scopeColor = scopeState ? scopeTint(node) : null;
-      const icon = useLabel ? makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus, scopeState) : makeMarkerIcon(node.role || 'companion', isStale, isAlsoObserver, mbColor || scopeColor);
+      // Battery & temperature tag (map-power.js) in place of the usual marker.
+      const power = window.MapPower ? window.MapPower.icon(node, isStale, L) : null;
+      const icon = power ? power.icon : useLabel ? makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus, scopeState) : makeMarkerIcon(node.role || 'companion', isStale, isAlsoObserver, mbColor || scopeColor);
       const latLng = L.latLng(node.lat, node.lon);
       // The scope state has to leave the fill and reach the DOM, or a dot marker
       // is colour and nothing else — which on the achromat preset is six greys
@@ -2146,7 +2154,7 @@
       var scopeLabel = scopeState ? scopeStateLabel(scopeState) : '';
       var markerAlt = (node.name || 'Unknown') + ' (' + (node.role || 'node') + (isAlsoObserver ? ' + observer' : '') + ')' +
         (scopeLabel ? ', scope config ' + scopeLabel : '');
-      allMarkers.push({ latLng, node, icon, isLabel: useLabel, popupFn: function() { return buildPopup(node); }, alt: markerAlt, title: scopeLabel ? markerAlt : '' });
+      allMarkers.push({ latLng, node, icon, isLabel: useLabel || !!power, w: power ? power.w : 0, h: power ? power.h : 0, popupFn: function() { return buildPopup(node); }, alt: markerAlt, title: scopeLabel ? markerAlt : '' });
     }
 
     // Add observer markers (skip observers already represented as a node marker)
@@ -2330,6 +2338,7 @@
           ${mbRow}
           ${scopeRow}
           ${regionsPopupRowsHtml(node)}
+          ${window.MapPower ? window.MapPower.popupRows(node) : ''}
           <dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Key</dt>
           <dd style="font-family:var(--mono);font-size:11px;margin-left:88px;padding:2px 0;">${safeEsc(key)}</dd>
           <dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Location</dt>

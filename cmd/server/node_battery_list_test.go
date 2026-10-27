@@ -105,3 +105,29 @@ func TestNodesListBattery(t *testing.T) {
 		}
 	}
 }
+
+// Repeater rows carry the newest temperature an observer read, beside the
+// battery; non-repeaters never do.
+func TestNodesListTemperature(t *testing.T) {
+	db := setupTestDB(t)
+	now := seedNeighborNode(t, db)
+	if _, err := db.conn.Exec(`ALTER TABLE neighbor_battery ADD COLUMN temperature_c REAL`); err != nil {
+		t.Fatal(err)
+	}
+	insertNeighborBattery(t, db, nbObsA, now.Add(-3*time.Hour), 3900, 5, 0)
+	insertNeighborBattery(t, db, nbObsA, now.Add(-2*time.Hour), 3910, 5, 0)
+	insertNeighborBattery(t, db, nbObsB, now.Add(-1*time.Hour), 3920, 5, 0)
+	ts := func(d time.Duration) string { return now.Add(d).UTC().Format("2006-01-02T15:04:05Z") }
+	db.conn.Exec(`UPDATE neighbor_battery SET temperature_c = 6.2 WHERE sampled_at = ?`, ts(-3*time.Hour))
+	db.conn.Exec(`UPDATE neighbor_battery SET temperature_c = 8.5 WHERE sampled_at = ?`, ts(-2*time.Hour))
+
+	on := &Config{Port: 3000, NeighborBattery: &NeighborBatteryServerConfig{Enabled: true}}
+	got := listNodes(t, nodesListRouter(t, db, on))
+	tc, ok := got[nbNode]["temperature"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("no temperature in %v", got[nbNode])
+	}
+	if tc["c"] != 8.5 || tc["ts"] != ts(-2*time.Hour) {
+		t.Errorf("temperature = %v, want the newest reading that had one (8.5 at -2h)", tc)
+	}
+}
