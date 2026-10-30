@@ -288,6 +288,11 @@
     if (field === 'observer_id') return packet.observer_id || '';
     if (field === 'observer_iata' || field === 'iata') return packet.observer_iata || '';
     if (field === 'observations') return packet.observation_count || 0;
+    // Damaged copies (server damage.go): a copy of another packet with a few
+    // bits changed in flight, so it floods again but cannot be decrypted.
+    if (field === 'damaged') return !!packet.damage;
+    if (field === 'damage') return packet.damage ? packet.damage.kind : '';
+    if (field === 'damaged_of') return packet.damage ? packet.damage.of : '';
     if (field === 'time' || field === 'timestamp') {
       // Returns ms-since-epoch or null. Falls back to first_seen when timestamp absent
       // (group rows from /api/packets?groupByHash=true expose first_seen instead).
@@ -475,6 +480,24 @@
     };
   }
 
+  // requires reports whether every packet the expression matches must have
+  // the boolean field set ("damaged", "damaged && hops > 10"), so the caller
+  // can ask the server for just those packets.
+  function requires(expression, field) {
+    var result = parse(expression || '');
+    if (result.error || !result.ast) return false;
+    function walk(n) {
+      if (!n) return false;
+      if (n.type === 'truthy') return n.field === field;
+      if (n.type === 'and') return walk(n.left) || walk(n.right);
+      if (n.type === 'comparison' && n.field === field && n.op === '==') {
+        return String(n.value).toLowerCase() === 'true';
+      }
+      return false;
+    }
+    return walk(result.ast);
+  }
+
   // ── Metadata for autocomplete + in-UI documentation (#966) ────────────────
   var FIELDS = [
     { name: 'type',          desc: 'Packet payload type (ADVERT, GRP_TXT, TXT_MSG, ACK, …)' },
@@ -492,6 +515,9 @@
     { name: 'observer_iata', desc: 'Observer IATA region code (e.g. SJC, SFO)' },
     { name: 'iata',          desc: 'Alias of observer_iata' },
     { name: 'observations',  desc: 'Number of observations of this packet' },
+    { name: 'damaged',       desc: 'true if this is a damaged copy of another packet (bits changed in flight; floods again, cannot be decrypted)' },
+    { name: 'damage',        desc: 'Kind of damage: tail (last two bytes), body, longer or shorter' },
+    { name: 'damaged_of',    desc: 'Hash of the packet a damaged copy was made from' },
     { name: 'path',          desc: 'Hop path as 1-byte prefixes joined (e.g. a3→7f). For pubkey search use routed_through.' },
     { name: 'path_prefixes', desc: 'Alias of path (1-byte hop prefixes joined with arrows)' },
     { name: 'routed_through', desc: 'Match packets routed through a node by pubkey (full or prefix)' },
@@ -616,7 +642,7 @@
   }
 
   var _exports = {
-    parse: parse, evaluate: evaluate, compile: compile,
+    parse: parse, evaluate: evaluate, compile: compile, requires: requires,
     FIELDS: FIELDS, OPERATORS: OPERATORS,
     TYPE_VALUES: TYPE_VALUES, ROUTE_VALUES: ROUTE_VALUES,
     suggest: suggest,
@@ -725,6 +751,6 @@
     assert(c.filter({ observer_iata: 'SJC' }), 'observer_iata contains');
 
     console.log('\nAll tests passed!');
-    module.exports = { parse: parse, evaluate: evaluate, compile: compile };
+    module.exports = { parse: parse, evaluate: evaluate, compile: compile, requires: requires, FIELDS: FIELDS };
   }
 })();

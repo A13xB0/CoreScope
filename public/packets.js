@@ -1672,12 +1672,26 @@
     if (filters.node) params.set('node', filters.node);
     if (filters.observer) params.set('observer', filters.observer);
     if (filters.channel) params.set('channel', filters.channel);
+    if (wantsDamagedOnly(filters)) params.set('damaged', 'true');
     if (groupByHash) {
       params.set('groupByHash', 'true');
     } else {
       params.set('expand', 'observations');
     }
     return params;
+  }
+
+  // A filter that only matches damaged copies is sent to the server, so the
+  // page fills with them rather than with the few in the latest packets.
+  function wantsDamagedOnly(f) {
+    return !!(f._filterExpr && window.PacketFilter && PacketFilter.requires && PacketFilter.requires(f._filterExpr, 'damaged'));
+  }
+
+  function damageBadge(p) {
+    var d = p && p.damage;
+    if (!d) return '';
+    var title = 'Damaged copy of ' + d.of + ': ' + d.kind + ', ' + d.bits + ' bit' + (d.bits === 1 ? '' : 's') + ' changed';
+    return ' <span class="badge badge-damaged" title="' + escapeHtml(title) + '">damaged</span>';
   }
 
   async function loadPackets() {
@@ -1915,6 +1929,11 @@
         clearTimeout(pfTimer);
         pfTimer = setTimeout(function() {
           var expr = pfInput.value.trim();
+          var wasDamaged = wantsDamagedOnly(filters);
+          var refresh = function () {
+            if (wantsDamagedOnly(filters) !== wasDamaged) loadPackets();
+            else renderTableRows();
+          };
           if (!expr) {
             pfInput.classList.remove('filter-error', 'filter-active');
             pfError.style.display = 'none';
@@ -1922,7 +1941,7 @@
             filters._packetFilter = null;
             filters._filterExpr = undefined;
             updatePacketsUrl();
-            renderTableRows();
+            refresh();
             return;
           }
           var compiled = PacketFilter.compile(expr);
@@ -1935,7 +1954,7 @@
             filters._packetFilter = null;
             filters._filterExpr = undefined;
             updatePacketsUrl();
-            renderTableRows();
+            refresh();
           } else {
             pfInput.classList.remove('filter-error');
             pfInput.classList.add('filter-active');
@@ -1943,7 +1962,7 @@
             filters._packetFilter = compiled.filter;
             filters._filterExpr = expr;
             updatePacketsUrl();
-            renderTableRows();
+            refresh();
           }
         }, 300);
       });
@@ -2609,7 +2628,7 @@
           <td class="mono col-hash" data-filter-field="hash" data-filter-value="${escapeHtml(p.hash || '')}">${truncate(p.hash || '—', 8)}</td>
           <td class="col-size" data-filter-field="size" data-filter-value="${groupSize || ''}">${groupSize ? groupSize + 'B' : '—'}</td>
           <td class="col-hashsize mono"${_grpHashSizeTitle}>${groupHashBytes}</td>
-          <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(groupTypeName || '')}">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>${transportBadge(p.route_type)}` : '—'}</td>
+          <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(groupTypeName || '')}">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>${transportBadge(p.route_type)}${damageBadge(p)}` : '—'}</td>
           <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(p.scope_name || '')}">${scopeCellHtml(p.scope_name)}</td>
           <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(headerObserverId) || '')}">${isSingle ? obsCellName(headerObserverId, 16) + obsIataBadge(p) : obsCellName(headerObserverId, 10) + groupedObserverIataBadgesHtml(p)}</td>
           <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
@@ -2681,7 +2700,7 @@
         <td class="mono col-hash" data-filter-field="hash" data-filter-value="${escapeHtml(p.hash || '')}">${truncate(p.hash || String(p.id), 8)}</td>
         <td class="col-size" data-filter-field="size" data-filter-value="${size || ''}">${size}B</td>
         <td class="col-hashsize mono"${_flatHashSizeTitle}>${hashBytes}</td>
-        <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(typeName || '')}"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(p.route_type)}</td>
+        <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(typeName || '')}"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(p.route_type)}${damageBadge(p)}</td>
         <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(p.scope_name || '')}">${scopeCellHtml(p.scope_name)}</td>
         <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(p.observer_id) || '')}">${obsCellName(p.observer_id, 16)}${obsIataBadge(p)}</td>
         <td class="col-path"><span class="path-hops">${pathStr}</span></td>
@@ -3829,6 +3848,7 @@
         <dt>SNR / RSSI</dt><dd>${snr != null ? snr + ' dB' : '—'} / ${rssi != null ? rssi + ' dBm' : '—'}</dd>
         <dt>Route Type</dt><dd>${routeTypeName(pkt.route_type)}</dd>
         ${pkt.scope_name != null ? `<dt>Scope</dt><dd>${pkt.scope_name !== '' ? escapeHtml(pkt.scope_name) : '<span style="color:var(--text-muted)">unknown scope</span>'}</dd>` : ''}
+        ${pkt.damage ? `<dt>Damaged</dt><dd>copy of <a href="#/packets/${encodeURIComponent(pkt.damage.of)}" class="mono">${escapeHtml(String(pkt.damage.of).slice(0, 16))}</a> · ${escapeHtml(pkt.damage.kind)} · ${pkt.damage.bits} bit${pkt.damage.bits === 1 ? '' : 's'} changed${pkt.damage.offsets && pkt.damage.offsets.length ? ' (payload byte ' + pkt.damage.offsets.join(', ') + ')' : ''}</dd>` : ''}
         ${hashSize ? `<dt>Hash Size</dt><dd>${hashSize} byte${hashSize !== 1 ? 's' : ''}</dd>` : ''}
         <dt>Propagation</dt><dd>${propagationHtml}</dd>
         ${transportCodesRow}
