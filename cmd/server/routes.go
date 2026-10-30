@@ -1181,6 +1181,7 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 		Node:               r.URL.Query().Get("node"),
 		Channel:            r.URL.Query().Get("channel"),
 		Area:               r.URL.Query().Get("area"),
+		Damaged:            r.URL.Query().Get("damaged") == "true" || r.URL.Query().Get("damaged") == "1",
 		Order:              "DESC",
 		ExpandObservations: r.URL.Query().Get("expand") == "observations",
 	}
