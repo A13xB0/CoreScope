@@ -125,6 +125,7 @@ func routeDescriptions() map[string]routeMeta {
 				{Name: "timeRange", Description: "Time range filter (e.g. 1h, 24h, 7d)", Type: "string"},
 				{Name: "search", Description: "Full-text search", Type: "string"},
 				{Name: "groupByHash", Description: "Group duplicate packets by hash", Type: "boolean"},
+				{Name: "damaged", Description: "Only damaged copies: encrypted packets within 24 bits of one of the same type and length heard in the 3 minutes before. Each carries damage {of, kind, bits, offsets}. In-memory window only", Type: "boolean"},
 			}},
 		"GET /api/packets/{id}":          {Summary: "Get packet detail", Tag: "packets"},
 		"GET /api/packets/timestamps":    {Summary: "Get packet timestamp ranges", Tag: "packets"},

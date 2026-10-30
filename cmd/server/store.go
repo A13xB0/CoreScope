@@ -47,7 +47,10 @@ type StoreTx struct {
 	// has no such column (db.hasScopeName=false); a pointer to "" means
 	// transport-scoped with an unmatched region. Used to surface the set of region
 	// scopes a repeater has transported (#1751) and the packet-detail Scope row.
-	ScopeName        *string
+	ScopeName *string
+	// Damage is set when this is a damaged copy of another transmission
+	// (damage.go). Written under s.mu.
+	Damage           *Damage
 	Observations     []*StoreObs
 	ObservationCount int
 	// Display fields from longest-path observation
@@ -260,6 +263,7 @@ type PacketStore struct {
 	certainHeard  map[string]string           // pubkey → newest FirstSeen certainly from that node (certain_heard.go)
 	byPathHop     map[string][]*StoreTx       // lowercase hop/pubkey → transmissions with that hop in path
 	byPayloadType map[int][]*StoreTx          // payload_type → transmissions
+	damage        *damageIndex                // encrypted payloads, for damaged-copy detection
 	loaded        bool
 	totalObs      int
 	insertCount   int64
@@ -798,6 +802,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		byPathHop:     make(map[string][]*StoreTx),
 		nodeHashes:    newNodeSets(),
 		byPayloadType: make(map[int][]*StoreTx),
+		damage:        newDamageIndex(),
 		rfCache:       make(map[string]*cachedResult),
 		topoCache:     make(map[string]*cachedResult),
 		hashCache:     make(map[string]*cachedResult),
@@ -1056,6 +1061,7 @@ func (s *PacketStore) Load() error {
 			s.byHash[hashStr] = tx
 			s.packets = append(s.packets, tx)
 			s.byTxID[txID] = tx
+			s.damageIdx().add(tx)
 			if txID > s.maxTxID {
 				s.maxTxID = txID
 			}
@@ -1576,6 +1582,7 @@ func (s *PacketStore) loadChunk(from, to time.Time) error {
 		}
 		for _, tx := range batch {
 			s.indexByNode(tx)
+			s.damageIdx().add(tx)
 			if tx.PayloadType != nil {
 				pt := *tx.PayloadType
 				s.byPayloadType[pt] = append(s.byPayloadType[pt], tx)
@@ -2191,6 +2198,9 @@ func (s *PacketStore) QueryGroupedPackets(q PacketQuery) *PacketResult {
 
 	// Cache key covers all filter dimensions. Empty key = no filters.
 	cacheKey := q.Since + "|" + q.Until + "|" + q.Region + "|" + q.Area + "|" + q.Node + "|" + q.Hash + "|" + q.Observer + "|" + q.Channel
+	if q.Damaged {
+		cacheKey += "|damaged"
+	}
 	if q.Type != nil {
 		cacheKey += fmt.Sprintf("|t%d", *q.Type)
 	}
@@ -2267,6 +2277,7 @@ type groupedRow struct {
 	payloadType, routeType                 *int
 	snr, rssi                              *float64
 	scopeName                              *string
+	damage                                 *Damage
 	observations                           []*StoreObs // slice header only, see snapshotGroupedRow
 }
 
@@ -2313,6 +2324,7 @@ func snapshotGroupedRow(tx *StoreTx) groupedRow {
 		snr:              tx.SNR,
 		rssi:             tx.RSSI,
 		scopeName:        tx.ScopeName,
+		damage:           tx.Damage,
 		observations:     tx.Observations,
 	}
 }
@@ -2346,6 +2358,9 @@ func groupedRowsToPage(rows []groupedRow, total int) *PacketResult {
 			"snr":               floatPtrOrNil(r.snr),
 			"rssi":              floatPtrOrNil(r.rssi),
 			"scope_name":        strPtrOrNil(r.scopeName),
+		}
+		if r.damage != nil {
+			m["damage"] = r.damage.toMap()
 		}
 		// resolved_path omitted for grouped view (cold path, not worth SQL round-trip)
 		packets[i] = m
@@ -3176,6 +3191,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			s.byHash[r.hash] = tx
 			s.packets = append(s.packets, tx) // oldest-first; new items go to tail
 			s.byTxID[r.txID] = tx
+			s.damageIdx().add(tx)
 			if r.txID > s.maxTxID {
 				s.maxTxID = r.txID
 			}
@@ -3746,7 +3762,7 @@ func (s *PacketStore) resolvePacketFilterSets(q PacketQuery) packetFilterSets {
 // f holds q's filters resolved by resolvePacketFilterSets. Caller holds s.mu.
 func (s *PacketStore) filterPackets(q PacketQuery, f packetFilterSets) []*StoreTx {
 	// Fast path: single-key index lookups
-	if q.Hash != "" && q.Type == nil && q.Route == nil && q.Observer == "" &&
+	if q.Hash != "" && q.Type == nil && q.Route == nil && q.Observer == "" && !q.Damaged &&
 		q.Region == "" && q.Area == "" && q.Node == "" && q.Channel == "" && q.Since == "" && q.Until == "" {
 		h := strings.ToLower(q.Hash)
 		tx := s.byHash[h]
@@ -3755,7 +3771,7 @@ func (s *PacketStore) filterPackets(q PacketQuery, f packetFilterSets) []*StoreT
 		}
 		return []*StoreTx{tx}
 	}
-	if q.Observer != "" && q.Type == nil && q.Route == nil &&
+	if q.Observer != "" && q.Type == nil && q.Route == nil && !q.Damaged &&
 		q.Region == "" && q.Area == "" && q.Node == "" && q.Channel == "" && q.Hash == "" && q.Since == "" && q.Until == "" {
 		return s.transmissionsForObserver(q.Observer, nil)
 	}
@@ -3813,7 +3829,7 @@ func (s *PacketStore) filterPackets(q PacketQuery, f packetFilterSets) []*StoreT
 	// Determine the source slice. Use index-based source when only node
 	// filter is active and an index exists.
 	source := s.packets
-	if hasNode && !hasType && !hasRoute && q.Observer == "" &&
+	if hasNode && !hasType && !hasRoute && q.Observer == "" && !q.Damaged &&
 		filterHash == "" && !hasSince && !hasUntil && q.Region == "" && q.Area == "" && filterChannel == "" {
 		if indexed, ok := s.byNode[f.nodePK]; ok {
 			return indexed
@@ -3826,6 +3842,9 @@ func (s *PacketStore) filterPackets(q PacketQuery, f packetFilterSets) []*StoreT
 			return false
 		}
 		if hasType && (tx.PayloadType == nil || *tx.PayloadType != filterType) {
+			return false
+		}
+		if q.Damaged && tx.Damage == nil {
 			return false
 		}
 		if hasRoute && (tx.RouteType == nil || *tx.RouteType != filterRoute) {
@@ -4290,6 +4309,9 @@ func enrichObsFields(obs *StoreObs, tx *StoreTx) map[string]interface{} {
 		m["payload_type"] = intPtrOrNil(tx.PayloadType)
 		m["route_type"] = intPtrOrNil(tx.RouteType)
 		m["decoded_json"] = strOrNil(tx.DecodedJSON)
+		if tx.Damage != nil {
+			m["damage"] = tx.Damage.toMap()
+		}
 	}
 
 	return m
@@ -4317,6 +4339,9 @@ func txToMap(tx *StoreTx, includeObservations ...bool) map[string]interface{} {
 		"path_json":         strOrNil(tx.PathJSON),
 		"direction":         strOrNil(tx.Direction),
 		"scope_name":        strPtrOrNil(tx.ScopeName),
+	}
+	if tx.Damage != nil {
+		m["damage"] = tx.Damage.toMap()
 	}
 	// Include parsed path array to match Node.js output shape
 	if hops := txGetParsedPath(tx); len(hops) > 0 {
@@ -5341,6 +5366,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 		// Its record of indexed resolved keys goes with it (#2108), so the
 		// record stays bounded by the live transmissions.
 		delete(s.pathHopResolved, tx)
+		s.damage.remove(tx)
 		evictedTxIDs[tx.ID] = struct{}{}
 		evictedBytes += tx.accountedBytes
 

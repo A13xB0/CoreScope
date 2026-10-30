@@ -1487,6 +1487,13 @@ body.scroll-locked { overflow: hidden; }
   background: var(--transport-badge-bg, #f59e0b20); color: var(--transport-badge-fg, #d97706);
   letter-spacing: .5px; vertical-align: middle;
 }
+/* A damaged copy of another packet (server damage.go). */
+.badge-damaged {
+  display: inline-block; padding: 1px 5px; border-radius: 4px; margin-left: 4px;
+  font-size: 9px; font-weight: 700; font-family: var(--mono);
+  background: color-mix(in srgb, var(--status-red, #dc2626) 14%, transparent); color: var(--status-red, #dc2626);
+  letter-spacing: .5px; vertical-align: middle;
+}
 .badge-obs {
   display: inline-block; padding: 1px 6px; border-radius: 10px;
   font-size: 10px; font-weight: 600;
