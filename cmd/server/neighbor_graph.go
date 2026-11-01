@@ -339,7 +339,7 @@ func BuildFromStoreWithOptions(store *PacketStore, opts BuildOptions) *NeighborG
 				// Zero-hop
 				if hasFullOriginator && fromLower != "" {
 					if fromLower != observerPK { // self-edge guard
-						g.upsertEdge(fromLower, observerPK, "", observerPK, obs.SNR, parseTimestamp(obs.Timestamp))
+						g.upsertEdge(fromLower, observerPK, "", observerPK, obs.SNRPtr(), parseTimestamp(obs.Timestamp))
 					}
 				}
 				continue
@@ -351,7 +351,7 @@ func BuildFromStoreWithOptions(store *PacketStore, opts BuildOptions) *NeighborG
 				if fromLower != firstHop { // self-edge guard (shouldn't happen but spec says check)
 					if packetpath.MeetsPathTrust(len(path[0])/2, opts.PathTrust) {
 						candidates := pm.m[firstHop]
-						g.upsertEdgeWithCandidates(fromLower, firstHop, candidates, observerPK, obs.SNR, parseTimestamp(obs.Timestamp), lowerCache)
+						g.upsertEdgeWithCandidates(fromLower, firstHop, candidates, observerPK, obs.SNRPtr(), parseTimestamp(obs.Timestamp), lowerCache)
 					}
 				}
 			}
@@ -361,7 +361,7 @@ func BuildFromStoreWithOptions(store *PacketStore, opts BuildOptions) *NeighborG
 			if observerPK != lastHop { // self-edge guard
 				if packetpath.MeetsPathTrust(len(path[len(path)-1])/2, opts.PathTrust) {
 					candidates := pm.m[lastHop]
-					g.upsertEdgeWithCandidates(observerPK, lastHop, candidates, observerPK, obs.SNR, parseTimestamp(obs.Timestamp), lowerCache)
+					g.upsertEdgeWithCandidates(observerPK, lastHop, candidates, observerPK, obs.SNRPtr(), parseTimestamp(obs.Timestamp), lowerCache)
 				}
 			}
 		}
@@ -384,6 +384,15 @@ func BuildFromStoreWithOptions(store *PacketStore, opts BuildOptions) *NeighborG
 // ADVERTs use "pubKey"; other packets may use "from_node" or "from".
 // Uses the cached ParsedDecoded() accessor to avoid repeated json.Unmarshal.
 func extractFromNode(tx *StoreTx) string {
+	// Most payloads carry none of the fields read below. Checking the JSON
+	// first keeps ParsedDecoded from decoding and caching each of those as
+	// a map for the packet's life in the store. The keys are matched with
+	// their quotes, so "from" and "from_node" each need their own check.
+	j := tx.DecodedJSON
+	if !strings.Contains(j, `"pubKey"`) && !strings.Contains(j, `"from_node"`) &&
+		!strings.Contains(j, `"from"`) && !strings.Contains(j, `"ephemeralPubKey"`) {
+		return ""
+	}
 	decoded := tx.ParsedDecoded()
 	if decoded == nil {
 		return ""

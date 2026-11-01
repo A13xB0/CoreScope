@@ -51,3 +51,28 @@ func TestBuildHopContextPubkeysOrderAndDedup(t *testing.T) {
 		}
 	}
 }
+
+// Most transmissions carry no "pubKey" (on a live week ~80% are text,
+// group and control packets). buildHopContextPubkeys only reads that key,
+// but going through ParsedDecoded decoded and cached the whole payload as a
+// map for every one of them, and the cache lives as long as the packet:
+// ~15 MB of maps on a 39k-transmission store that nothing else reads.
+func TestBuildHopContextPubkeysLeavesPayloadsWithoutPubKeyUndecoded(t *testing.T) {
+	_, pm := hopContextFixture()
+	tx := &StoreTx{
+		DecodedJSON: `{"type":"TXT_MSG","destHash":"a1","srcHash":"b2"}`,
+		ObserverID:  "DD55000000000000000000000000000000000000000000000000000000000005",
+		PathJSON:    `["AA11"]`,
+	}
+	got := buildHopContextPubkeys(tx, pm)
+	if tx.parsedDecoded != nil {
+		t.Errorf("payload without pubKey was decoded and cached: %v", tx.parsedDecoded)
+	}
+	want := []string{
+		"dd55000000000000000000000000000000000000000000000000000000000005",
+		"aa11000000000000000000000000000000000000000000000000000000000001",
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}

@@ -726,8 +726,8 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 		}
 		// Collect observer names from tx observations.
 		for _, obs := range tx.Observations {
-			if obs.ObserverID != "" && obs.ObserverName != "" {
-				obsNameMap[obs.ObserverID] = obs.ObserverName
+			if obs.ObserverID != "" && obs.ObserverName() != "" {
+				obsNameMap[obs.ObserverID] = obs.ObserverName()
 			}
 		}
 		evidenceHashes = append(evidenceHashes, hashMeta{hash: tx.Hash, ts: ev[0].observedTS})

@@ -106,6 +106,14 @@ func main() {
 	if err != nil {
 		log.Printf("[config] warning: %v (using defaults)", err)
 	}
+	// Areas from config.json and areasFile. A bad areas file stops startup:
+	// running with areas silently missing would put packets in the wrong
+	// place without anyone noticing.
+	if am, err := LoadAreaMap(cfg, configDir); err != nil {
+		log.Fatalf("[areas] %v", err)
+	} else if n := len(am.Areas("")); n > 0 {
+		log.Printf("[areas] %d areas in layers %v", n, am.Layers())
+	}
 
 	// CLI flags override config
 	if port > 0 {
@@ -368,6 +376,44 @@ func main() {
 	srv := NewServer(database, cfg, hub)
 	srv.configDir = configDir
 	srv.store = store
+	// The Data tab's index (off unless data.enabled). A tab switched on with
+	// nothing to place packets in stops startup rather than serving nothing.
+	if ds, err := newDataService(database, cfg); err != nil {
+		log.Fatalf("[data] %v", err)
+	} else if ds != nil {
+		dash, derr := LoadDataDashboards(cfg, configDir)
+		if derr != nil {
+			log.Fatalf("[data] %v", derr)
+		}
+		ds.dashboards = dash
+		log.Printf("[data] %d dashboards, opening on %q", len(dash.Dashboards), dash.Default)
+		srv.data = ds
+		if store != nil {
+			ds.waitFor = store.StartupLoadDone()
+		}
+		// The path watch's history fills after the Data tab's first fill
+		// (which itself waits for the packet store), never alongside it.
+		ds.firstFill = make(chan struct{})
+		srv.paths = newPathIndex(database, cfg.PathDays())
+		srv.paths.waitFor = []<-chan struct{}{ds.firstFill}
+		go srv.paths.run(context.Background())
+		go ds.run(context.Background())
+		if ds.places() {
+			log.Printf("[data] Data tab on: layer %q, %d days", ds.layer, ds.days)
+		} else {
+			log.Printf("[data] Data tab on without areas (no places): %d days", ds.days)
+		}
+	}
+	// Network Watch (the Health page): off unless netWatch.enabled. It reads
+	// its window from SQLite once the store has finished its own load.
+	if nw := newNetWatchService(database, cfg); nw != nil {
+		nw.waitFor = store.StartupLoadDone()
+		srv.netwatch = nw
+		nwCtx, stopNetWatch := context.WithCancel(context.Background())
+		defer stopNetWatch()
+		go nw.run(nwCtx)
+		log.Printf("[netwatch] enabled: %d-hour window, %d corridors, %d routes", nw.window, len(nw.cfg.Corridors), len(nw.cfg.Routes))
+	}
 	// Optional user management (off by default). Fails startup on a bad
 	// config rather than running with registration that cannot work.
 	if err := srv.initUserManagement(resolvedDB); err != nil {

@@ -59,12 +59,10 @@ func TestNodeHealth_CanRelayCaseInsensitive_Issue1290(t *testing.T) {
 		ObservationCount: 1,
 		ObserverID:       obsIDMixed,
 		ObserverName:     "ListenerOnly",
-		Observations: []*StoreObs{{
-			ObserverID:   obsIDMixed,
-			ObserverName: "ListenerOnly",
-			PathJSON:     "[]",
-			SNR:          &snr,
-		}},
+		Observations: []*StoreObs{withSignal(withLabel(&StoreObs{
+			ObserverID: obsIDMixed,
+			PathJSON:   "[]",
+		}, "ListenerOnly", ""), &snr, nil)},
 	}
 	srv.store.mu.Lock()
 	if srv.store.byNode == nil {

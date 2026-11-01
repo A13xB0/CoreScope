@@ -88,19 +88,29 @@ type StoreObs struct {
 	ID             int
 	TransmissionID int
 	ObserverID     string
-	ObserverName   string
-	ObserverIATA   string
 	Direction      string
-	SNR            *float64
-	RSSI           *float64
-	Score          *int
 	PathJSON       string
 	Timestamp      string
+	// Signal values are held inline: as *float64 / *int each one was its
+	// own small heap object, three per observation. sigSet records which
+	// of them the row had (SQL NULL → unset). Read them through SNRPtr,
+	// RSSIPtr and scoreOrNil; set them with setSignal or setSignalFrom.
+	snr    float64
+	rssi   float64
+	score  int32
+	sigSet uint8
+
 	// Width in hex characters, only when PathJSON matches this observation's
-	// eligible flood frame. Replaces the unused RawHex field without growing
-	// the 160-byte allocation class. Zero includes missing legacy headers.
+	// eligible flood frame. Sits beside sigSet so the struct stays in the
+	// 112-byte size class. Zero includes missing legacy headers.
 	// Read/write under the owning store's mu after publication.
 	relayHopHexLen uint8
+
+	// label is the observer name/IATA pair's slot in the shared label
+	// table (see internObserverLabel). Read it through ObserverName and
+	// ObserverIATA; set it with setObserverLabel. The raw frame is not
+	// held per observation at all (#881, #1999).
+	label uint16
 
 	// #1481 P0-2: cached parsed timestamp. The legacy handlers parse
 	// Timestamp as RFC3339Nano/RFC3339/"2006-01-02 15:04:05" with a
@@ -110,6 +120,79 @@ type StoreObs struct {
 	// time.Time, sync.Once and bool took 40 and put each observation in
 	// the 192-byte size class instead of 160.
 	tsUnixNano atomic.Int64
+}
+
+const (
+	sigSNR uint8 = 1 << iota
+	sigRSSI
+	sigScore
+)
+
+// setObserverLabel records the observer name and IATA code the observation
+// was stored with.
+func (o *StoreObs) setObserverLabel(name, iata string) { o.label = internObserverLabel(name, iata) }
+
+// ObserverName is the observer's name as of this observation.
+func (o *StoreObs) ObserverName() string { return observerLabelAt(o.label).name }
+
+// ObserverIATA is the observer's IATA code as of this observation.
+func (o *StoreObs) ObserverIATA() string { return observerLabelAt(o.label).iata }
+
+// setSignal stores the observation's SNR, RSSI and score; a NULL column
+// leaves that value unset.
+func (o *StoreObs) setSignal(snr, rssi sql.NullFloat64, score sql.NullInt64) {
+	o.sigSet = 0
+	if snr.Valid {
+		o.snr, o.sigSet = snr.Float64, o.sigSet|sigSNR
+	}
+	if rssi.Valid {
+		o.rssi, o.sigSet = rssi.Float64, o.sigSet|sigRSSI
+	}
+	if score.Valid {
+		o.score, o.sigSet = int32(score.Int64), o.sigSet|sigScore
+	}
+}
+
+// setSignalFrom is setSignal for the ingest path, whose rows carry
+// pointers; nil leaves that value unset.
+func (o *StoreObs) setSignalFrom(snr, rssi *float64, score *int) {
+	o.sigSet = 0
+	if snr != nil {
+		o.snr, o.sigSet = *snr, o.sigSet|sigSNR
+	}
+	if rssi != nil {
+		o.rssi, o.sigSet = *rssi, o.sigSet|sigRSSI
+	}
+	if score != nil {
+		o.score, o.sigSet = int32(*score), o.sigSet|sigScore
+	}
+}
+
+// SNRPtr returns the SNR, or nil when the observation has none. The
+// pointer refers into the observation; callers read it and must not keep
+// it or write through it.
+func (o *StoreObs) SNRPtr() *float64 {
+	if o.sigSet&sigSNR == 0 {
+		return nil
+	}
+	return &o.snr
+}
+
+// RSSIPtr returns the RSSI, or nil when the observation has none. Same
+// contract as SNRPtr.
+func (o *StoreObs) RSSIPtr() *float64 {
+	if o.sigSet&sigRSSI == 0 {
+		return nil
+	}
+	return &o.rssi
+}
+
+// scoreOrNil returns the score for a JSON response, nil when unset.
+func (o *StoreObs) scoreOrNil() interface{} {
+	if o.sigSet&sigScore == 0 {
+		return nil
+	}
+	return int(o.score)
 }
 
 // ParsedTime returns the parsed Timestamp, caching the result.
@@ -926,7 +1009,7 @@ func (s *PacketStore) Load() error {
 	}
 	obsRawHexCol := ""
 	if s.db.hasObsRawHex {
-		obsRawHexCol = ", o.raw_hex"
+		obsRawHexCol = obsEvidenceFrameCol
 	}
 	// #1751: scope_name is on the transmission row; append as the last
 	// selected column so the observation fan-out doesn't affect its position.
@@ -1094,16 +1177,13 @@ func (s *PacketStore) Load() error {
 				ID:             oid,
 				TransmissionID: txID,
 				ObserverID:     internStr(obsIDStr),
-				ObserverName:   internStr(nullStrVal(observerName)),
-				ObserverIATA:   internStr(nullStrVal(observerIATA)),
 				Direction:      internStr(nullStrVal(direction)),
-				SNR:            nullFloatPtr(snr),
-				RSSI:           nullFloatPtr(rssi),
-				Score:          nullIntPtr(score),
 				PathJSON:       obsPJ,
 				Timestamp:      normalizeTimestamp(nullStrVal(obsTimestamp)),
 				relayHopHexLen: n,
 			}
+			obs.setObserverLabel(nullStrVal(observerName), nullStrVal(observerIATA))
+			obs.setSignal(snr, rssi, score)
 
 			// Decode-window: extract resolved pubkeys for index, don't store on struct.
 			rpStr := nullStrVal(resolvedPathStr)
@@ -1266,7 +1346,7 @@ func (s *PacketStore) loadChunk(from, to time.Time) error {
 	}
 	obsRawHexCol := ""
 	if s.db.hasObsRawHex {
-		obsRawHexCol = ", o.raw_hex"
+		obsRawHexCol = obsEvidenceFrameCol
 	}
 	// #1751: scope_name is on the transmission row; append as the last column.
 	scopeNameCol := ""
@@ -1422,16 +1502,13 @@ func (s *PacketStore) loadChunk(from, to time.Time) error {
 				ID:             oid,
 				TransmissionID: txID,
 				ObserverID:     internStr(obsIDStr),
-				ObserverName:   internStr(nullStrVal(observerName)),
-				ObserverIATA:   internStr(nullStrVal(observerIATA)),
 				Direction:      internStr(nullStrVal(direction)),
-				SNR:            nullFloatPtr(snr),
-				RSSI:           nullFloatPtr(rssi),
-				Score:          nullIntPtr(score),
 				PathJSON:       obsPJ,
 				Timestamp:      normalizeTimestamp(nullStrVal(obsTimestamp)),
 				relayHopHexLen: n,
 			}
+			obs.setObserverLabel(nullStrVal(observerName), nullStrVal(observerIATA))
+			obs.setSignal(snr, rssi, score)
 
 			tx.addObservation(obs)
 			if obs.Timestamp > tx.LatestSeen {
@@ -1716,12 +1793,28 @@ func (s *PacketStore) loadBackgroundChunks() {
 		totalChunks = 1
 	}
 
+	// Stop filling at the point eviction would trim back to (its low
+	// watermark): anything loaded past it is evicted again on the next
+	// pass, but the heap it grew to stays with the process as RSS.
+	var fillLimit int64
+	if s.maxMemoryMB > 0 {
+		fillLimit = int64(float64(int64(s.maxMemoryMB)*1048576) * 0.85)
+	}
+	capped := false
+
 	for {
 		s.mu.RLock()
 		oldest := s.oldestLoaded
+		tracked := s.trackedBytes
 		s.mu.RUnlock()
 
 		if oldest == "" {
+			break
+		}
+		if fillLimit > 0 && tracked >= fillLimit {
+			capped = true
+			log.Printf("[store] background loader: stopping at %s, store is at the maxMemoryMB=%d fill limit (%.1f MB tracked)",
+				oldest, s.maxMemoryMB, float64(tracked)/1048576)
 			break
 		}
 		chunkEnd, err := time.Parse(time.RFC3339, oldest)
@@ -1808,7 +1901,7 @@ func (s *PacketStore) loadBackgroundChunks() {
 	}
 	s.bgErrMu.Lock()
 	s.loadCoverageRatio = ratio
-	if totalInDB > 0 && ratio < 0.90 {
+	if totalInDB > 0 && ratio < 0.90 && !capped {
 		s.backgroundLoadFailed.Store(true)
 		s.backgroundLoadErr = fmt.Sprintf("loaded %.1f%% of %d rows (%d in memory)",
 			ratio*100, totalInDB, loadedCount)
@@ -1858,10 +1951,12 @@ func pickBestObservation(tx *StoreTx) {
 		}
 	}
 	tx.ObserverID = best.ObserverID
-	tx.ObserverName = best.ObserverName
-	tx.ObserverIATA = best.ObserverIATA
-	tx.SNR = best.SNR
-	tx.RSSI = best.RSSI
+	tx.ObserverName = best.ObserverName()
+	tx.ObserverIATA = best.ObserverIATA()
+	// These point into best, which tx.Observations already keeps alive for
+	// as long as tx is in the store.
+	tx.SNR = best.SNRPtr()
+	tx.RSSI = best.RSSIPtr()
 	tx.Direction = best.Direction
 	setTxPath(tx, best.PathJSON)
 }
@@ -2404,8 +2499,8 @@ func distinctObserverIatas(headerIATA string, observations []*StoreObs) []string
 		seen[headerIATA] = true
 	}
 	for _, o := range observations {
-		if o != nil && o.ObserverIATA != "" {
-			seen[o.ObserverIATA] = true
+		if o != nil && o.ObserverIATA() != "" {
+			seen[o.ObserverIATA()] = true
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -2836,7 +2931,8 @@ func (s *PacketStore) GetStoreMemoryBreakdown() *StoreMemoryBreakdown {
 			}
 			out.Observations++
 			obsPathJSON += int64(len(o.PathJSON) + strHdr)
-			obsStrings += int64(len(o.ObserverID)+len(o.ObserverName)+len(o.ObserverIATA)+len(o.Direction)+len(o.Timestamp)) + 5*strHdr
+			// Name and IATA are a shared label slot, not per-observation strings.
+			obsStrings += int64(len(o.ObserverID)+len(o.Direction)+len(o.Timestamp)) + 3*strHdr
 		}
 	}
 
@@ -3248,16 +3344,13 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				ID:             oid,
 				TransmissionID: r.txID,
 				ObserverID:     r.observerID, // interned while scanning, outside s.mu
-				ObserverName:   r.observerName,
-				ObserverIATA:   r.observerIATA,
 				Direction:      r.direction,
-				SNR:            r.snr,
-				RSSI:           r.rssi,
-				Score:          r.score,
 				PathJSON:       r.pathJSON,
 				Timestamp:      normalizeTimestamp(r.obsTS),
 				relayHopHexLen: r.relayHopHexLen,
 			}
+			obs.setObserverLabel(r.observerName, r.observerIATA)
+			obs.setSignalFrom(r.snr, r.rssi, r.score)
 
 			// Resolve path at ingest time using neighbor graph — decode-window discipline:
 			// decode once, feed consumers, never store on struct.
@@ -3369,9 +3462,9 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				"payload_type":      intPtrOrNil(tx.PayloadType),
 				"decoded_json":      strOrNil(tx.DecodedJSON),
 				"observer_id":       strOrNil(obs.ObserverID),
-				"observer_name":     strOrNil(obs.ObserverName),
-				"snr":               floatPtrOrNil(obs.SNR),
-				"rssi":              floatPtrOrNil(obs.RSSI),
+				"observer_name":     strOrNil(obs.ObserverName()),
+				"snr":               floatPtrOrNil(obs.SNRPtr()),
+				"rssi":              floatPtrOrNil(obs.RSSIPtr()),
 				"path_json":         strOrNil(obs.PathJSON),
 				"direction":         strOrNil(obs.Direction),
 				"observation_count": tx.ObservationCount,
@@ -3561,16 +3654,13 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			ID:             r.obsID,
 			TransmissionID: r.txID,
 			ObserverID:     r.observerID, // interned while scanning, outside s.mu
-			ObserverName:   r.observerName,
-			ObserverIATA:   r.observerIATA,
 			Direction:      r.direction,
-			SNR:            r.snr,
-			RSSI:           r.rssi,
-			Score:          r.score,
 			PathJSON:       r.pathJSON,
 			Timestamp:      normalizeTimestamp(r.timestamp),
 			relayHopHexLen: r.relayHopHexLen,
 		}
+		obs.setObserverLabel(r.observerName, r.observerIATA)
+		obs.setSignalFrom(r.snr, r.rssi, r.score)
 
 		// Resolve path at ingest time for late-arriving observations (review item #2).
 		// Decode-window discipline: decode, feed consumers, don't store on struct.
@@ -3635,9 +3725,9 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			"payload_type":      intPtrOrNil(tx.PayloadType),
 			"decoded_json":      strOrNil(tx.DecodedJSON),
 			"observer_id":       strOrNil(obs.ObserverID),
-			"observer_name":     strOrNil(obs.ObserverName),
-			"snr":               floatPtrOrNil(obs.SNR),
-			"rssi":              floatPtrOrNil(obs.RSSI),
+			"observer_name":     strOrNil(obs.ObserverName()),
+			"snr":               floatPtrOrNil(obs.SNRPtr()),
+			"rssi":              floatPtrOrNil(obs.RSSIPtr()),
 			"path_json":         strOrNil(obs.PathJSON),
 			"direction":         strOrNil(obs.Direction),
 			"observation_count": tx.ObservationCount,
@@ -3774,7 +3864,7 @@ func (s *PacketStore) resolvePacketFilterSets(q PacketQuery) packetFilterSets {
 			return f
 		}
 	}
-	if q.Area != "" {
+	if q.Area != "" && q.startedIn == nil {
 		f.areaNodes = s.resolveAreaNodes(q.Area)
 	}
 	return f
@@ -3917,10 +4007,14 @@ func (s *PacketStore) filterPackets(q PacketQuery, f packetFilterSets) []*StoreT
 				return false
 			}
 		}
+		if q.startedIn != nil && !q.startedIn(tx.Hash) {
+			return false
+		}
 		if areaNodes != nil {
 			// Only ADVERT packets carry the originator pubkey (public_key/pubKey).
 			// All other packet types (GRP_TXT, TXT_MSG, REQ, …) have encrypted
-			// senders so pk == "" and are excluded when an area filter is active.
+			// senders so pk == "" and are excluded when an area filter is active,
+			// unless the Data tab places them (startedIn above).
 			d := tx.ParsedDecoded()
 			pk, _ := d["public_key"].(string)
 			if pk == "" {
@@ -4114,12 +4208,18 @@ const areaNodeTTL = 30 * time.Second
 // queried inline, so callers resolve it before taking s.mu (#2219).
 // Uses its own RWMutex, not s.mu.
 func (s *PacketStore) resolveAreaNodes(areaKey string) map[string]bool {
-	if s.config == nil || s.config.Areas == nil {
+	if s.config == nil {
 		return nil
 	}
 	entry, ok := s.config.Areas[areaKey]
 	if !ok {
-		return nil
+		if !s.config.fileArea(areaKey) {
+			return nil
+		}
+		// An area from areasFile: matched by position against its GeoJSON
+		// geometry, through the same cache as config.json's areas.
+		m := s.config.areaMap
+		entry = AreaEntry{match: func(lat, lon float64) bool { return m.Contains(areaKey, lat, lon) }}
 	}
 
 	s.areaNodeMu.RLock()
@@ -4322,12 +4422,12 @@ func enrichObsFields(obs *StoreObs, tx *StoreTx) map[string]interface{} {
 		"id":            obs.ID,
 		"timestamp":     strOrNil(obs.Timestamp),
 		"observer_id":   strOrNil(obs.ObserverID),
-		"observer_name": strOrNil(obs.ObserverName),
-		"observer_iata": strOrNil(obs.ObserverIATA),
+		"observer_name": strOrNil(obs.ObserverName()),
+		"observer_iata": strOrNil(obs.ObserverIATA()),
 		"direction":     strOrNil(obs.Direction),
-		"snr":           floatPtrOrNil(obs.SNR),
-		"rssi":          floatPtrOrNil(obs.RSSI),
-		"score":         intPtrOrNil(obs.Score),
+		"snr":           floatPtrOrNil(obs.SNRPtr()),
+		"rssi":          floatPtrOrNil(obs.RSSIPtr()),
+		"score":         obs.scoreOrNil(),
 		"path_json":     strOrNil(obs.PathJSON),
 		"radio":         strOrNil(observationRadio(obs.ID, obs.ObserverID, obs.Timestamp)),
 	}
@@ -4389,10 +4489,10 @@ func txToMap(tx *StoreTx, includeObservations ...bool) map[string]interface{} {
 			om := map[string]interface{}{
 				"id":            o.ID,
 				"observer_id":   strOrNil(o.ObserverID),
-				"observer_name": strOrNil(o.ObserverName),
-				"observer_iata": strOrNil(o.ObserverIATA),
-				"snr":           floatPtrOrNil(o.SNR),
-				"rssi":          floatPtrOrNil(o.RSSI),
+				"observer_name": strOrNil(o.ObserverName()),
+				"observer_iata": strOrNil(o.ObserverIATA()),
+				"snr":           floatPtrOrNil(o.SNRPtr()),
+				"rssi":          floatPtrOrNil(o.RSSIPtr()),
 				"path_json":     strOrNil(o.PathJSON),
 				"timestamp":     strOrNil(o.Timestamp),
 				"direction":     strOrNil(o.Direction),
@@ -5177,8 +5277,8 @@ func estimateStoreTxBytesTypical(numObs int) int64 {
 // ResolvedPath membership index overhead is tracked separately.
 func estimateStoreObsBytes(obs *StoreObs) int64 {
 	base := int64(storeObsBaseBytes)
-	base += int64(len(obs.PathJSON) + len(obs.ObserverID) + len(obs.ObserverName) +
-		len(obs.ObserverIATA) + len(obs.Direction) + len(obs.Timestamp))
+	base += int64(len(obs.PathJSON) + len(obs.ObserverID) + len(obs.ObserverName()) +
+		len(obs.ObserverIATA()) + len(obs.Direction) + len(obs.Timestamp))
 	base += int64(numIndexesPerObs * indexEntryBytes)
 	// ResolvedPath field removed (#800) — no per-obs RP overhead
 	return base
@@ -5419,7 +5519,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 		// Remove from nodeHashes and collect affected node keys.
 		// Must mirror indexByNode: process decoded JSON fields AND resolved_path pubkeys.
 		evictedFromNode := make(map[string]bool)
-		if tx.DecodedJSON != "" {
+		if tx.DecodedJSON != "" && strings.Contains(tx.DecodedJSON, "ubKey") {
 			if decoded := tx.ParsedDecoded(); decoded != nil {
 				for _, field := range []string{"pubKey", "destPubKey", "srcPubKey"} {
 					if v, ok := decoded[field].(string); ok && v != "" {
@@ -5472,7 +5572,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 			delete(s.byPathHop, key)
 			delete(s.pathHopKeys, key)
 		} else {
-			s.byPathHop[key] = filtered
+			s.byPathHop[key] = shrinkFiltered(filtered)
 		}
 	}
 	s.invalidateRelayStatsCache()
@@ -5486,10 +5586,11 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 				filtered = append(filtered, o)
 			}
 		}
+		clear(obsList[len(filtered):])
 		if len(filtered) == 0 {
 			delete(s.byObserver, obsID)
 		} else {
-			s.byObserver[obsID] = filtered
+			s.byObserver[obsID] = shrinkFiltered(filtered)
 		}
 	}
 
@@ -5502,10 +5603,11 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 				filtered = append(filtered, t)
 			}
 		}
+		clear(ptList[len(filtered):])
 		if len(filtered) == 0 {
 			delete(s.byPayloadType, pt)
 		} else {
-			s.byPayloadType[pt] = filtered
+			s.byPayloadType[pt] = shrinkFiltered(filtered)
 		}
 	}
 
@@ -5518,12 +5620,13 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 				filtered = append(filtered, t)
 			}
 		}
+		clear(nodeList[len(filtered):])
 		if len(filtered) == 0 {
 			delete(s.byNode, nodeKey)
 			delete(s.certainHeard, nodeKey)
 			delete(s.certainRelayed, nodeKey)
 		} else {
-			s.byNode[nodeKey] = filtered
+			s.byNode[nodeKey] = shrinkFiltered(filtered)
 		}
 	}
 
@@ -5538,7 +5641,8 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 			newDistHops = append(newDistHops, s.distHops[i])
 		}
 	}
-	s.distHops = newDistHops
+	clear(s.distHops[len(newDistHops):])
+	s.distHops = shrinkFiltered(newDistHops)
 
 	newDistPaths := s.distPaths[:0]
 	for i := range s.distPaths {
@@ -5546,11 +5650,13 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 			newDistPaths = append(newDistPaths, s.distPaths[i])
 		}
 	}
-	s.distPaths = newDistPaths
+	clear(s.distPaths[len(newDistPaths):])
+	s.distPaths = shrinkFiltered(newDistPaths)
 
 	// Trim packets slice
 	n := copy(s.packets, s.packets[cutoffIdx:])
-	s.packets = s.packets[:n]
+	clear(s.packets[n:])
+	s.packets = shrinkFiltered(s.packets[:n])
 	s.totalObs -= evictedObs
 
 	evictCount := cutoffIdx
@@ -5575,6 +5681,21 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 	s.CheckResolvedPubkeyIndexSize()
 
 	return evictCount
+}
+
+// shrinkFiltered returns list, copied into a right-sized backing array
+// when filtering has left more than a third of its capacity unused.
+// Eviction filters indexes in place, and startup loads the whole retention
+// window before evicting down to maxMemoryMB, so without this every index
+// keeps the capacity of the largest window it ever held. Lists under 64
+// slots are left alone. After a shrink, appends grow the list by at most
+// 2x and a typical eviction pass removes ~15%, so lists don't flip
+// between shrinking and growing on every pass.
+func shrinkFiltered[T any](list []T) []T {
+	if c := cap(list); c >= 64 && c > len(list)+len(list)/2 {
+		return slices.Clone(list)
+	}
+	return list
 }
 
 // RunEviction acquires the write lock and runs eviction. Safe to call from
@@ -5652,10 +5773,14 @@ func buildHopContextPubkeys(tx *StoreTx, pm *prefixMap) []string {
 	// Sender / originator pubkey from decoded payload. Use the cached
 	// ParsedDecoded() (sync.Once-gated) instead of re-unmarshaling — the
 	// helper is hot (3 distance sites + analytics topology, all 30k+ tx
-	// loops). See #1197 (carmack/adversarial r1).
-	if dec := tx.ParsedDecoded(); dec != nil {
-		if pk, ok := dec["pubKey"].(string); ok {
-			add(pk)
+	// loops). See #1197 (carmack/adversarial r1). Most payloads carry no
+	// pubKey at all; checking the JSON first keeps ParsedDecoded from
+	// decoding and caching each of those as a map for the packet's life.
+	if strings.Contains(tx.DecodedJSON, `"pubKey"`) {
+		if dec := tx.ParsedDecoded(); dec != nil {
+			if pk, ok := dec["pubKey"].(string); ok {
+				add(pk)
+			}
 		}
 	}
 
@@ -6787,8 +6912,10 @@ func (s *PacketStore) computeAnalyticsRF(region, area string, window TimeWindow)
 				}
 
 				// SNR/RSSI
-				if obs.SNR != nil {
-					snrVals = append(snrVals, *obs.SNR)
+				snrp, rssip := obs.SNRPtr(), obs.RSSIPtr()
+				if snrp != nil {
+					snr := *snrp
+					snrVals = append(snrVals, snr)
 					typeName := "UNK"
 					if tx != nil && tx.PayloadType != nil {
 						if n, ok := ptNames[*tx.PayloadType]; ok {
@@ -6800,10 +6927,10 @@ func (s *PacketStore) computeAnalyticsRF(region, area string, window TimeWindow)
 					if snrByType[typeName] == nil {
 						snrByType[typeName] = &struct{ vals []float64 }{}
 					}
-					snrByType[typeName].vals = append(snrByType[typeName].vals, *obs.SNR)
+					snrByType[typeName].vals = append(snrByType[typeName].vals, snr)
 
-					if obs.RSSI != nil {
-						scatterAll = append(scatterAll, struct{ snr, rssi float64 }{*obs.SNR, *obs.RSSI})
+					if rssip != nil {
+						scatterAll = append(scatterAll, struct{ snr, rssi float64 }{snr, *rssip})
 					}
 
 					// Signal over time
@@ -6815,12 +6942,12 @@ func (s *PacketStore) computeAnalyticsRF(region, area string, window TimeWindow)
 								count int
 							}{}
 						}
-						sigTime[hr].snrs = append(sigTime[hr].snrs, *obs.SNR)
+						sigTime[hr].snrs = append(sigTime[hr].snrs, snr)
 						sigTime[hr].count++
 					}
 				}
-				if obs.RSSI != nil {
-					rssiVals = append(rssiVals, *obs.RSSI)
+				if rssip != nil {
+					rssiVals = append(rssiVals, *rssip)
 				}
 
 				// Packets per hour (unique by hash per hour)
@@ -6903,8 +7030,9 @@ func (s *PacketStore) computeAnalyticsRF(region, area string, window TimeWindow)
 						}
 					}
 
-					if obs.SNR != nil {
-						snr := *obs.SNR
+					snrp, rssip := obs.SNRPtr(), obs.RSSIPtr()
+					if snrp != nil {
+						snr := *snrp
 						snrVals = append(snrVals, snr)
 						entry := snrByType[typeName]
 						if entry == nil {
@@ -6913,8 +7041,8 @@ func (s *PacketStore) computeAnalyticsRF(region, area string, window TimeWindow)
 						}
 						entry.vals = append(entry.vals, snr)
 
-						if obs.RSSI != nil {
-							scatterAll = append(scatterAll, struct{ snr, rssi float64 }{snr, *obs.RSSI})
+						if rssip != nil {
+							scatterAll = append(scatterAll, struct{ snr, rssi float64 }{snr, *rssip})
 						}
 
 						if len(ts) >= 13 {
@@ -6931,8 +7059,8 @@ func (s *PacketStore) computeAnalyticsRF(region, area string, window TimeWindow)
 							st.count++
 						}
 					}
-					if obs.RSSI != nil {
-						rssiVals = append(rssiVals, *obs.RSSI)
+					if rssip != nil {
+						rssiVals = append(rssiVals, *rssip)
 					}
 
 					if len(ts) >= 13 {

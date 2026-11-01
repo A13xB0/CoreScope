@@ -404,7 +404,7 @@ func (s *PacketStore) LoadChunked(chunkSize int) error {
 		}
 		obsRawHexCol := ""
 		if s.db.hasObsRawHex {
-			obsRawHexCol = ", o.raw_hex"
+			obsRawHexCol = obsEvidenceFrameCol
 		}
 		// #1751: scope_name is on the transmission row, so appending it as the
 		// last selected column is safe regardless of the observation fan-out.
@@ -622,17 +622,14 @@ func (s *PacketStore) scanAndMergeChunk(rows *sql.Rows, relayPM *prefixMap, cold
 				ID:             oid,
 				TransmissionID: txID,
 				ObserverID:     internStr(obsIDStr),
-				ObserverName:   internStr(nullStrVal(observerName)),
-				ObserverIATA:   internStr(nullStrVal(observerIATA)),
 				Direction:      internStr(nullStrVal(direction)),
-				SNR:            nullFloatPtr(snr),
-				RSSI:           nullFloatPtr(rssi),
-				Score:          nullIntPtr(score),
 				PathJSON:       obsPJ,
 				// Keep only this frame's relay eligibility, not its raw bytes.
 				Timestamp:      normalizeTimestamp(nullStrVal(obsTimestamp)),
 				relayHopHexLen: n,
 			}
+			obs.setObserverLabel(nullStrVal(observerName), nullStrVal(observerIATA))
+			obs.setSignal(snr, rssi, score)
 
 			rpStr := nullStrVal(resolvedPathStr)
 			if rpStr != "" {

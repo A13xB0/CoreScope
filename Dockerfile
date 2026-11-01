@@ -59,6 +59,10 @@ ENV CC=zigcc CGO_ENABLED=1
 # Build server
 WORKDIR /build/server
 COPY cmd/server/go.mod cmd/server/go.sum ./
+COPY internal/areamap/ ../../internal/areamap/
+COPY internal/origin/ ../../internal/origin/
+COPY internal/dataindex/ ../../internal/dataindex/
+COPY internal/pathwatch/ ../../internal/pathwatch/
 COPY internal/geofilter/ ../../internal/geofilter/
 COPY internal/sigvalidate/ ../../internal/sigvalidate/
 COPY internal/packetpath/ ../../internal/packetpath/
@@ -73,6 +77,7 @@ COPY internal/guestkeys/ ../../internal/guestkeys/
 COPY internal/pollpolicy/ ../../internal/pollpolicy/
 COPY internal/channel/ ../../internal/channel/
 COPY internal/mailer/ ../../internal/mailer/
+COPY internal/netwatch/ ../../internal/netwatch/
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/tmp/zig-cache \

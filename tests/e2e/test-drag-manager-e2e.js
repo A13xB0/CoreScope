@@ -3,7 +3,9 @@
  *
  * Exercises public/drag-manager.js via the /live route which registers
  * #liveFeed, #liveLegend, #liveNodeDetail panels. We use Playwright's pointer
- * API (mouse.move/down/up) to simulate a drag, and assert:
+ * API (mouse.move/down/up) to simulate a drag, holding Shift on release
+ * (without it, the live panels drop into the nearest corner; see
+ * test-live-panel-snap-e2e.js), and assert:
  *  - data-position attribute is removed (free-form mode engaged)
  *  - data-dragged='true' is set
  *  - panel-drag-{id} localStorage entry contains xPct/yPct
@@ -64,7 +66,9 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
     await page.mouse.move(headerBox.x, headerBox.y);
     await page.mouse.down();
     await page.mouse.move(headerBox.x + 120, headerBox.y + 80, { steps: 8 });
+    await page.keyboard.down('Shift');
     await page.mouse.up();
+    await page.keyboard.up('Shift');
     await page.waitForTimeout(200);
 
     const state = await page.$eval('#liveFeed', el => ({

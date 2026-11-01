@@ -5,6 +5,8 @@
   let map = null;
   let routeLayer = null;
   let markerLayer = null;
+  let hashLabelLayer = null; // repeater hash labels beside markers (clustering off)
+  let _labelTimer = null;
   // Estimated positions of repeaters known only from their reported name
   // (map-estimated.js). A layer of its own: never clustered with real markers.
   let estimatedLayer = null;
@@ -19,6 +21,11 @@
   let wsHandler = null;
   let heatLayer = null;
   let geoFilterLayer = null;
+  // Areas overlay: every area's outline from /api/config/areas/geojson,
+  // fetched once per visit when first turned on.
+  let areasLayer = null;
+  let areasGeo = null;
+  let areasFilterFn = null;
   let affinityLayer = null;
   let affinityData = null;
   let topRoutesLayer = null;
@@ -424,6 +431,24 @@
     });
   }
 
+  // Unclustered markers are drawn the way the live page draws its nodes: the
+  // shared role shape, sized by zoom with live.js's own numbers (addNodeMarker
+  // and rescaleMarkers), and stale ones dimmed.
+  function liveMarkerSize(role, zoom) {
+    var n = Math.max(10, Math.round((role === 'repeater' ? 18 : 14) * Math.max(0.4, (zoom - 8) / 6)));
+    return n % 2 ? n + 1 : n;
+  }
+  function makeLiveStyleIcon(role, isStale, color, zoom) {
+    var size = liveMarkerSize(role, zoom);
+    return L.divIcon({
+      html: window.makeRoleMarkerSVG(role || 'companion', color || null, size),
+      className: 'meshcore-marker live-node-marker' + (isStale ? ' map-node-stale' : ''),
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+      popupAnchor: [0, -size / 2],
+    });
+  }
+
   function makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus, scopeState) {
     // Show the short mesh hash ID (first N bytes of pubkey, uppercased). When
     // the width is unobserved the label falls back to one byte — it has to draw
@@ -526,6 +551,7 @@
             <label for="mcScopeOverlay" title="Colour repeater markers by their region-scope configuration"><input type="checkbox" id="mcScopeOverlay"> Scope config colours</label>
             <label for="mcEstimated" title="Repeaters that never sent an advert, placed from where mobile companions heard them. Dashed circle = uncertainty. Follows the repeater role filter only, not the area, region or last-heard filters."><input type="checkbox" id="mcEstimated"> Estimated positions <span class="mc-est-legend" aria-hidden="true">≈</span></label>
             <label id="mcGeoFilterLabel" for="mcGeoFilter" style="display:none"><input type="checkbox" id="mcGeoFilter"> Mesh live area</label>
+            <label id="mcAreasOverlayLabel" for="mcAreasOverlay" style="display:none" title="Draw the areas packets and nodes are placed in; click one to filter by it"><input type="checkbox" id="mcAreasOverlay"> Areas</label>
           </fieldset>
           <div id="mapAreaFilter"></div>
           ${window.MapPower ? window.MapPower.sectionHtml() : ''}
@@ -714,6 +740,8 @@
 
     // Save position on move
     map.on('moveend', () => {
+      clearTimeout(_labelTimer);
+      _labelTimer = setTimeout(() => { if (!_renderingMarkers) placeHashLabels(); }, 100);
       const c = map.getCenter();
       localStorage.setItem('map-view', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }));
       userHasMoved = true;
@@ -734,6 +762,7 @@
     });
 
     markerLayer = L.layerGroup().addTo(map);
+    hashLabelLayer = L.layerGroup().addTo(map);
     estimatedLayer = L.layerGroup().addTo(map);
     clusterGroup = createClusterGroup();
     if (filters.clustering && clusterGroup) clusterGroup.addTo(map);
@@ -917,8 +946,9 @@
     // Battery & temperature layer (map-power.js).
     if (window.MapPower) window.MapPower.bind(controlsPanel, function () { renderMarkers(); });
 
-    AreaFilter.init(document.getElementById('mapAreaFilter'));
+    const areasReady = AreaFilter.init(document.getElementById('mapAreaFilter'));
     AreaFilter.onChange(function () { loadNodes(); });
+    initAreasOverlay(areasReady, urlParams);
 
     // Status filter buttons
     document.querySelectorAll('#mcStatusFilter .btn').forEach(btn => {
@@ -1045,6 +1075,85 @@
         loadRouteFromDeepLink();
       }
     });
+  }
+
+  // ---- Areas overlay ------------------------------------------------------
+  // Off by default and only offered when areas exist. Outlines sit in their
+  // own pane under the markers; the area chosen in the area filter is
+  // highlighted, and clicking an area selects it (again: clears it).
+  function areaStyle(selected) {
+    const accent = (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '').trim() || '#3b82f6';
+    return selected
+      ? { color: accent, weight: 2.5, opacity: 0.9, fillColor: accent, fillOpacity: 0.16 }
+      : { color: accent, weight: 1.2, opacity: 0.55, fillColor: accent, fillOpacity: 0.04 };
+  }
+  function restyleAreas() {
+    if (!areasLayer) return;
+    const sel = AreaFilter.getSelected();
+    areasLayer.eachLayer(function (layer) {
+      const on = layer.feature && layer.feature.properties.code === sel;
+      layer.setStyle(areaStyle(on));
+      const el = layer.getElement && layer.getElement();
+      if (el) el.classList.toggle('area-selected', on);
+    });
+  }
+  function drawAreas() {
+    if (!map || !areasGeo) return;
+    if (!map.getPane('areasPane')) {
+      map.createPane('areasPane');
+      map.getPane('areasPane').style.zIndex = 350; // above tiles, below overlays (400) and markers (600)
+      // Labels get their own pane under the markers too, so a marker on an
+      // area's centre is never hidden by its name.
+      map.createPane('areaLabelsPane');
+      map.getPane('areaLabelsPane').style.zIndex = 390;
+      map.getPane('areaLabelsPane').style.pointerEvents = 'none';
+    }
+    const known = new Set(AreaFilter.getAreas().map(function (a) { return a.key; }));
+    areasLayer = L.geoJSON(areasGeo, {
+      pane: 'areasPane',
+      style: function () { return areaStyle(false); },
+      onEachFeature: function (feature, layer) {
+        const code = feature.properties.code;
+        layer.bindTooltip(feature.properties.label || code, { permanent: true, direction: 'center', className: 'area-label', opacity: 1, pane: 'areaLabelsPane' });
+        if (!known.has(code)) return;
+        layer.on('click', function (e) {
+          L.DomEvent.stopPropagation(e);
+          AreaFilter.setSelected(AreaFilter.getSelected() === code ? null : code);
+        });
+      }
+    }).addTo(map);
+    restyleAreas();
+  }
+  function setAreasOverlay(on) {
+    try { localStorage.setItem('meshcore-map-areas', String(on)); } catch (_e) { /* storage off */ }
+    const params = new URLSearchParams(location.hash.split('?')[1] || '');
+    if (on) params.set('areas', '1'); else params.delete('areas');
+    const qs = params.toString();
+    try { history.replaceState(null, '', location.hash.split('?')[0] + (qs ? '?' + qs : '')); } catch (_e) { /* not fatal */ }
+    if (!on) {
+      if (areasLayer && map) map.removeLayer(areasLayer);
+      areasLayer = null;
+      return;
+    }
+    if (areasGeo) { drawAreas(); return; }
+    fetch('/api/config/areas/geojson').then(function (r) { return r.json(); }).then(function (fc) {
+      areasGeo = fc;
+      const el = document.getElementById('mcAreasOverlay');
+      if (el && el.checked) drawAreas();
+    }).catch(function () { /* the toggle stays; nothing to draw */ });
+  }
+  async function initAreasOverlay(areasReady, urlParams) {
+    await areasReady;
+    const label = document.getElementById('mcAreasOverlayLabel');
+    const el = document.getElementById('mcAreasOverlay');
+    if (!label || !el || !map || typeof AreaFilter.getAreas !== 'function' || AreaFilter.getAreas().length === 0) return;
+    label.style.display = '';
+    let saved = false;
+    try { saved = localStorage.getItem('meshcore-map-areas') === 'true'; } catch (_e) { /* storage off */ }
+    el.checked = urlParams.get('areas') === '1' || saved;
+    el.addEventListener('change', function (e) { setAreasOverlay(e.target.checked); });
+    areasFilterFn = AreaFilter.onChange(restyleAreas);
+    if (el.checked) setAreasOverlay(true);
   }
 
   // Route hops for a path whose hops were inferred (inferObservationPath),
@@ -2026,61 +2135,102 @@
   }
 
   /**
-   * Create, update, or remove the offset indicator (dashed line + dot at true GPS position)
-   * for a deconflicted marker. Shared by _renderMarkersInner and _repositionMarkers.
-   * @param {Object} m - marker data object with latLng, adjustedLatLng, offset, _leafletLine, _leafletDot
-   * @param {L.LayerGroup} layer - layer group to add/remove indicators from
-   */
-  function _updateOffsetIndicator(m, layer) {
-    var pos = m.adjustedLatLng || m.latLng;
-    var redColor = getComputedStyle(document.documentElement).getPropertyValue('--status-red').trim() || '#ef4444';
-
-    if (m.offset > 10) {
-      // Line from true position to adjusted position
-      if (m._leafletLine) {
-        m._leafletLine.setLatLngs([m.latLng, pos]);
-      } else {
-        m._leafletLine = L.polyline([m.latLng, pos], {
-          color: redColor, weight: 2, dashArray: '6,4', opacity: 0.85
-        });
-        layer.addLayer(m._leafletLine);
-      }
-      // Dot at true GPS position
-      if (!m._leafletDot) {
-        m._leafletDot = L.circleMarker(m.latLng, {
-          radius: 3, fillColor: redColor, fillOpacity: 0.9, stroke: true, color: '#fff', weight: 1
-        });
-        layer.addLayer(m._leafletDot);
-      }
-    } else {
-      // No offset — remove indicator if it existed
-      if (m._leafletLine) { layer.removeLayer(m._leafletLine); m._leafletLine = null; }
-      if (m._leafletDot) { layer.removeLayer(m._leafletDot); m._leafletDot = null; }
-    }
-  }
-
-  /**
-   * Reposition existing markers by re-running deconfliction at the current zoom.
-   * Avoids clearing and rebuilding all markers — eliminates flicker on zoom/resize.
+   * Re-place the hash labels for the current zoom and size. Markers never
+   * move: with clustering off each one stays at its node's position, so only
+   * the labels beside them change.
    */
   function _repositionMarkers() {
     if (!map || _currentMarkerData.length === 0) return;
-    // Markercluster handles its own re-layout on zoom/move — skip our deconfliction
-    // dance when clustering is on.
-    if (filters.clustering) return;
+    if (filters.clustering) return; // markercluster lays itself out
     map.invalidateSize({ animate: false });
-
-    // Re-run deconfliction with current zoom pixel coordinates
-    deconflictLabels(_currentMarkerData, map);
-
+    // Resize markers for the new zoom, as the live page does.
+    var zoom = map.getZoom();
     for (var i = 0; i < _currentMarkerData.length; i++) {
       var m = _currentMarkerData[i];
-      var pos = m.adjustedLatLng || m.latLng;
+      if (!m._leafletMarker || !m.role || m.power) continue; // a power tag keeps its size
+      var size = liveMarkerSize(m.role, zoom);
+      if (m.icon && m.icon.options.iconSize && m.icon.options.iconSize[0] === size) continue;
+      m.icon = makeLiveStyleIcon(m.role, m.stale, m.tint, zoom);
+      m._leafletMarker.setIcon(m.icon);
+      var tt = m._leafletMarker.getTooltip();
+      if (tt) tt.options.offset = L.point(0, -size / 2); // stay half the new size above
+    }
+    placeHashLabels();
+  }
 
-      // Update marker position
-      if (m._leafletMarker) m._leafletMarker.setLatLng(pos);
+  // Hash labels for the unclustered map. A repeater's label goes beside its
+  // marker (right, left, above or below) where it overlaps no other label and
+  // no marker, and is left off where there is no room; zooming in makes room.
+  // Busy, recently heard repeaters claim room first. Markers are never moved,
+  // so the map shows where nodes are. The hover tooltip names any node.
+  var HASH_LABEL_H = 15, HASH_LABEL_CHAR_W = 7, HASH_LABEL_PAD = 4, HASH_LABEL_GAP = 2, LABEL_GRID = 64;
+  function hashLabelPriority(a, b) {
+    if (a.stale !== b.stale) return a.stale ? 1 : -1;
+    var ra = a.node.relay_count_24h || 0, rb = b.node.relay_count_24h || 0;
+    if (ra !== rb) return rb - ra;
+    return String(b.node.last_heard || b.node.last_seen || '').localeCompare(String(a.node.last_heard || a.node.last_seen || ''));
+  }
+  function placeHashLabels() {
+    if (!hashLabelLayer) return;
+    hashLabelLayer.clearLayers();
+    if (!map || filters.clustering || !filters.hashLabels) return;
+    var size = map.getSize();
+    var bounds = map.getBounds().pad(0.05);
+    var grid = {};
+    var eachCell = function (b, fn) {
+      for (var gx = Math.floor(b.l / LABEL_GRID); gx <= Math.floor(b.r / LABEL_GRID); gx++) {
+        for (var gy = Math.floor(b.t / LABEL_GRID); gy <= Math.floor(b.b / LABEL_GRID); gy++) {
+          if (fn(gx + ':' + gy)) return true;
+        }
+      }
+      return false;
+    };
+    var taken = function (b) {
+      return eachCell(b, function (k) {
+        var list = grid[k] || [];
+        for (var i = 0; i < list.length; i++) {
+          var o = list[i];
+          if (b.l < o.r && b.r > o.l && b.t < o.b && b.b > o.t) return true;
+        }
+        return false;
+      });
+    };
+    var claim = function (b) { eachCell(b, function (k) { (grid[k] = grid[k] || []).push(b); return false; }); };
 
-      _updateOffsetIndicator(m, markerLayer);
+    var wanted = [];
+    for (var i = 0; i < _currentMarkerData.length; i++) {
+      var m = _currentMarkerData[i];
+      if (!bounds.contains(m.latLng)) continue;
+      var p = map.latLngToContainerPoint(m.latLng);
+      var half = (m.w || (m.icon && m.icon.options.iconSize && m.icon.options.iconSize[0]) || 16) / 2;
+      claim({ l: p.x - half, t: p.y - half, r: p.x + half, b: p.y + half });
+      if (m.hashText) wanted.push({ m: m, p: p, half: half, node: m.node, stale: m.stale });
+    }
+    wanted.sort(hashLabelPriority);
+    for (var j = 0; j < wanted.length; j++) {
+      var w = wanted[j], pt = w.p, r = w.half + HASH_LABEL_GAP;
+      var width = Math.ceil(w.m.hashText.length * HASH_LABEL_CHAR_W + HASH_LABEL_PAD * 2);
+      var slots = [
+        [pt.x + r, pt.y - HASH_LABEL_H / 2],
+        [pt.x - r - width, pt.y - HASH_LABEL_H / 2],
+        [pt.x - width / 2, pt.y - r - HASH_LABEL_H],
+        [pt.x - width / 2, pt.y + r],
+      ];
+      for (var s = 0; s < slots.length; s++) {
+        var box = { l: slots[s][0], t: slots[s][1], r: slots[s][0] + width, b: slots[s][1] + HASH_LABEL_H };
+        if (box.l < 0 || box.t < 0 || box.r > size.x || box.b > size.y || taken(box)) continue;
+        claim(box);
+        hashLabelLayer.addLayer(L.marker(w.m.latLng, {
+          interactive: false, keyboard: false,
+          icon: L.divIcon({
+            className: 'mc-hash-label-icon',
+            html: '<span class="mc-hash-label' + (w.stale ? ' is-stale' : '') + (w.m.hashKnown ? '' : ' hash-unconfirmed') + '" aria-hidden="true">' + safeEsc(w.m.hashText) + '</span>',
+            iconSize: [width, HASH_LABEL_H],
+            iconAnchor: [pt.x - box.l, pt.y - box.t],
+          }),
+        }));
+        break;
+      }
     }
   }
 
@@ -2123,7 +2273,9 @@
       const isStale = getNodeStatus(node) !== 'active';
       const pk = (node.public_key || '').toLowerCase();
       const isAlsoObserver = _observerByPubkey.has(pk);
-      const useLabel = node.role === 'repeater' && filters.hashLabels;
+      // Hash pills ride inside clusters; with clustering off a repeater is a
+      // marker like any node and its hash goes beside it (placeHashLabels).
+      const useLabel = node.role === 'repeater' && filters.hashLabels && filters.clustering;
       // #1356 V3: multi-byte status is no longer encoded by label fill color.
       // Pass the raw status string to the label icon (it picks glyph + CSS class);
       // marker-dot tinting (for non-label rendering) keeps a colorblind-safe hex.
@@ -2140,9 +2292,13 @@
       // scope overlay stands down rather than the two fighting over the fill.
       var scopeState = (scopeTintEnabled(filters.scopeOverlay, filters.scopeState) && !mbColor) ? (node.scope_config_state || null) : null;
       var scopeColor = scopeState ? scopeTint(node) : null;
+      const tint = mbColor || scopeColor;
       // Battery & temperature tag (map-power.js) in place of the usual marker.
       const power = window.MapPower ? window.MapPower.icon(node, isStale, L) : null;
-      const icon = power ? power.icon : useLabel ? makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus, scopeState) : makeMarkerIcon(node.role || 'companion', isStale, isAlsoObserver, mbColor || scopeColor);
+      const icon = power ? power.icon
+        : useLabel ? makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus, scopeState)
+        : filters.clustering ? makeMarkerIcon(node.role || 'companion', isStale, isAlsoObserver, tint)
+        : makeLiveStyleIcon(node.role || 'companion', isStale, tint, map.getZoom());
       const latLng = L.latLng(node.lat, node.lon);
       // The scope state has to leave the fill and reach the DOM, or a dot marker
       // is colour and nothing else — which on the achromat preset is six greys
@@ -2154,7 +2310,14 @@
       var scopeLabel = scopeState ? scopeStateLabel(scopeState) : '';
       var markerAlt = (node.name || 'Unknown') + ' (' + (node.role || 'node') + (isAlsoObserver ? ' + observer' : '') + ')' +
         (scopeLabel ? ', scope config ' + scopeLabel : '');
-      allMarkers.push({ latLng, node, icon, isLabel: useLabel || !!power, w: power ? power.w : 0, h: power ? power.h : 0, popupFn: function() { return buildPopup(node); }, alt: markerAlt, title: scopeLabel ? markerAlt : '' });
+      var hashText = null, hashKnown = true;
+      if (node.role === 'repeater' && node.public_key) {
+        var hp = hashPrefixInfo(node);
+        hashText = (mbStatus ? (MB_GLYPHS[mbStatus] || MB_GLYPHS.unknown) + '\u2009' : '') + hp.prefix;
+        hashKnown = hp.known;
+        markerAlt += ', hash ' + hp.prefix;
+      }
+      allMarkers.push({ latLng, node, icon, isLabel: useLabel || !!power, power: !!power, w: power ? power.w : 0, h: power ? power.h : 0, stale: isStale, role: node.role || 'companion', tint: tint, hashText: hashText, hashKnown: hashKnown, popupFn: function() { return buildPopup(node); }, alt: markerAlt, title: scopeLabel ? markerAlt : '' });
     }
 
     // Add observer markers (skip observers already represented as a node marker)
@@ -2167,9 +2330,9 @@
         if (!obs.lat || !obs.lon) continue;
         // Skip observers whose pubkey matches a displayed node — they're shown as combined markers
         if (obs.id && displayedNodePubkeys.has(obs.id.toLowerCase())) continue;
-        const icon = makeMarkerIcon('observer');
+        const icon = filters.clustering ? makeMarkerIcon('observer') : makeLiveStyleIcon('observer', false, null, map.getZoom());
         const latLng = L.latLng(obs.lat, obs.lon);
-        allMarkers.push({ latLng, node: obs, icon, isLabel: false, popupFn: function() { return buildObserverPopup(obs); }, alt: (obs.name || obs.id || 'Unknown') + ' (observer)' });
+        allMarkers.push({ latLng, node: obs, icon, isLabel: false, role: 'observer', popupFn: function() { return buildObserverPopup(obs); }, alt: (obs.name || obs.id || 'Unknown') + ' (observer)' });
       }
     }
 
@@ -2177,12 +2340,8 @@
     // (SPA navigation may render markers before container is fully sized)
     map.invalidateSize({ animate: false });
 
-    // Deconflict ALL markers — but only when clustering is OFF.
-    // When clustering is ON, markercluster handles overlap collapse and
-    // deconfliction would just waste CPU + draw offset polylines we don't want.
-    if (allMarkers.length > 0 && !filters.clustering) {
-      deconflictLabels(allMarkers, map);
-    }
+    // Markers stay at their nodes' positions; with clustering off the hash
+    // labels are placed beside them once the markers are in (placeHashLabels).
 
     // Store marker data for zoom/resize repositioning (avoids full rebuild)
     _currentMarkerData = allMarkers;
@@ -2190,25 +2349,27 @@
     var useCluster = filters.clustering && clusterGroup;
     var clusterMarkers = [];
     for (const m of allMarkers) {
-      const pos = (useCluster ? m.latLng : (m.adjustedLatLng || m.latLng));
-      const marker = L.marker(pos, { icon: m.icon, alt: m.alt, title: m.title || '' });
+      const marker = L.marker(m.latLng, { icon: m.icon, alt: m.alt, title: m.title || '' });
       marker._nodeKey = m.node.public_key || m.node.id || null;
       marker._role = (m.node && m.node.role) || 'companion';
       marker.bindPopup(m.popupFn(), { maxWidth: 280 });
       m._leafletMarker = marker;
-      m._leafletLine = null;
-      m._leafletDot = null;
 
       if (useCluster) {
         clusterMarkers.push(marker);
       } else {
+        // The node under the pointer names itself, labels on or off, as on
+        // the live page: its live-tooltip, half the marker's size above it.
+        var tip = (m.hashText ? '<b class="mc-hash-tip-hash">' + safeEsc(m.hashText) + '</b> ' : '') + safeEsc(m.node.name || m.node.id || 'Unknown');
+        var tipSize = m.icon && m.icon.options.iconSize ? m.icon.options.iconSize[1] : 16;
+        marker.bindTooltip(tip, { permanent: false, direction: 'top', offset: [0, -tipSize / 2], className: 'live-tooltip' });
         markerLayer.addLayer(marker);
-        _updateOffsetIndicator(m, markerLayer);
       }
     }
     if (useCluster && clusterMarkers.length > 0) {
       clusterGroup.addLayers(clusterMarkers);
     }
+    placeHashLabels();
   }
 
   function buildObserverPopup(obs) {
@@ -2487,11 +2648,15 @@
   function destroy() {
     if (wsHandler) offWS(wsHandler);
     wsHandler = null;
+    if (areasFilterFn) { AreaFilter.offChange(areasFilterFn); areasFilterFn = null; }
+    areasLayer = null;
     if (map) {
       map.remove();
       map = null;
     }
     markerLayer = null;
+    hashLabelLayer = null;
+    clearTimeout(_labelTimer);
     estimatedLayer = null;
     reported = { nodes: [], method: null };
     clusterGroup = null;
@@ -2859,6 +3024,22 @@
 
   if (typeof window !== 'undefined') {
     window.__meshcoreMapInternals = {
+      // Test hooks for the unclustered map: where each marker is drawn
+      // against its node, and the Leaflet map itself.
+      markerPositions: function () {
+        if (!map) return [];
+        var b = map.getBounds();
+        return _currentMarkerData.map(function (m) {
+          var at = m._leafletMarker ? m._leafletMarker.getLatLng() : null;
+          var p = map.latLngToContainerPoint(m.latLng);
+          var r = map.getContainer().getBoundingClientRect();
+          return { atNode: !!at && at.equals(m.latLng), repeater: !!(m.node && m.node.role === 'repeater'),
+            hash: m.hashText ? m.hashText.replace(/^[^0-9A-F]+/, '') : null, inView: b.contains(m.latLng),
+            x: r.left + p.x, y: r.top + p.y,
+            w: m._leafletMarker && m._leafletMarker.getElement() ? Math.round(m._leafletMarker.getElement().getBoundingClientRect().width) : null };
+        });
+      },
+      leafletMap: function () { return map; },
       createClusterGroup: createClusterGroup,
       makeClusterIcon: makeClusterIcon,
       // #2001: the three pure pieces of the scope-state layer, so the filter

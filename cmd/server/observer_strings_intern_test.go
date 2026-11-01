@@ -35,8 +35,8 @@ func assertObserverStringsShared(t *testing.T, store *PacketStore, wantObs int) 
 		get  func(*StoreObs) string
 	}{
 		{"ObserverID", func(o *StoreObs) string { return o.ObserverID }},
-		{"ObserverName", func(o *StoreObs) string { return o.ObserverName }},
-		{"ObserverIATA", func(o *StoreObs) string { return o.ObserverIATA }},
+		{"ObserverName", func(o *StoreObs) string { return o.ObserverName() }},
+		{"ObserverIATA", func(o *StoreObs) string { return o.ObserverIATA() }},
 		{"Direction", func(o *StoreObs) string { return o.Direction }},
 	} {
 		want := f.get(first)

@@ -81,6 +81,12 @@ func relayHopHexLen(raw string) int {
 	return 2 * packetpath.HashSize(raw) // also excludes TRACE and reserved widths
 }
 
+// obsEvidenceFrameCol selects as much of an observation's raw_hex as
+// observedRelayHopHexLen reads: header, transport codes, path byte and at most
+// 64 path bytes, 140 hex characters. The bulk loaders drop the frame after
+// that check, so scanning the rest of it would only allocate a copy to discard.
+const obsEvidenceFrameCol = ", substr(o.raw_hex, 1, 140)"
+
 // observedRelayHopHexLen binds the retained path_json to its own wire frame.
 // Only this byte survives loading; no extra raw packets or parsed paths are
 // retained. Missing legacy raw_hex is unknown, never borrowed from tx.RawHex.

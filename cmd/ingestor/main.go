@@ -1086,6 +1086,16 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		return
 	}
 
+	// Battery topic: meshcore/<region>/<observer_id>/battery. Readings the
+	// observer took from repeaters it polls directly; observer metadata like
+	// /neighbors, so the per-source packet IATA filter does not apply.
+	if len(parts) >= 4 && parts[3] == "battery" {
+		if cfg.NeighborBatteryEnabled() {
+			handleBatteryReport(store, cfg, tag, parts[2], msg)
+		}
+		return
+	}
+
 	// Status topic: meshcore/<region>/<observer_id>/status
 	// Per-source IATA filter does NOT apply here — observer metadata (noise_floor, battery, etc.)
 	// is region-independent and should be accepted from all observers regardless of

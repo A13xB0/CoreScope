@@ -41,8 +41,10 @@ type paramMeta struct {
 func routeDescriptions() map[string]routeMeta {
 	return map[string]routeMeta{
 		// Config
-		"GET /api/config/cache":              {Summary: "Get cache configuration", Tag: "config"},
-		"GET /api/config/client":             {Summary: "Get client configuration", Tag: "config"},
+		"GET /api/config/cache":  {Summary: "Get cache configuration", Tag: "config"},
+		"GET /api/config/client": {Summary: "Get client configuration", Tag: "config"},
+		"GET /api/config/areas/geojson": {Summary: "Area shapes as GeoJSON", Description: "Every area (config.json and areasFile) as a GeoJSON FeatureCollection of MultiPolygons with code, label and layer, simplified to about 450 m for drawing.", Tag: "config",
+			QueryParams: []paramMeta{{Name: "layer", Description: "Only this layer's areas; omitted means every layer", Type: "string"}}},
 		"GET /api/config/regions":            {Summary: "Get configured regions", Tag: "config"},
 		"GET /api/config/region-quick-picks": {Summary: "Get region quick picks", Description: "Named groups of region (IATA) codes from config regionQuickPicks, offered as one-tap choices by the region filter. Always a list; empty when none are configured.", Tag: "config"},
 		"GET /api/config/theme":              {Summary: "Get theme configuration", Description: "Returns color maps, CSS variables, and theme defaults.", Tag: "config"},
@@ -217,6 +219,30 @@ func routeDescriptions() map[string]routeMeta {
 				{Name: "mode", Description: "declared (default) or transport", Type: "string"},
 				{Name: "scope", Description: "mode=transport only: region scope to split the fleet by", Type: "string"},
 				{Name: "region", Description: "Observer IATA codes, comma-separated: count only forwarding heard by observers there. All means no filter", Type: "string"},
+				{Name: "area", Description: "Keep only repeaters standing in this configured area (by node position); an unknown area matches nothing", Type: "string"},
+			}},
+
+		// Data tab (#data): every packet of the last data.days days, placed by area
+		"GET /api/data/config": {Summary: "Data tab configuration", Description: "Whether the Data tab is on, and if so its layer, areas in order, home area, the periods the index reaches, packet kinds, type names, filter dimensions, rows held and how far back it is filled.", Tag: "data"},
+		"GET /api/data/summary": {Summary: "Data tab summary", Description: "One period's packets, those heard outside the area they started in, how starts were decided, the start-by-receiving-area matrix overall and per packet kind, and the flows between areas with the relays that carried them. Cached 60 s. 404 when the tab is off.", Tag: "data",
+			QueryParams: []paramMeta{{Name: "window", Description: "24h, 7d or 30d, as far as data.days reaches", Type: "string", Required: true}}},
+		"GET /api/data/cube": {Summary: "Data tab cube", Description: "Packets per time bucket along origin, heard, type, scope, how, route, through and channel: rows of [bucket, origin, heard, type, scope, how, route, through, channel, packets], each an index into the lists beside it. Cached 60 s. 404 when the tab is off.", Tag: "data",
+			QueryParams: []paramMeta{{Name: "window", Description: "24h, 7d or 30d, as far as data.days reaches", Type: "string", Required: true}}},
+		"GET /api/data/path": {Summary: "Path watch between two repeaters", Description: "Packets that passed the first repeater and those that then reached the second, per 24 hours (the last 24 hours last), the share that got through against the range it usually falls in, hops and routes between the two, and route changes in words (a repeater that dropped out and went quiet or was rerouted around, one that started carrying, the main route moving). Read from the packet store's path index; cached 5 minutes per pair. 404 when the Data tab is off.", Tag: "data",
+			QueryParams: []paramMeta{
+				{Name: "from", Description: "Public key of the first repeater", Type: "string", Required: true},
+				{Name: "to", Description: "Public key of the second repeater", Type: "string", Required: true},
+				{Name: "window", Description: "7d (default) or 30d of days shown; 24h shows a week", Type: "string"},
+				{Name: "basis", Description: "all (default) or adverts, which counts only adverts and is steadier", Type: "string"},
+			}},
+		"POST /api/data/paths":     {Summary: "Path watches, several at once", Description: "The same as GET /api/data/path for up to 24 pairs, in order: body {window, basis, pairs: [{from, to}]}. For a watch list panel. 404 when the Data tab is off.", Tag: "data"},
+		"GET /api/data/dashboards": {Summary: "Data tab dashboards", Description: "The built-in dashboards followed by the operator's (data.dashboardsFile), validated, with the one to open first and the home area. Each is a schema-1 document of panels: a query over the cube, a panel type and a place on a 12-column grid. 404 when the tab is off.", Tag: "data"},
+		"GET /api/data/packets": {Summary: "Packets behind a Data tab figure", Description: "The packet rows (one per receiving area) passing every filter, newest first, at most 2,000 with the full total. Two run at a time. 404 when the tab is off.", Tag: "data",
+			QueryParams: []paramMeta{
+				{Name: "window", Description: "24h, 7d or 30d", Type: "string", Required: true},
+				{Name: "from", Description: "Unix seconds, inclusive", Type: "integer"},
+				{Name: "to", Description: "Unix seconds, exclusive", Type: "integer"},
+				{Name: "f", Description: `JSON list of filters, each {"d": dimension, "v": [values], "n": 1 to exclude, "x": 1 for an exact "through" match}. Dimensions: border, origin, heard, through, kind, type, channel, scope, sclass, how, routing.`, Type: "string"},
 			}},
 
 		// Analytics
@@ -227,9 +253,16 @@ func routeDescriptions() map[string]routeMeta {
 		"GET /api/analytics/hash-sizes":      {Summary: "Hash size analysis", Description: "Distribution of hash prefix sizes across the network.", Tag: "analytics"},
 		"GET /api/analytics/hash-collisions": {Summary: "Hash collision detection", Description: "Identifies nodes sharing hash prefixes.", Tag: "analytics"},
 		"GET /api/analytics/subpaths":        {Summary: "Subpath analysis", Description: "Common routing subpaths through the mesh.", Tag: "analytics"},
-		"GET /api/analytics/subpaths-bulk":   {Summary: "Bulk subpath analysis", Tag: "analytics"},
-		"GET /api/analytics/subpath-detail":  {Summary: "Subpath detail", Tag: "analytics"},
-		"GET /api/analytics/neighbor-graph":  {Summary: "Neighbor graph", Description: "Full neighbor affinity graph for visualization.", Tag: "analytics"},
+		"GET /api/netwatch":                  {Summary: "Network health", Description: "Repeaters that have gone quiet (their own adverts stopped and their relays fell below a fifth of the same 6 hours on the previous 7 days), recently back, observers and all traffic against usual, and the configured corridors and routes. 404 unless netWatch.enabled.", Tag: "analytics"},
+		"GET /api/netwatch/node/{pubkey}":    {Summary: "A repeater's usual traffic", Description: "Hourly relays and adverts over the watch window, oldest first, with the median of the same hour on the previous 7 days (-1 where unknown).", Tag: "analytics"},
+		"GET /api/netwatch/probe": {Summary: "Hop-by-hop probe between two repeaters", Description: "The route packets usually take between two repeaters (each link weighed by its median day over the previous week) and every hop's traffic over the last 6 hours against its usual, with 72 hours of hourly counts per hop.", Tag: "analytics",
+			QueryParams: []paramMeta{
+				{Name: "from", Description: "Public key of the repeater the route starts at", Type: "string", Required: true},
+				{Name: "to", Description: "Public key of the repeater the route ends at", Type: "string", Required: true},
+			}},
+		"GET /api/analytics/subpaths-bulk":  {Summary: "Bulk subpath analysis", Tag: "analytics"},
+		"GET /api/analytics/subpath-detail": {Summary: "Subpath detail", Tag: "analytics"},
+		"GET /api/analytics/neighbor-graph": {Summary: "Neighbor graph", Description: "Full neighbor affinity graph for visualization.", Tag: "analytics"},
 		"GET /api/analytics/retransmissions": {Summary: "Retransmission pressure over time", Description: "Collision-pressure proxy (#1699): per time bucket, the average number of distinct repeaters in the union of all observed paths of each flood event (route types 0/1, TRACE excluded). A transmission's observations are split into flood events at gaps of more than 5 minutes; each event is bucketed by its first observation, and events before the store retention floor are left out. Hop prefixes are not resolved: a prefix counts once per event, so colliding 1-byte prefixes make this a lower bound. Only repeaters some observer heard are counted, so the value also follows observer coverage; each bucket carries its observer count.", Tag: "analytics",
 			QueryParams: []paramMeta{
 				{Name: "region", Description: "Comma-separated IATA codes; only observations from observers in the region are counted. A region with no known observers is not filtered", Type: "string"},
@@ -662,12 +695,13 @@ func buildOpenAPISpec(router *mux.Router, version string) map[string]interface{}
 	}
 
 	// Build tags array (sorted)
-	tagOrder := []string{"admin", "analytics", "channels", "config", "nodes", "observers", "packets", "users"}
+	tagOrder := []string{"admin", "analytics", "channels", "config", "data", "nodes", "observers", "packets", "users"}
 	tagDescriptions := map[string]string{
 		"admin":     "Server administration and diagnostics",
 		"analytics": "Network analytics and statistics",
 		"channels":  "Mesh channel operations",
 		"config":    "Server configuration",
+		"data":      "The Data tab: packets placed by the area they started in and the areas that heard them",
 		"nodes":     "Mesh node operations",
 		"observers": "Packet observer/gateway operations",
 		"packets":   "Packet capture and decoding",

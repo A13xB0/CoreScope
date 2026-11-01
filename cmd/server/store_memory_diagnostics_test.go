@@ -20,7 +20,7 @@ const decodedJSONFixtureBytes = 300_000
 func TestStoreMemoryBreakdown(t *testing.T) {
 	rt0, rt1, rt2 := 0, 1, 2
 	obs := func(id, pj string) *StoreObs {
-		return &StoreObs{ObserverID: id, ObserverName: "obs-" + id, PathJSON: pj}
+		return withLabel(&StoreObs{ObserverID: id, PathJSON: pj}, "obs-"+id, "")
 	}
 	bigJSON := strings.Repeat("x", decodedJSONFixtureBytes)
 	s := &PacketStore{}

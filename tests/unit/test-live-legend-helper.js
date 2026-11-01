@@ -81,12 +81,32 @@ test('every row carries data-enum="<ENUM>" attribute', () => {
   }
 });
 
-test('every row uses the em-dash separator (uniform typography, item 1)', () => {
+// A row's text, as a reader or textContent sees it: tags stripped.
+function rowText(k) {
+  const start = html.indexOf('<li data-enum="' + k + '"');
+  if (start < 0) return null;
+  const open = html.indexOf('>', start) + 1;
+  const row = html.slice(open, html.indexOf('</li>', open));
+  return row.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+test('every row reads SHORT \u2014 LONG with the em-dash separator (uniform typography, item 1)', () => {
   for (const k of ctx.window.PayloadLabels.ORDER) {
     const entry = ctx.window.PayloadLabels[k];
-    const wantSnippet = entry.short + ' \u2014 ' + entry.long;
-    assert(html.indexOf(wantSnippet) !== -1,
-      k + ': expected snippet "' + wantSnippet + '" not found in legend html');
+    const want = entry.short + ' \u2014 ' + entry.long;
+    assert(rowText(k) === want, k + ': row reads "' + rowText(k) + '", want "' + want + '"');
+  }
+});
+
+// Short labels: the short name is its own span; the description is in
+// .legend-long (read by screen readers, shown on hover) and data-desc.
+test('every row has its short label, its description in .legend-long and data-desc, and no title', () => {
+  for (const k of ctx.window.PayloadLabels.ORDER) {
+    const entry = ctx.window.PayloadLabels[k];
+    assert(html.includes('data-enum="' + k + '" data-desc="' + entry.long + '"'), k + ': data-desc should carry "' + entry.long + '"');
+    assert(html.includes('<span class="legend-label">' + entry.short + '</span>'), k + ': short label span missing');
+    assert(html.includes('<span class="legend-long"> \u2014 ' + entry.long + '</span>'), k + ': .legend-long description missing');
+    assert(!html.includes('data-enum="' + k + '" title='), k + ': a native title would double up with the hover tip');
   }
 });
 

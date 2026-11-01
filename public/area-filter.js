@@ -108,6 +108,20 @@
     };
   }
 
+  // setSelected picks an area from code (the map's Areas overlay does this
+  // on click): null clears; a key that is not an area is ignored. Listeners
+  // hear about a real change only, and the dropdown follows.
+  function setSelected(key) {
+    var next = key || null;
+    if (next && !_areas.some(function (a) { return a.key === next; })) return;
+    if (next === _selected) return;
+    _selected = next;
+    saveToStorage();
+    if (_container) render(_container);
+    _listeners.forEach(function (fn) { fn(_selected); });
+  }
+  function getAreas() { return _areas.slice(); }
+
   function onChange(fn) { _listeners.push(fn); return fn; }
   function offChange(fn) { _listeners = _listeners.filter(function (f) { return f !== fn; }); }
 
@@ -121,6 +135,8 @@
     init: initFilter,
     render: render,
     getSelected: getSelected,
+    setSelected: setSelected,
+    getAreas: getAreas,
     getAreaParam: getAreaParam,
     areaQueryString: areaQueryString,
     onChange: onChange,

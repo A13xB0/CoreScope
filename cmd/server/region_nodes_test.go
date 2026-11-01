@@ -23,9 +23,9 @@ func mkRegionAdvert(id int, pubkey string, observerIDs ...string) *StoreTx {
 	j, _ := json.Marshal(map[string]interface{}{"pubKey": pubkey})
 	tx := &StoreTx{ID: id, Hash: fmt.Sprintf("radv%d", id), PayloadType: &pt, DecodedJSON: string(j)}
 	for i, oid := range observerIDs {
-		tx.Observations = append(tx.Observations, &StoreObs{
-			ID: id*10 + i, TransmissionID: id, ObserverID: oid, ObserverIATA: "STALE",
-		})
+		tx.Observations = append(tx.Observations, withLabel(&StoreObs{
+			ID: id*10 + i, TransmissionID: id, ObserverID: oid,
+		}, "", "STALE"))
 	}
 	return tx
 }
@@ -245,7 +245,7 @@ func BenchmarkRegionNodePubkeys(b *testing.B) {
 func TestRegionNodePubkeysFollowsObserverIATAChange(t *testing.T) {
 	ps := newRegionTestStore(t, map[string]string{"o-1": "SFO"})
 	tx := mkRegionAdvert(1, "pk_moved", "o-1")
-	tx.Observations[0].ObserverIATA = "SJC" // what the observer was when this was ingested
+	tx.Observations[0].setObserverLabel("", "SJC") // what the observer was when this was ingested
 	addToStore(ps, tx)
 	if got, _ := ps.RegionNodePubkeys("SJC"); len(got) != 0 {
 		t.Errorf("the observer is SFO now, SJC must not match: got %v", got)
@@ -261,7 +261,7 @@ func TestRegionNodePubkeysFollowsObserverIATAChange(t *testing.T) {
 func TestRegionNodePubkeysMatchesChunkLoadedObservations(t *testing.T) {
 	ps := newRegionTestStore(t, map[string]string{"o-1": "SJC"})
 	tx := mkRegionAdvert(1, "pk_history", "o-1")
-	tx.Observations[0].ObserverIATA = "" // as loadChunk leaves it
+	tx.Observations[0].setObserverLabel("", "") // as loadChunk leaves it
 	addToStore(ps, tx)
 	if got, _ := ps.RegionNodePubkeys("SJC"); fmt.Sprint(got) != "[pk_history]" {
 		t.Errorf("a chunk-loaded advert must match through its observer ID: got %v", got)

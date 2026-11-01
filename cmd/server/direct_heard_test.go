@@ -223,11 +223,11 @@ func TestComputeDirectHeardAggregates(t *testing.T) {
 	snr := func(v float64) *float64 { return &v }
 	tx := dhTx(RouteFlood, PayloadTXT_MSG, "")
 	tx.Observations = []*StoreObs{
-		{ObserverID: "obsA", ObserverName: "A", PathJSON: `["BB11"]`, SNR: snr(10), RSSI: snr(-50)},
-		{ObserverID: "obsA", ObserverName: "A", PathJSON: `["BB11"]`, SNR: snr(20), RSSI: snr(-70)},
-		{ObserverID: "obsB", ObserverName: "B", PathJSON: `["BB11","A433"]`, SNR: snr(5)},
+		withSignal(withLabel(&StoreObs{ObserverID: "obsA", PathJSON: `["BB11"]`}, "A", ""), snr(10), snr(-50)),
+		withSignal(withLabel(&StoreObs{ObserverID: "obsA", PathJSON: `["BB11"]`}, "A", ""), snr(20), snr(-70)),
+		withSignal(withLabel(&StoreObs{ObserverID: "obsB", PathJSON: `["BB11","A433"]`}, "B", ""), snr(5), nil),
 		// Ambiguous last hop: contributes to nobody.
-		{ObserverID: "obsC", ObserverName: "C", PathJSON: `["A4"]`, SNR: snr(1)},
+		withSignal(withLabel(&StoreObs{ObserverID: "obsC", PathJSON: `["A4"]`}, "C", ""), snr(1), nil),
 	}
 
 	idx := buildDirectHeardIndex([]*StoreTx{tx}, buildPrefixMap(directHeardNodes))
@@ -317,12 +317,12 @@ func TestBuildDirectObserverRows_CanRelayTriState(t *testing.T) {
 func TestBuildDirectHeardIndex_SkipsOwnTransmissions(t *testing.T) {
 	forwarded := dhTx(RouteFlood, PayloadTXT_MSG, "")
 	forwarded.Observations = []*StoreObs{
-		{ObserverID: dhUnique, ObserverName: "self", Direction: "tx", PathJSON: `["A433","BB11"]`},
-		{ObserverID: dhUnique, ObserverName: "self", Direction: "rx", PathJSON: `["A433"]`},
+		{ObserverID: dhUnique, Direction: "tx", PathJSON: `["A433","BB11"]`},
+		{ObserverID: dhUnique, Direction: "rx", PathJSON: `["A433"]`},
 	}
 	ownAdvert := dhTx(RouteFlood, PayloadADVERT, `{"type":"ADVERT","pubKey":"`+dhUnique+`"}`)
 	ownAdvert.Observations = []*StoreObs{
-		{ObserverID: dhUnique, ObserverName: "self", Direction: "tx", PathJSON: `[]`},
+		{ObserverID: dhUnique, Direction: "tx", PathJSON: `[]`},
 	}
 
 	idx := buildDirectHeardIndex([]*StoreTx{forwarded, ownAdvert}, buildPrefixMap(directHeardNodes))

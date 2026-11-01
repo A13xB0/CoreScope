@@ -2254,7 +2254,7 @@ func TestPerObservationRawHexEnrich(t *testing.T) {
 		// Hot-store enrichment uses the representative frame for both.
 		// The packet-detail endpoint retrieves original frames separately.
 		if rh != txHex {
-			t.Errorf("obs without raw_hex: got %q, want %q (tx fallback)", rh, txHex)
+			t.Errorf("obs %d raw_hex: got %q, want %q (tx fallback)", obs.ID, rh, txHex)
 		}
 	}
 }

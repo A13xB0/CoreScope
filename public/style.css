@@ -3319,6 +3319,8 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .hide-col-size .col-size,
 .hide-col-type .col-type,
 .hide-col-scope .col-scope,
+.hide-col-origin .col-origin,
+.pkt-no-origin .col-origin,
 .hide-col-observer .col-observer,
 .hide-col-path .col-path,
 .hide-col-rpt .col-rpt,
@@ -3408,6 +3410,23 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 /* #1862: the active region filter, on the map itself, so it stays visible
    while the controls panel is collapsed (the default on phones). Centred
    between Leaflet's top-left controls and the top-right toggle. */
+/* Map Areas overlay: each area's label sits at its centre as quiet text,
+   readable over tiles in both themes, and never takes a click. */
+.leaflet-tooltip.area-label {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 0 3px var(--surface-1), 0 0 6px var(--surface-1);
+  pointer-events: none;
+}
+.leaflet-tooltip.area-label::before { display: none; }
+
 .mc-region-chip {
   position: absolute;
   top: 10px;
@@ -4953,6 +4972,21 @@ body[data-cb-preset="achromat"] {
 .mc-cluster .mc-pill.role-observer  { color: var(--mc-role-observer-text,  #1a1a1a); }
 
 /* V3 — multi-byte hash labels: neutral fill + colored 3px left border */
+/* Hash labels beside repeater markers on the unclustered map (placeHashLabels):
+   plain text with a halo in the page background, so it reads on any tile. */
+.mc-hash-label-icon { background: transparent; border: 0; pointer-events: none; }
+/* Stale nodes on the unclustered map, dimmed like the live page's. */
+.map-node-stale { opacity: 0.35; }
+.mc-hash-label {
+  display: block; height: 100%; box-sizing: border-box; padding: 0 4px;
+  font: 600 11px/15px ui-monospace, "SF Mono", Consolas, monospace;
+  color: var(--text); white-space: nowrap;
+  text-shadow: 0 0 2px var(--content-bg), 0 0 2px var(--content-bg), 0 0 3px var(--content-bg), 0 0 4px var(--content-bg);
+}
+.mc-hash-label.is-stale { opacity: 0.6; }
+.mc-hash-label.hash-unconfirmed { font-style: italic; }
+.mc-hash-tip-hash { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+
 .mc-mb-label {
   background: var(--mc-mb-fill);
   color: var(--mc-mb-text);

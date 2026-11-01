@@ -30,11 +30,10 @@ func ingestObs2237(s *PacketStore, tx *StoreTx, n int) {
 		ID:             10_000_000 + n,
 		TransmissionID: tx.ID,
 		ObserverID:     fmt.Sprintf("race-obs-%d", n),
-		ObserverName:   "race",
-		ObserverIATA:   fmt.Sprintf("I%02d", n%50),
 		PathJSON:       "[" + strings.Join(hops, ",") + "]",
 		Timestamp:      time.Now().UTC().Add(time.Duration(n) * time.Millisecond).Format(time.RFC3339Nano),
 	}
+	obs.setObserverLabel("race", fmt.Sprintf("I%02d", n%50))
 	s.mu.Lock()
 	tx.addObservation(obs)
 	if obs.Timestamp > tx.LatestSeen {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/meshcore-analyzer/areamap"
 	"log"
 	"maps"
 	"math"
@@ -35,8 +36,11 @@ type Server struct {
 	db        *DB
 	cfg       *Config
 	hub       *Hub
-	store     *PacketStore // in-memory packet store (nil = fallback to DB)
-	configDir string       // directory containing config.json (for write-back via PUT /api/config/geo-filter)
+	store     *PacketStore     // in-memory packet store (nil = fallback to DB)
+	data      *dataService     // the Data tab's index (nil = tab off)
+	paths     *pathIndex       // path watch history (nil = Data tab off)
+	netwatch  *netWatchService // Health page; nil when netWatch is off
+	configDir string           // directory containing config.json (for write-back via PUT /api/config/geo-filter)
 	startedAt time.Time
 	perfStats *PerfStats
 	version   string
@@ -301,6 +305,14 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/config/geo-filter", s.handleConfigGeoFilter).Methods("GET")
 	r.HandleFunc("/api/config/areas", s.handleConfigAreas).Methods("GET")
 	r.HandleFunc("/api/config/areas/polygons", s.handleConfigAreasPolygons).Methods("GET")
+	r.HandleFunc("/api/config/areas/geojson", s.handleConfigAreasGeoJSON).Methods("GET")
+	r.HandleFunc("/api/data/config", s.handleDataConfig).Methods("GET")
+	r.HandleFunc("/api/data/summary", s.handleDataSummary).Methods("GET")
+	r.HandleFunc("/api/data/cube", s.handleDataCube).Methods("GET")
+	r.HandleFunc("/api/data/packets", s.handleDataPackets).Methods("GET")
+	r.HandleFunc("/api/data/dashboards", s.handleDataDashboards).Methods("GET")
+	r.HandleFunc("/api/data/path", s.handleDataPath).Methods("GET")
+	r.HandleFunc("/api/data/paths", s.handleDataPaths).Methods("POST")
 	r.Handle("/api/config/geo-filter", s.requireAdmin(http.HandlerFunc(s.handlePutConfigGeoFilter))).Methods("PUT")
 
 	// Readiness endpoint (gated on background init completion)
@@ -389,6 +401,9 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/analytics/distance", s.handleAnalyticsDistance).Methods("GET")
 	r.HandleFunc("/api/analytics/hash-sizes", s.handleAnalyticsHashSizes).Methods("GET")
 	r.HandleFunc("/api/analytics/hash-collisions", s.handleAnalyticsHashCollisions).Methods("GET")
+	r.HandleFunc("/api/netwatch", s.handleNetWatch).Methods("GET")
+	r.HandleFunc("/api/netwatch/node/{pubkey}", s.handleNetWatchNode).Methods("GET")
+	r.HandleFunc("/api/netwatch/probe", s.handleNetWatchProbe).Methods("GET")
 	r.HandleFunc("/api/analytics/subpaths", s.handleAnalyticsSubpaths).Methods("GET")
 	r.HandleFunc("/api/analytics/subpaths-bulk", s.handleAnalyticsSubpathsBulk).Methods("GET")
 	r.HandleFunc("/api/analytics/subpath-detail", s.handleAnalyticsSubpathDetail).Methods("GET")
@@ -579,6 +594,7 @@ func (s *Server) handleConfigClient(w http.ResponseWriter, r *http.Request) {
 		Customizer:                     CustomizerClientConfig{DisabledTabs: disabledTabs},
 		ClientRxCoverage:               s.cfg.ClientRxCoverageEnabled(),
 		ClientRfSamples:                s.cfg.ClientRfSamplesEnabled(),
+		NetWatch:                       s.netwatch != nil,
 		ClientRxRequireLinkedCompanion: s.auth != nil && s.cfg.ClientRxRequireLinkedCompanionSet(),
 		PathTrust:                      &pathTrust,
 		UserManagement:                 s.clientUserManagement(),
@@ -596,13 +612,22 @@ func (s *Server) handleConfigAreas(w http.ResponseWriter, r *http.Request) {
 	type areaListEntry struct {
 		Key   string `json:"key"`
 		Label string `json:"label"`
+		Layer string `json:"layer"`
 	}
 	result := make([]areaListEntry, 0, len(s.cfg.Areas))
 	for k, v := range s.cfg.Areas {
 		if v.Label == "" {
 			continue // skip comment/invalid entries (e.g. "_comment" keys in config)
 		}
-		result = append(result, areaListEntry{Key: k, Label: v.Label})
+		result = append(result, areaListEntry{Key: k, Label: v.Label, Layer: areamap.DefaultLayer})
+	}
+	// Areas from areasFile, in the file's order, with their layer.
+	if s.cfg.areaMap != nil {
+		for _, a := range s.cfg.areaMap.Areas("") {
+			if s.cfg.fileArea(a.Code) {
+				result = append(result, areaListEntry{Key: a.Code, Label: a.Label, Layer: a.Layer})
+			}
+		}
 	}
 	writeJSON(w, result)
 }
@@ -1211,6 +1236,9 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("order") == "asc" {
 		q.Order = "ASC"
 	}
+	if q.Area != "" {
+		q.startedIn = s.data.startedIn(q.Area)
+	}
 	if v := r.URL.Query().Get("type"); v != "" {
 		t, _ := strconv.Atoi(v)
 		q.Type = &t
@@ -1234,7 +1262,7 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 		}
 		result.Limit = q.Limit
 		result.Offset = q.Offset
-		writeJSON(w, result)
+		writeJSON(w, s.data.withOrigins(result))
 		return
 	}
 
@@ -1252,7 +1280,7 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 
 	result.Limit = q.Limit
 	result.Offset = q.Offset
-	writeJSON(w, result)
+	writeJSON(w, s.data.withOrigins(result))
 }
 
 func (s *Server) handlePacketTimestamps(w http.ResponseWriter, r *http.Request) {
@@ -1446,6 +1474,7 @@ func (s *Server) handlePacketDetail(w http.ResponseWriter, r *http.Request) {
 		Path:             pathHops,
 		ObservationCount: observationCount,
 		Observations:     mapSliceToObservations(observations),
+		Origin:           s.data.originOf(hash),
 	})
 }
 
@@ -1778,8 +1807,13 @@ func (s *Server) buildNodesResponse(r *http.Request) (NodeListResponse, error) {
 		var areaNodes map[string]bool
 		if s.store != nil {
 			areaNodes = s.store.resolveAreaNodes(area)
-		} else if s.cfg != nil && s.cfg.Areas != nil {
-			if entry, ok := s.cfg.Areas[area]; ok {
+		} else if s.cfg != nil {
+			entry, ok := s.cfg.Areas[area]
+			if !ok && s.cfg.fileArea(area) {
+				m := s.cfg.areaMap
+				entry, ok = AreaEntry{match: func(lat, lon float64) bool { return m.Contains(area, lat, lon) }}, true
+			}
+			if ok {
 				pks, err := s.db.GetNodePubkeysInArea(entry)
 				if err == nil {
 					areaNodes = make(map[string]bool, len(pks))

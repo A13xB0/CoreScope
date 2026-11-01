@@ -171,16 +171,16 @@ func buildDirectHeardIndex(packets []*StoreTx, pm *prefixMap) directHeardIndex {
 			}
 			agg := byObs[obs.ObserverID]
 			if agg == nil {
-				agg = &directHeardAgg{ObserverName: obs.ObserverName}
+				agg = &directHeardAgg{ObserverName: obs.ObserverName()}
 				byObs[obs.ObserverID] = agg
 			}
 			agg.Count++
-			if obs.SNR != nil {
-				agg.SNRSum += *obs.SNR
+			if obs.SNRPtr() != nil {
+				agg.SNRSum += *obs.SNRPtr()
 				agg.SNRCount++
 			}
-			if obs.RSSI != nil {
-				agg.RSSISum += *obs.RSSI
+			if obs.RSSIPtr() != nil {
+				agg.RSSISum += *obs.RSSIPtr()
 				agg.RSSICount++
 			}
 		}

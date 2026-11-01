@@ -1,5 +1,7 @@
 package main
 
+import "github.com/meshcore-analyzer/dataindex"
+
 // Types generated from proto/ definitions for compile-time type safety.
 // Every API response is a typed struct — no map[string]interface{}.
 
@@ -411,6 +413,8 @@ type PacketDetailResponse struct {
 	Path             []interface{}     `json:"path"`
 	ObservationCount int               `json:"observation_count"`
 	Observations     []ObservationResp `json:"observations,omitempty"`
+	// Origin is where the packet started, when the Data tab places packets.
+	Origin *dataindex.Origin `json:"origin,omitempty"`
 }
 
 type DecodeResponse struct {
@@ -1109,6 +1113,8 @@ type ClientConfigResponse struct {
 	Customizer          CustomizerClientConfig `json:"customizer"`
 	ClientRxCoverage    bool                   `json:"clientRxCoverage"`
 	ClientRfSamples     bool                   `json:"clientRfSamples"`
+	// NetWatch is true when the Health page (netWatch.enabled) is on.
+	NetWatch bool `json:"netWatch,omitempty"`
 	// Present (true) only when clientRxCoverage.requireLinkedCompanion is set
 	// and user management is on: CoreDrive RX then holds its queue until
 	// its companion is linked.

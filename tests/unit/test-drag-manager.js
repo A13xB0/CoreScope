@@ -175,7 +175,7 @@ test('pointerdown ignores button clicks', () => {
   panel._header._fire('pointerdown', {
     button: 0, clientX: 100, clientY: 100,
     preventDefault() {},
-    target: { closest(sel) { return sel === 'button' ? {} : null; } }
+    target: { closest(sel) { return sel === 'button' ? { classList: { contains() { return false; } } } : null; } }
   });
   assert.strictEqual(dm.state, 'IDLE');
 });

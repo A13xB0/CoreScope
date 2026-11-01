@@ -95,7 +95,7 @@ func txPayload(rawHex string) []byte {
 	return b[off:]
 }
 
-func parseTxTime(s string) (int64, bool) {
+func parseTxUnix(s string) (int64, bool) {
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {
 		return 0, false
@@ -145,7 +145,7 @@ func (d *damageIndex) add(tx *StoreTx) {
 	if tx == nil || tx.PayloadType == nil || !damageTypes[*tx.PayloadType] || d.byTx[tx] != nil {
 		return
 	}
-	at, ok := parseTxTime(tx.FirstSeen)
+	at, ok := parseTxUnix(tx.FirstSeen)
 	if !ok {
 		return
 	}
