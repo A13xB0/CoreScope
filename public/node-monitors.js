@@ -148,7 +148,7 @@
     }).length;
     var head = mons.length + ' observer' + (mons.length === 1 ? '' : 's') +
       (data.paused ? ' · paused' : data.excluded ? ' · excluded' : ' · ' + direct + ' direct');
-    var out = '<h4 title="Observers running the Neighbour Battery plugin that claim this repeater. CoreScope elects one to poll it; the others stand by. Policy ' + esc(data.policy_version || '') + '.">Monitored by <span class="nm-head-sum">' + head + '</span></h4>';
+    var out = '<h4 title="Observers running the CoreScope Observer Plus plugin that claim this repeater. CoreScope elects one to poll it; the others stand by. Policy ' + esc(data.policy_version || '') + '.">Monitored by <span class="nm-head-sum">' + head + '</span></h4>';
     if (data.excluded) {
       out += '<div class="nm-note">This repeater is excluded by CoreScope. Observers that claim it are listed but send nothing.</div>';
     }
