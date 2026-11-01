@@ -117,14 +117,9 @@ func (s *Server) handleNodeBattery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 404 if node unknown — keeps URL space tidy and matches /health behavior.
 	node, err := s.db.GetNodeByPubkey(pubkey)
 	if err != nil {
 		writeError(w, 500, err.Error())
-		return
-	}
-	if node == nil {
-		writeError(w, 404, "node not found")
 		return
 	}
 
@@ -142,6 +137,13 @@ func (s *Server) handleNodeBattery(w http.ResponseWriter, r *http.Request) {
 	neighbor, err := s.db.GetNeighborBatteryHistory(pubkey, since)
 	if err != nil {
 		writeError(w, 500, err.Error())
+		return
+	}
+	// 404 only if the node is unknown and nobody has reported its battery
+	// either. Observers can read a repeater before CoreScope has heard its
+	// advert, and the plugins' freshness check needs those readings.
+	if node == nil && len(neighbor) == 0 {
+		writeError(w, 404, "node not found")
 		return
 	}
 	samples = mergeBatterySamples(samples, neighbor)

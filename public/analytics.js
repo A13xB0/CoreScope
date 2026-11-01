@@ -184,6 +184,7 @@
                  inside this tab) and before Prefix Tool (utility tabs trail). -->
             <button class="tab-btn" data-tab="roles">Roles</button>
             <button class="tab-btn" data-tab="scopes">Scopes</button>
+            <button class="tab-btn" data-tab="battery">Battery</button>
             <button class="tab-btn" data-tab="prefix-tool">Prefix Tool</button>
           </div>
         </div>
@@ -403,6 +404,7 @@
       case 'roles': await renderRolesTab(el); break;
       case 'prefix-tool': await renderPrefixTool(el); break;
       case 'scopes': await renderScopesTab(el); break;
+      case 'battery': await renderBatteryPolicyTab(el); break;
     }
     // Auto-apply column resizing to all analytics tables
     requestAnimationFrame(() => {
@@ -5025,6 +5027,13 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _stopDistanceRet
             cell(r.unscoped) + cell(r.unknownScope) + cell(r.named) + '</tr>';
         }).join('') + '</tbody>' +
       '</table>';
+  }
+
+  // Battery tab: the read-only community polling policy (node-monitors.js).
+  async function renderBatteryPolicyTab(el) {
+    if (!window.NodeMonitors) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading…</div>';
+    await window.NodeMonitors.renderPolicy(el);
   }
 
   async function renderScopesTab(el) {

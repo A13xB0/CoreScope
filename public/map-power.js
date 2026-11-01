@@ -171,7 +171,7 @@
       '<dd style="margin-left:88px;padding:2px 0;">' + value + '</dd>';
   }
 
-  // popupRows adds Battery and Enclosure to a node's map popup.
+  // popupRows adds Battery, Enclosure and Monitoring to a node's map popup.
   function popupRows(n, now) {
     if (!n || (n.role !== 'repeater' && n.role !== 'room')) return '';
     var out = '';
@@ -186,6 +186,9 @@
     if (t && isFinite(t.c)) {
       out += row('Enclosure', Number(t.c).toFixed(1) + ' °C <span style="color:var(--text-muted)">· ' + esc(shortAge(t.ts, now)) + ' ago</span>');
     }
+    // Community polling: how many observers monitor it, and who polls it
+    // (node-monitors.js, from the row's monitored object).
+    if (window.NodeMonitors) out += window.NodeMonitors.popupRows(n, row);
     return out;
   }
 

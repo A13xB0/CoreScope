@@ -582,6 +582,8 @@ func applySchema(db *sql.DB) error {
 			PRIMARY KEY (node_id, observer_id)
 		) WITHOUT ROWID;
 		CREATE INDEX IF NOT EXISTS idx_gpc_observer ON guest_polling_claims(observer_id, last_seen);
+		-- key_mode, snr, plugin_version, policy_version and community (claim v2)
+		-- are added by migrateGuestPollingClaimsV2.
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("base schema: %w", err)
@@ -590,6 +592,9 @@ func applySchema(db *sql.DB) error {
 		return err
 	}
 	if err := migrateNeighborBatteryHeardHash(db); err != nil {
+		return err
+	}
+	if err := migrateGuestPollingClaimsV2(db); err != nil {
 		return err
 	}
 

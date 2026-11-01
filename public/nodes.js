@@ -73,6 +73,14 @@
         if ((va === null) !== (vb === null)) return va === null ? 1 : -1;
         if (va === null) return 0;
         return (va - vb) * dir;
+      } else if (col === 'monitored') {
+        // Monitored column: by eligible observers, direct coverage ahead of
+        // 1-hop only; rows nobody monitors always sort LAST.
+        var mv = window.NodeMonitors ? window.NodeMonitors.listValue : function () { return null; };
+        va = mv(a.monitored); vb = mv(b.monitored);
+        if ((va === null) !== (vb === null)) return va === null ? 1 : -1;
+        if (va === null) return 0;
+        return (va - vb) * dir;
       } else if (col === 'first_seen') {
         // Issue #1166: sort by node first_seen. Empty cells always sort
         // LAST (regardless of direction) so unknown timestamps don't
@@ -90,6 +98,7 @@
   }
   let lastHeard = localStorage.getItem('meshcore-nodes-last-heard') || '';
   let statusFilter = localStorage.getItem('meshcore-nodes-status-filter') || 'all';
+  let monitoredFilter = localStorage.getItem('meshcore-nodes-monitored-filter') || '';
   // #1845: "silent longer than N", the inverse of the Last Heard filter. Empty
   // means off. Ages come from getEffectiveHeardMs, whose last_heard includes
   // certain relays (#2260), so a repeater that forwards traffic is never
@@ -776,6 +785,8 @@
           </div>
         </div>
 
+        <div id="nodePollBannerFull" hidden></div>
+
         <div class="node-top-row">
           ${hasLoc ? `<div class="node-map-wrap"><div id="nodeFullMap" class="node-detail-map" style="height:100%;min-height:200px;border-radius:8px;overflow:hidden"></div></div>` : ''}
           <div class="node-qr-wrap${hasLoc ? '' : ' node-qr-wrap--full'}">
@@ -832,6 +843,7 @@
           ${'configured_scope' in n && n.configured_scope !== null ? `<tr id="row-configured-scope"><td title="Region scopes this node has CONFIGURED, confirmed via an observer /neighbors report (status=responded) — concrete evidence, distinct from observed default scope and transported scopes (#1865).${n.configured_scope_at ? ' Last confirmed ' + escapeHtml(String(n.configured_scope_at)) + '.' : ''}">Configured scope <span style="color:var(--status-green-text)" role="img" aria-label="confirmed"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-check"/></svg></span></td><td>${n.configured_scope === '' ? '<span style="color:var(--text-muted)">none configured</span>' : `<code style="color:var(--link-color)">${escapeHtml(n.configured_scope)}</code>`}</td></tr>` : ''}
           <tr id="nodeBatteryFull" hidden><td title="Latest battery voltage: from the node's own status report, or from an observer that polls it directly. The history is on the Analytics page.">Battery</td><td class="nb-val"></td></tr>
           <tr id="nodeTempFull" hidden><td title="The repeater's own chip temperature, from an observer that polls it directly or from its adverts. It runs warmer than the air around it. The history is on the Analytics page.">Temperature</td><td class="nb-val"></td></tr>
+          <tr id="nodePollingFull" hidden><td title="Who polls this repeater for its battery: the observer CoreScope elected, how often, and how many stand by. Details in the Monitored by card.">Polling</td><td class="nb-val"></td></tr>
           <tr><td>First Seen</td><td>${renderNodeTimestampHtml(n.first_seen)}</td></tr>
           <tr><td>${renderPacketCountLabel('fullNodePacketCountHelp')}</td><td>${stats.totalTransmissions || stats.totalPackets || n.advert_count || 0}${stats.totalObservations && stats.totalObservations !== (stats.totalTransmissions || stats.totalPackets) ? ' <span class="text-muted" style="font-size:0.85em">(seen ' + stats.totalObservations + '×)</span>' : ''}</td></tr>
           <tr><td>Packets Today</td><td>${stats.packetsToday || 0}</td></tr>
@@ -840,6 +852,8 @@
           <tr><td>Hash Prefix</td><td>${n.hash_size ? '<code style="font-family:var(--mono);font-weight:700">' + n.public_key.slice(0, n.hash_size * 2).toUpperCase() + '</code> (' + n.hash_size + '-byte)' : 'Unknown'}${n.hash_size_inconsistent ? ' <span style="color:var(--status-yellow);cursor:help" title="Seen: ' + (Array.isArray(n.hash_sizes_seen) ? n.hash_sizes_seen : []).join(', ') + '-byte"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-warning"/></svg> varies</span>' : ''}</td></tr>
           ${rfOn() ? `<tr><td title="LoRa radio settings this node last advertised to the MeshCore map">LoRa</td><td data-testid="node-detail-lora">${RfParams.detailHtml(rfFor(n), _rfParams.presets, Date.now(), rfDev(n))}</td></tr>` : ''}
         </table>
+
+        <div class="node-full-card" id="node-monitors" hidden></div>
 
         <div class="node-full-card" id="node-packets">
           ${(() => { const validPackets = adverts.filter(p => p.hash && p.timestamp); return `
@@ -920,6 +934,13 @@
         <div class="node-full-card skew-detail-section" id="node-clock-skew" style="display:none"></div>`;
       if (window.CSNotify) window.CSNotify.mount(document.getElementById('nodeNotifySlotFull'), n.public_key);
       if (window.NodeBattery) window.NodeBattery.mount(document.getElementById('nodeBatteryFull'), n.public_key, document.getElementById('nodeTempFull'));
+      if (window.NodeMonitors && (n.role === 'repeater' || n.role === 'room')) {
+        window.NodeMonitors.mount(n.public_key, {
+          line: document.getElementById('nodePollingFull'),
+          card: document.getElementById('node-monitors'),
+          banner: document.getElementById('nodePollBannerFull'),
+        });
+      }
 
       // Map
       if (hasLoc) {
@@ -1451,6 +1472,8 @@
       // #1268 M3: count before the LoRa filter, like the silence counts.
       updateLoraFilter(filtered.filter(n => rfDev(n)).length);
       if (loraFilter === 'differs' && rfOn()) filtered = filtered.filter(n => rfDev(n));
+      updateMonitoredFilter(filtered.some(n => n.monitored));
+      if (monitoredFilter && window.NodeMonitors) filtered = filtered.filter(n => window.NodeMonitors.matches(n, monitoredFilter));
       nodes = filtered;
 
       // Defensive filter: hide nodes with obviously corrupted data
@@ -1513,6 +1536,13 @@
     if (sel.options[1]) sel.options[1].textContent = 'LoRa: differs from nearby (' + count + ')';
   }
 
+  // updateMonitoredFilter shows the Monitored filter once any row carries
+  // community polling data (neighborBattery on), or while one is chosen.
+  function updateMonitoredFilter(any) {
+    const sel = document.getElementById('nodeMonitoredFilter');
+    if (sel) sel.hidden = !(any || monitoredFilter);
+  }
+
   function renderCounts() {
     const el = document.getElementById('nodeCounts');
     if (!el) return;
@@ -1557,6 +1587,12 @@
             <option value="">Silent for: Any</option>
             ${['1d','3d','7d','14d','30d'].map(k => `<option value="${k}" ${silentFor===k?'selected':''}>over ${k}${_silentCounts ? ` (${_silentCounts[k]})` : ''}</option>`).join('')}
           </select>
+          <select id="nodeMonitoredFilter" aria-label="Filter by battery polling coverage" hidden>
+            <option value="">Monitored: Any</option>
+            <option value="yes" ${monitoredFilter==='yes'?'selected':''}>Monitored</option>
+            <option value="direct" ${monitoredFilter==='direct'?'selected':''}>Monitored by a direct poller</option>
+            <option value="no" ${monitoredFilter==='no'?'selected':''}>Not monitored</option>
+          </select>
           <select id="nodeLoraFilter" aria-label="Show only nodes whose LoRa settings differ from nearby nodes" ${rfOn() ? '' : 'hidden'}>
             <option value="">LoRa: Any</option>
             <option value="differs" ${loraFilter==='differs'?'selected':''}>LoRa: differs from nearby (${_loraDiffCount})</option>
@@ -1573,6 +1609,7 @@
           <th scope="col" data-sort-key="first_seen" data-sort-default="desc" data-priority="3">First Seen</th>
           <th scope="col" data-sort-key="advert_count" data-sort-default="desc" data-priority="2">Adverts</th>
           <th scope="col" data-sort-key="battery" data-sort-default="asc" data-priority="3" title="Latest battery voltage of a repeater or room: its own status report or an observer that polls it. A dash when there is none or it is stale.">Battery</th>
+          <th scope="col" data-sort-key="monitored" data-sort-default="desc" data-priority="3" title="Observers eligible to poll this repeater for its battery, and the elected poller's route (Direct or 1 hop). A dash when no observer claims it.">Monitored</th>
         </tr></thead>
         <tbody id="nodesBody"></tbody>
       </table></div>
@@ -1599,6 +1636,12 @@
         const qs = params.toString();
         history.replaceState(null, '', base + (qs ? '?' + qs : ''));
       } catch (err) { /* URL sync is a convenience; never block the filter on it */ }
+      loadNodes();
+    });
+
+    document.getElementById('nodeMonitoredFilter').addEventListener('change', e => {
+      monitoredFilter = e.target.value;
+      try { localStorage.setItem('meshcore-nodes-monitored-filter', monitoredFilter); } catch (_) { /* per-viewer only */ }
       loadNodes();
     });
 
@@ -1725,7 +1768,7 @@
     if (!tbody) return;
 
     if (!nodes.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted" style="padding:24px">No nodes found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted" style="padding:24px">No nodes found</td></tr>';
       return;
     }
 
@@ -1772,6 +1815,7 @@
         <td>${n.first_seen ? renderNodeTimestampHtml(n.first_seen) : '<span class="text-muted">—</span>'}</td>
         <td>${n.advert_count || 0}</td>
         <td style="white-space:nowrap">${window.NodeBattery ? window.NodeBattery.listCell(n.battery) : ''}</td>
+        <td style="white-space:nowrap">${window.NodeMonitors ? window.NodeMonitors.listCell(n.monitored) : ''}</td>
       </tr>`;
     }).join('');
     bindFavStars(tbody);
@@ -1925,6 +1969,7 @@
             <dt>Last Heard</dt><dd>${renderNodeTimestampHtml(lastHeard || n.last_seen)}</dd>
             <div id="nodeBattery" hidden><dt>Battery</dt><dd class="nb-val"></dd></div>
             <div id="nodeTemp" hidden><dt>Temperature</dt><dd class="nb-val"></dd></div>
+            <div id="nodePolling" hidden><dt title="Who polls this repeater for its battery">Polling</dt><dd class="nb-val"></dd></div>
             <dt>First Seen</dt><dd>${renderNodeTimestampHtml(n.first_seen)}</dd>
             <dt>${renderPacketCountLabel('nodePacketCountHelp')}</dt><dd>${totalPackets}</dd>
             <dt>Packets Today</dt><dd>${stats.packetsToday || 0}</dd>
@@ -1994,6 +2039,9 @@
       </div>`;
     if (window.CSNotify) window.CSNotify.mount(document.getElementById('nodeNotifySlot'), n.public_key);
     if (window.NodeBattery) window.NodeBattery.mount(document.getElementById('nodeBattery'), n.public_key, document.getElementById('nodeTemp'));
+    if (window.NodeMonitors && (n.role === 'repeater' || n.role === 'room')) {
+      window.NodeMonitors.mount(n.public_key, { line: document.getElementById('nodePolling') });
+    }
 
     // Init map
     if (hasLoc) {

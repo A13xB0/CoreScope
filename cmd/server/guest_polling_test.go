@@ -58,9 +58,10 @@ func ownersRouter(t *testing.T, db *DB) *mux.Router {
 
 const nbNode2 = "a1b2c30011223344556677889900aabbccddeeff00112233445566779f41aa00"
 
-// Ranking: a recent reading beats fewer hops; then fewer hops; then the
-// earlier first claim. "mine" says whether the asker owns it, and the owner
-// is named.
+// Ranking on the original claims table (no v2 columns, as an older ingestor
+// leaves it): a claimant past the takeover with no reading loses to a proven
+// one; an unconfirmed direct claim ranks as 1 hop; then the earlier first
+// claim. "mine" says whether the asker owns it, and the owner is named.
 func TestGuestPollingOwnersRanking(t *testing.T) {
 	db := setupTestDB(t)
 	now := seedNeighborNode(t, db) // observers A (Corstorphine) and B (Pentland), neighbor_battery
@@ -84,8 +85,11 @@ func TestGuestPollingOwnersRanking(t *testing.T) {
 		t.Errorf("node 2 = %v, want owned by B (fewer hops) and mine", got[nbNode2])
 	}
 
-	// Equal hops and no readings: the earlier first claim wins.
+	// Equal (unconfirmed direct, so 1-hop) hops, no readings, neither past
+	// the takeover: the earlier first claim wins.
 	db.conn.Exec(`UPDATE guest_polling_claims SET reply_hops = 0 WHERE node_id = ?`, nbNode2)
+	db.conn.Exec(`UPDATE guest_polling_claims SET first_seen = ? WHERE node_id = ? AND observer_id = ?`,
+		now.Add(-90*time.Minute).Format(time.RFC3339), nbNode2, nbObsA)
 	got = getOwners(t, ownersRouter(t, db), nbObsB)
 	if got[nbNode2]["owner"] != nbObsA {
 		t.Errorf("node 2 with equal hops = %v, want A (earlier first claim)", got[nbNode2])

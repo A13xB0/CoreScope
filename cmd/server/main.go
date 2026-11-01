@@ -19,6 +19,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/meshcore-analyzer/dbschema"
+	"github.com/meshcore-analyzer/pollpolicy"
 )
 
 // Set via -ldflags at build time
@@ -373,6 +374,19 @@ func main() {
 		log.Fatalf("[users] %v", err)
 	}
 	srv.initGuestKeys(resolvedDB)
+	// Community polling policy (neighborBattery.polling): re-read when the
+	// config file changes (mtime, every 30 s) and on SIGHUP.
+	{
+		var polling *pollpolicy.Config
+		if cfg.NeighborBattery != nil {
+			polling = cfg.NeighborBattery.Polling
+		}
+		srv.pollPolicy = pollpolicy.NewHolder(polling)
+		stopPolicyWatch := pollpolicy.NewWatcher(srv.pollPolicy, []string{
+			filepath.Join(configDir, "config.json"), filepath.Join(configDir, "data", "config.json"),
+		}, log.Printf).Start(pollpolicy.ReloadInterval)
+		defer stopPolicyWatch()
+	}
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)
 

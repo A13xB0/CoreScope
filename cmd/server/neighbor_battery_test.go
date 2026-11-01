@@ -260,3 +260,18 @@ func TestNodeBatteryEndpoint_SharedHeardBy(t *testing.T) {
 		t.Errorf("heard_by names = %v, want Pole and Repeater McRepeaterface", names)
 	}
 }
+
+// An observer can read a repeater before CoreScope has heard its advert: the
+// readings are served (so a plugin's freshness check sees them) although the
+// node has no row yet.
+func TestNodeBatteryEndpoint_ReadingsBeforeTheNodeIsKnown(t *testing.T) {
+	db := setupTestDB(t)
+	now := time.Now().UTC()
+	createNeighborBatteryTable(t, db)
+	insertNeighborBattery(t, db, nbObsA, now.Add(-10*time.Minute), 4190, 6.0, 0)
+
+	body := getBattery(t, batteryRouter(t, db))
+	if body["latest_mv"].(float64) != 4190 || body["latest_ts"] == nil {
+		t.Errorf("latest = %v at %v, want 4190 with a timestamp", body["latest_mv"], body["latest_ts"])
+	}
+}

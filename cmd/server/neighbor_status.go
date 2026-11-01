@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/meshcore-analyzer/pollpolicy"
 )
 
 // The rest of a polled repeater's status reply (neighbor_status, written by
@@ -21,9 +22,13 @@ const defaultHideAfterHours = 24
 // same flag the ingestor stores readings under; the server gates the
 // per-observer polling keys, polling ownership and the /api/nodes battery
 // column on it.
+//
+// Polling is the community polling policy (internal/pollpolicy); main
+// re-reads it while running (Server.pollPolicy).
 type NeighborBatteryServerConfig struct {
-	Enabled        bool `json:"enabled,omitempty"`
-	HideAfterHours *int `json:"hideAfterHours,omitempty"`
+	Enabled        bool               `json:"enabled,omitempty"`
+	HideAfterHours *int               `json:"hideAfterHours,omitempty"`
+	Polling        *pollpolicy.Config `json:"polling,omitempty"`
 }
 
 // NeighborBatteryEnabled reports neighborBattery.enabled. Default false;

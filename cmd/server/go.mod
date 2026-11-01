@@ -75,3 +75,7 @@ replace github.com/meshcore-analyzer/mailer => ../../internal/mailer
 require github.com/meshcore-analyzer/guestkeys v0.0.0
 
 replace github.com/meshcore-analyzer/guestkeys => ../../internal/guestkeys
+
+require github.com/meshcore-analyzer/pollpolicy v0.0.0
+
+replace github.com/meshcore-analyzer/pollpolicy => ../../internal/pollpolicy

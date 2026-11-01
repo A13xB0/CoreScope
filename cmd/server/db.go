@@ -47,6 +47,8 @@ type DB struct {
 	neighborBatteryHeard     atomic.Bool // neighbor_battery_heard present (neighborBatteryHeardPresent)
 	neighborBatteryHeardHash atomic.Bool // neighbor_battery_heard.packet_hash present
 	guestPollingClaims       atomic.Bool // guest_polling_claims present (guestPollingClaimsPresent)
+	guestPollingClaimsV2     atomic.Bool // guest_polling_claims has the claim v2 columns (pollClaimsV2Present)
+	neighborEdgesTable       atomic.Bool // neighbor_edges present (neighborEdgesPresent)
 	inactiveNodesTable       atomic.Bool // inactive_nodes present; re-probed while absent (clientNameHeard)
 	advertEvidenceReadHook   func()      // test-only: immediately before a bulk mask query
 	conn                     *sql.DB

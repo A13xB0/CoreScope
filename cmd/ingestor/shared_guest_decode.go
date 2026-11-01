@@ -77,6 +77,12 @@ type sgClaim struct {
 	hops     int
 	via      string
 	at       time.Time
+	// key is how the poller logs in ("shared", "own", "password"); only a
+	// "shared" claimant can have sent a shared-key request.
+	key string
+	// pluginVersion is the claiming plugin's version ("" when unknown), for
+	// the policy's minimum when the reply is credited.
+	pluginVersion string
 }
 
 const (
@@ -190,60 +196,41 @@ func (d *sharedGuestDecoder) RefreshGuestKeys(now time.Time) {
 }
 
 // HandleClaim records a poller's claim over the repeaters it polls:
-// meshcore/<region>/<observer>/polling with
-// {"nodes":[{"node_id":<64-hex>,"reply_hops":N,"via":<64-hex>},…]}. Claims
-// are kept in memory for crediting decoded replies and in
-// guest_polling_claims for the server's one-poller-per-repeater ownership.
+// meshcore/<region>/<observer>/polling (claim v1 or v2, see
+// parsePollingClaims). Claims are kept in memory for crediting decoded
+// replies and in guest_polling_claims for the server's community polling
+// election. Every claim is stored, whatever the policy says of the observer:
+// the server decides eligibility.
 func (d *sharedGuestDecoder) HandleClaim(observerID string, msg map[string]interface{}, now time.Time) {
 	if d == nil {
 		return
 	}
-	observerID = strings.ToLower(strings.TrimSpace(observerID))
-	if !targetPubkeyRe.MatchString(observerID) {
+	observerID, _, parsed, ok := parsePollingClaims(observerID, msg)
+	if !ok {
 		return
 	}
-	// The topic names the publisher; a payload that disagrees is spoofing, so
-	// ignore it (same check as the /battery path).
-	if o, ok := msg["origin_id"].(string); ok && o != "" && strings.ToLower(o) != observerID {
-		return
-	}
-	nodes, _ := msg["nodes"].([]interface{})
 	var accepted []pollingClaim
 	d.mu.Lock()
 	d.evictStaleClaims(now)
-	for _, n := range nodes {
-		entry, ok := n.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		node, _ := entry["node_id"].(string)
-		node = strings.ToLower(strings.TrimSpace(node))
-		if !targetPubkeyRe.MatchString(node) {
-			continue
-		}
-		byObs := d.claims[node]
+	for _, pc := range parsed {
+		byObs := d.claims[pc.node]
 		if _, exists := byObs[observerID]; !exists && d.nClaims >= sgMaxClaims {
 			continue // full of fresh claims; don't grow further
 		}
-		c := sgClaim{observer: observerID, at: now}
-		if h, ok := entry["reply_hops"].(float64); ok && h >= 0 && h <= 64 {
-			c.hops = int(h)
-		}
-		if v, ok := entry["via"].(string); ok {
-			v = strings.ToLower(strings.TrimSpace(v))
-			if targetPubkeyRe.MatchString(v) {
-				c.via = v
-			}
+		c := sgClaim{observer: observerID, at: now, hops: pc.hops, key: pc.key, pluginVersion: pc.pluginVersion}
+		// Only a full key can be credited as a reading's relay.
+		if targetPubkeyRe.MatchString(pc.via) {
+			c.via = pc.via
 		}
 		if byObs == nil {
 			byObs = map[string]sgClaim{}
-			d.claims[node] = byObs
+			d.claims[pc.node] = byObs
 		}
 		if _, exists := byObs[observerID]; !exists {
 			d.nClaims++
 		}
 		byObs[observerID] = c
-		accepted = append(accepted, pollingClaim{node: node, hops: c.hops, via: c.via})
+		accepted = append(accepted, pc)
 	}
 	prune := now.Sub(d.claimPruned) >= sgClaimPruneEvery
 	if prune {
@@ -280,7 +267,9 @@ func (d *sharedGuestDecoder) evictStaleClaims(now time.Time) {
 }
 
 // claimOf is the fresh claim over a node by observer, or — with observer ""
-// — the most recent fresh claim by anyone; ok=false when none exists.
+// — the most recent fresh shared-key claim by anyone (a claimant that logs
+// in with its own key or a password cannot have sent a shared-key request);
+// ok=false when none exists.
 func (d *sharedGuestDecoder) claimOf(node, observer string, now time.Time) (sgClaim, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -288,6 +277,9 @@ func (d *sharedGuestDecoder) claimOf(node, observer string, now time.Time) (sgCl
 	found := false
 	for obs, c := range d.claims[node] {
 		if now.Sub(c.at) >= sgClaimTTL || (observer != "" && obs != observer) {
+			continue
+		}
+		if observer == "" && c.key != "" && c.key != claimKeyShared {
 			continue
 		}
 		if !found || c.at.After(best.at) || (c.at.Equal(best.at) && c.observer < best.observer) {
@@ -411,15 +403,30 @@ func (d *sharedGuestDecoder) Handle(observerID string, p *DecodedPacket, now tim
 // so it is that observer, with its own claim's route when it has one. The
 // shared key is credited to the most recent claimant of the node, or to the
 // shared key itself, route unknown, when no one has claimed it.
+//
+// Under the community polling policy a requester that is blocked, or whose
+// plugin (from its claim) is below the minimum version, is not credited: the
+// reading is kept, credited to nobody (the shared key, route unknown).
 func (d *sharedGuestDecoder) creditFor(k sgKey, node string, now time.Time) (string, sgClaim) {
+	requester, claim := d.sharedObs, sgClaim{}
 	if k.owner != "" {
-		c, _ := d.claimOf(node, k.owner, now)
-		return k.owner, c
+		requester, claim = k.owner, sgClaim{}
+		if c, ok := d.claimOf(node, k.owner, now); ok {
+			claim = c
+		}
+	} else if c, ok := d.claimOf(node, "", now); ok {
+		requester, claim = c.observer, c
 	}
-	if c, ok := d.claimOf(node, "", now); ok {
-		return c.observer, c
+	if requester != d.sharedObs {
+		pol := currentPollingPolicy(now)
+		if pol.IsBlocked(requester) || !pol.VersionOK(claim.pluginVersion) {
+			pollingDrops.logf(requester, "credit", now,
+				"[shared-guest] reply for %.8s requested by %.8s kept uncredited (blocked or plugin below %s)",
+				node, requester, pol.MinPluginVersion)
+			return d.sharedObs, sgClaim{}
+		}
 	}
-	return d.sharedObs, sgClaim{}
+	return requester, claim
 }
 
 // reading builds a NeighborBatteryReading from a decrypted reply body, or nil
