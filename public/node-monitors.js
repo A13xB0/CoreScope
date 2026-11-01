@@ -93,7 +93,7 @@
   function pollingLine(data) {
     if (!data) return '';
     var mons = data.monitors || [];
-    if (data.excluded) return '<span class="text-muted">Not polled: excluded at the owner\'s request</span>';
+    if (data.excluded) return '<span class="text-muted">Not polled: excluded by CoreScope</span>';
     if (!mons.length) return '';
     if (data.paused) {
       return '<span class="nm-paused-text">Paused (network-wide)</span>' + (data.paused_until ? ' · until ' + esc(clock(data.paused_until)) : '');
@@ -150,7 +150,7 @@
       (data.paused ? ' · paused' : data.excluded ? ' · excluded' : ' · ' + direct + ' direct');
     var out = '<h4 title="Observers running the Neighbour Battery plugin that claim this repeater. CoreScope elects one to poll it; the others stand by. Policy ' + esc(data.policy_version || '') + '.">Monitored by <span class="nm-head-sum">' + head + '</span></h4>';
     if (data.excluded) {
-      out += '<div class="nm-note">This repeater\'s owner asked not to be polled. Observers that claim it are listed but send nothing.</div>';
+      out += '<div class="nm-note">This repeater is excluded by CoreScope. Observers that claim it are listed but send nothing.</div>';
     }
     out += '<div class="nm-rows">' + mons.map(function (m) {
       return '<div class="nm-row' + (m.role === 'version_disabled' || m.role === 'blocked' || m.role === 'stale' ? ' nm-row-dim' : '') + '">' +
