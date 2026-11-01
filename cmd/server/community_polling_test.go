@@ -618,3 +618,21 @@ func TestGuestPollingSummary(t *testing.T) {
 		t.Errorf("policy %v", p)
 	}
 }
+
+// Standbys queue: each waits one more grace period, so a silent poller is
+// replaced by one standby rather than by every standby at once.
+func TestElectNodeStandbysQueue(t *testing.T) {
+	const obsC = "cc" + "11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11"
+	pol := (&pollpolicy.Config{}).Effective(cpNow)
+	el := electNode(nbNode, []pollClaimRow{claim(obsC, 1), claim(nbObsB, 1), claim(nbObsA, 1)}, pol, cpNow)
+	ranks := []int{}
+	for _, c := range el.Claims {
+		ranks = append(ranks, c.StandbyRank)
+	}
+	if len(ranks) != 3 || ranks[0] != 0 || ranks[1] != 1 || ranks[2] != 2 {
+		t.Errorf("ranks = %v, want the poller 0 and standbys 1, 2", ranks)
+	}
+	if standbyWait(30*time.Minute, 2) != time.Hour || standbyWait(30*time.Minute, 0) != 30*time.Minute {
+		t.Errorf("standbyWait wrong")
+	}
+}

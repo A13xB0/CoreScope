@@ -70,6 +70,10 @@ type pollClaimRow struct {
 
 // electedClaim is a claim after the election.
 type electedClaim struct {
+	// StandbyRank is this standby\'s place in the queue, from 1. Each waits one
+	// more grace period, so a silent poller is replaced by one standby and not
+	// by all of them at once.
+	StandbyRank int
 	pollClaimRow
 	EffHops         int
 	DirectConfirmed bool
@@ -191,6 +195,7 @@ func electNode(node string, claims []pollClaimRow, pol *pollpolicy.Policy, now t
 			out.Owner = &out.Claims[i]
 		} else {
 			out.Claims[i].Role = roleStandby
+			out.Claims[i].StandbyRank = i
 		}
 	}
 	if out.Owner != nil {

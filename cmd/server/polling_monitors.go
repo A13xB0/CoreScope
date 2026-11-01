@@ -91,7 +91,7 @@ func (s *Server) handleNodeMonitors(w http.ResponseWriter, r *http.Request) {
 		if c.Eligible && !latest.IsZero() {
 			nextDue = isoOrNil(latest.Add(el.Window))
 			if c.Role == roleStandby {
-				standbyDue = isoOrNil(latest.Add(el.Window + pol.Grace()))
+				standbyDue = isoOrNil(latest.Add(el.Window + standbyWait(pol.Grace(), c.StandbyRank)))
 			}
 		}
 		monitors = append(monitors, map[string]interface{}{
@@ -113,6 +113,7 @@ func (s *Server) handleNodeMonitors(w http.ResponseWriter, r *http.Request) {
 			"readings_7d":      c.Readings7d,
 			"next_due":         nextDue,
 			"standby_due":      standbyDue,
+			"standby_rank":     c.StandbyRank,
 		})
 	}
 	writeJSON(w, map[string]interface{}{

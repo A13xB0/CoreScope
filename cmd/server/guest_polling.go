@@ -91,16 +91,25 @@ func (s *Server) handleGuestPollingPolicy(w http.ResponseWriter, r *http.Request
 
 // ownerEntry is one node of the /owners answer.
 type ownerEntry struct {
-	Owner      string      `json:"owner"`
-	OwnerName  string      `json:"owner_name"`
-	Mine       bool        `json:"mine"`
-	OwnerHops  *int        `json:"owner_hops"`
-	Role       string      `json:"role"`
-	LatestTs   interface{} `json:"latest_ts"`
-	WindowS    int         `json:"window_s"`
-	NextDue    interface{} `json:"next_due"`
-	StandbyDue interface{} `json:"standby_due"`
-	Excluded   bool        `json:"excluded"`
+	Owner       string      `json:"owner"`
+	OwnerName   string      `json:"owner_name"`
+	Mine        bool        `json:"mine"`
+	OwnerHops   *int        `json:"owner_hops"`
+	Role        string      `json:"role"`
+	LatestTs    interface{} `json:"latest_ts"`
+	WindowS     int         `json:"window_s"`
+	NextDue     interface{} `json:"next_due"`
+	StandbyDue  interface{} `json:"standby_due"`
+	StandbyRank int         `json:"standby_rank"`
+	Excluded    bool        `json:"excluded"`
+}
+
+// standbyWait is how far past the window a standby of this rank waits.
+func standbyWait(grace time.Duration, rank int) time.Duration {
+	if rank < 1 {
+		rank = 1
+	}
+	return grace * time.Duration(rank)
 }
 
 // GetPollingOwners runs the election for every node the observer claimed
@@ -173,9 +182,12 @@ func (db *DB) GetPollingOwners(observer, pluginVersion string, pol *pollpolicy.P
 			window = el.Window
 		}
 		e.WindowS = int(window / time.Second)
+		if e.Role == roleStandby {
+			e.StandbyRank = mine.StandbyRank
+		}
 		if at := latest[node]; !at.IsZero() {
 			e.NextDue = isoOrNil(at.Add(window))
-			e.StandbyDue = isoOrNil(at.Add(window + grace))
+			e.StandbyDue = isoOrNil(at.Add(window + standbyWait(grace, mine.StandbyRank)))
 		}
 		out[node] = e
 	}
