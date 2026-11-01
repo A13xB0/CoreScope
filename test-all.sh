@@ -112,6 +112,7 @@ node tests/unit/test-node-analytics-certain-timeline.js
 node tests/unit/test-node-battery-line.js
 node tests/unit/test-map-power.js
 node tests/unit/test-nodes-battery-column.js
+node tests/unit/test-node-monitors.js
 node tests/unit/test-node-status-charts.js
 node tests/unit/test-issue-661-observer-airtime.js
 node tests/unit/test-issue-1268-rf-params.js

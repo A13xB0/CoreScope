@@ -287,6 +287,7 @@ window.ObserverDetailNaiveBanner = {
           <strong>How this is computed:</strong> when this observer and another observer see the same packet, we compare their receive timestamps. The median deviation across all multi-observer packets is this observer's offset.
         </div>
       </div>` : ''}
+      <div class="node-full-card" id="obsMonitors" style="margin-bottom:20px" hidden></div>
       <div class="obs-charts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:16px">
         <div class="chart-card" style="padding:12px">
           <h3 style="margin:0 0 8px;font-size:0.95em">Packets Over Time</h3>
@@ -309,6 +310,9 @@ window.ObserverDetailNaiveBanner = {
         <h3 style="font-size:0.95em">Recent Packets</h3>
         <div id="obsRecentPackets"><div class="text-muted">Loading…</div></div>
       </div>`;
+
+    // Community polling: the repeaters this observer claims (node-monitors.js).
+    if (window.NodeMonitors) window.NodeMonitors.mountObserver(document.getElementById('obsMonitors'), obs.id);
 
     // Render charts
     if (analytics.timeline && analytics.timeline.length > 0) {
