@@ -189,6 +189,7 @@
             <div id="batteryEmpty" style="display:none;padding:20px;text-align:center;color:var(--text-muted);font-size:12px">No battery telemetry recorded for this node in this window.</div>
             <div id="batteryReadings" class="analytics-table-scroll" style="display:none"></div>
           </div>
+          <div class="analytics-chart-card full" id="nodeMonitorsCard" hidden><div id="nodeMonitorsSlot" hidden></div></div>
           <div class="analytics-chart-card full" id="nodeStatusCard" hidden>
             <h4>Repeater Status</h4>
             <div class="analytics-chart-desc">From the status replies an observer polling this repeater directly publishes with its battery. Rates are per hour between two replies; a reboot resets the counters.</div>
@@ -231,6 +232,12 @@
     buildHopChart(data);
     buildHeatmap(data);
     loadBatteryChart(pubkey, currentDays, isCurrent);
+    if (window.NodeMonitors) {
+      const slot = document.getElementById('nodeMonitorsSlot');
+      NodeMonitors.mount(pubkey, { card: slot }).then(() => {
+        if (isCurrent()) document.getElementById('nodeMonitorsCard').hidden = slot.hidden;
+      });
+    }
     if (window.NodeStatusCharts) NodeStatusCharts.load(document.getElementById('nodeStatusCard'), pubkey, currentDays, isCurrent);
     NodeHopAnalytics.load(document.getElementById('hopCountSection'), pubkey, currentDays);
   }
