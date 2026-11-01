@@ -4,25 +4,21 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/meshcore-analyzer/pollpolicy"
 )
 
 // Polling ownership: one poller per repeater. Each observer publishes the
 // repeaters it polls (meshcore/<region>/<observer>/polling), which the
-// ingestor keeps in guest_polling_claims. When several observers claim one
-// repeater, all but one should stand down — they would otherwise all poll it
-// — and /api/guest-polling/owners tells an observer, for each repeater it
-// claims, which observer that one is.
+// ingestor keeps in guest_polling_claims. /api/guest-polling/owners tells an
+// observer, for each repeater it claims, who polls it and what it should do
+// itself — the community polling election in polling_election.go, under the
+// policy /api/guest-polling/policy serves.
 //
-// The owner is picked from the observers that claimed the repeater in the
-// last hour (so a poller that goes quiet hands over within the hour), ranked
-// by: a battery reading credited to it in the last two hours first (it is
-// demonstrably getting answers), then fewer reply hops, then the earliest
-// first claim, then observer id.
-
-const (
-	pollOwnerClaimWindow   = time.Hour
-	pollOwnerReadingWindow = 2 * time.Hour
-)
+// Old plugins only read owner and mine, so whenever this observer must not
+// poll at all (it is blocked, its plugin is below the minimum, polling is
+// paused, or the node is excluded) the owner is a sentinel all-zero key
+// with mine false: an old plugin stands down without knowing why.
 
 // guestPollingClaimsPresent reports whether guest_polling_claims exists; an
 // older ingestor never creates it, so it is re-probed until it does.
@@ -31,101 +27,190 @@ func (db *DB) guestPollingClaimsPresent() bool {
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'guest_polling_claims'`)
 }
 
-// pollClaim is one eligible claimant of a node.
-type pollClaim struct {
-	node, observer string
-	hops           int
-	firstSeen      string
-	hasReading     bool
+// policyJSON is the /policy body. versionOK is reported as given;
+// observer_blocked only when an observer was named.
+func policyJSON(pol *pollpolicy.Policy, observer string, versionOK bool) map[string]interface{} {
+	windows := make(map[string]int, len(pol.NodeMinutes))
+	for k, m := range pol.NodeMinutes {
+		windows[k] = m * 60
+	}
+	out := map[string]interface{}{
+		"version":            pol.Version,
+		"direct_s":           pol.DirectMinutes * 60,
+		"one_hop_s":          pol.OneHopMinutes * 60,
+		"grace_s":            pol.StandbyGraceMinutes * 60,
+		"max_requests":       pol.MaxRequestsPerWindow,
+		"takeover_after":     pol.TakeoverAfter,
+		"paused":             pol.Paused,
+		"paused_reason":      pol.PausedReason,
+		"paused_until":       pol.PausedUntil,
+		"excluded_nodes":     pol.ExcludedNodes,
+		"node_windows":       windows,
+		"min_plugin_version": pol.MinPluginVersion,
+		"min_version_reason": pol.MinVersionReason,
+		"version_ok":         versionOK,
+	}
+	if observer != "" {
+		out["observer_blocked"] = pol.IsBlocked(observer)
+	}
+	return out
 }
 
-// pollOwnerLess ranks two claimants of one node: the earlier is the owner.
-func pollOwnerLess(a, b pollClaim) bool {
-	if a.hasReading != b.hasReading {
-		return a.hasReading
+// pollingQuery reads the observer (required or optional) and plugin_version
+// parameters; ok is false when a 400 was written.
+func pollingQuery(w http.ResponseWriter, r *http.Request, required bool) (obs, pluginVersion string, ok bool) {
+	q := r.URL.Query()
+	obs = strings.ToLower(strings.TrimSpace(q.Get("observer")))
+	if obs == "" && !required {
+		return "", strings.TrimSpace(q.Get("plugin_version")), true
 	}
-	if a.hops != b.hops {
-		return a.hops < b.hops
+	if !hex64Re.MatchString(obs) {
+		writeError(w, http.StatusBadRequest, "observer must be 64 hex")
+		return "", "", false
 	}
-	if a.firstSeen != b.firstSeen {
-		return a.firstSeen < b.firstSeen
-	}
-	return a.observer < b.observer
+	return obs, strings.TrimSpace(q.Get("plugin_version")), true
 }
 
-// GetPollingOwners returns, for every node the observer claimed within the
-// claim window, the owning observer. One query: the claims on those nodes,
-// each with whether it has a recent reading.
-func (db *DB) GetPollingOwners(observer string, now time.Time) (map[string]string, error) {
-	out := map[string]string{}
-	if !db.guestPollingClaimsPresent() {
-		return out, nil
+// handleGuestPollingPolicy serves GET /api/guest-polling/policy.
+func (s *Server) handleGuestPollingPolicy(w http.ResponseWriter, r *http.Request) {
+	if s == nil || s.cfg == nil || !s.cfg.NeighborBatteryEnabled() {
+		http.NotFound(w, r)
+		return
 	}
-	claimCut := now.UTC().Add(-pollOwnerClaimWindow).Format(guestKeyTimeLayout)
-	readCut := now.UTC().Add(-pollOwnerReadingWindow).Format(guestKeyTimeLayout)
-	hasReading := "0"
-	args := []interface{}{}
-	if db.neighborBatteryPresent() {
-		hasReading = `EXISTS (SELECT 1 FROM neighbor_battery b
-			WHERE b.node_id = c.node_id AND b.observer_id = c.observer_id AND b.sampled_at >= ?)`
-		args = append(args, readCut)
+	obs, pv, ok := pollingQuery(w, r, false)
+	if !ok {
+		return
 	}
-	args = append(args, claimCut, observer, claimCut)
-	rows, err := db.conn.Query(`
-		SELECT c.node_id, c.observer_id, c.reply_hops, c.first_seen, `+hasReading+`
-		FROM guest_polling_claims c
-		WHERE c.last_seen >= ?
-		  AND c.node_id IN (SELECT node_id FROM guest_polling_claims WHERE observer_id = ? AND last_seen >= ?)`,
-		args...)
+	pol := s.pollingPolicy(time.Now())
+	versionOK := true
+	if pv != "" {
+		versionOK = pol.VersionOK(pv)
+	}
+	writeJSON(w, policyJSON(pol, obs, versionOK))
+}
+
+// ownerEntry is one node of the /owners answer.
+type ownerEntry struct {
+	Owner      string      `json:"owner"`
+	OwnerName  string      `json:"owner_name"`
+	Mine       bool        `json:"mine"`
+	OwnerHops  *int        `json:"owner_hops"`
+	Role       string      `json:"role"`
+	LatestTs   interface{} `json:"latest_ts"`
+	WindowS    int         `json:"window_s"`
+	NextDue    interface{} `json:"next_due"`
+	StandbyDue interface{} `json:"standby_due"`
+	Excluded   bool        `json:"excluded"`
+}
+
+// GetPollingOwners runs the election for every node the observer claimed
+// within the last hour and says, for each, who polls it and the observer's
+// own role. pluginVersion is the asking plugin's version ("" when it did not
+// say; then its claims' version is used).
+func (db *DB) GetPollingOwners(observer, pluginVersion string, pol *pollpolicy.Policy, now time.Time) (map[string]*ownerEntry, bool, error) {
+	out := map[string]*ownerEntry{}
+	now = now.UTC()
+	fresh := now.Add(-pollClaimFresh)
+	claims, err := db.loadPollClaims(
+		`c.node_id IN (SELECT node_id FROM guest_polling_claims WHERE observer_id = ? AND last_seen >= ?)`,
+		[]interface{}{observer, fresh.Format(guestKeyTimeLayout)}, fresh, now)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
-	defer rows.Close()
-	best := map[string]pollClaim{}
-	for rows.Next() {
-		var c pollClaim
-		var has int
-		if err := rows.Scan(&c.node, &c.observer, &c.hops, &c.firstSeen, &has); err != nil {
-			return nil, err
+	// The asking plugin's version: as it says now, else as its claims said.
+	version := pluginVersion
+	for _, rows := range claims {
+		for i := range rows {
+			if rows[i].Observer != observer {
+				continue
+			}
+			if pluginVersion != "" {
+				rows[i].PluginVersion = pollpolicy.PluginVersionString(pluginVersion)
+			} else if version == "" {
+				version = rows[i].PluginVersion
+			}
 		}
-		c.hasReading = has != 0
-		if cur, ok := best[c.node]; !ok || pollOwnerLess(c, cur) {
-			best[c.node] = c
+	}
+	versionOK := pol.VersionOK(version)
+	disabled := pol.IsBlocked(observer) || !versionOK
+
+	nodes := make([]string, 0, len(claims))
+	for n := range claims {
+		nodes = append(nodes, n)
+	}
+	latest := db.latestNodeReadings(nodes)
+	grace := pol.Grace()
+	for node, rows := range claims {
+		el := electNode(node, rows, pol, now)
+		var mine *electedClaim
+		for i := range el.Claims {
+			if el.Claims[i].Observer == observer {
+				mine = &el.Claims[i]
+			}
 		}
+		if mine == nil {
+			continue
+		}
+		e := &ownerEntry{Excluded: pol.IsExcluded(node), LatestTs: isoOrNil(latest[node])}
+		window := mine.Window
+		switch {
+		case disabled:
+			e.Owner, e.OwnerName, e.Role = pollpolicy.SentinelOwner, "nobody (this observer is disabled)", roleDisabled
+		case pol.Paused:
+			e.Owner, e.OwnerName, e.Role = pollpolicy.SentinelOwner, "nobody (paused)", rolePaused
+		case e.Excluded:
+			e.Owner, e.OwnerName, e.Role = pollpolicy.SentinelOwner, "nobody (excluded)", roleExcluded
+		case !mine.Community || el.Owner == nil:
+			hops := mine.EffHops
+			e.Owner, e.Mine, e.Role, e.OwnerHops = observer, true, roleIndependent, &hops
+		default:
+			hops := el.Owner.EffHops
+			e.Owner, e.Mine, e.OwnerHops = el.Owner.Observer, el.Owner.Observer == observer, &hops
+			e.Role = roleStandby
+			if e.Mine {
+				e.Role = rolePolling
+			}
+			window = el.Window
+		}
+		e.WindowS = int(window / time.Second)
+		if at := latest[node]; !at.IsZero() {
+			e.NextDue = isoOrNil(at.Add(window))
+			e.StandbyDue = isoOrNil(at.Add(window + grace))
+		}
+		out[node] = e
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for node, c := range best {
-		out[node] = c.observer
-	}
-	return out, nil
+	return out, versionOK, nil
 }
 
-// handleGuestPollingOwners serves GET /api/guest-polling/owners?observer=<64-hex>.
+// handleGuestPollingOwners serves
+// GET /api/guest-polling/owners?observer=<64-hex>[&plugin_version=x.y.z].
 func (s *Server) handleGuestPollingOwners(w http.ResponseWriter, r *http.Request) {
 	if s == nil || s.cfg == nil || !s.cfg.NeighborBatteryEnabled() {
 		http.NotFound(w, r)
 		return
 	}
-	obs := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("observer")))
-	if !hex64Re.MatchString(obs) {
-		writeError(w, http.StatusBadRequest, "observer must be 64 hex")
+	obs, pv, ok := pollingQuery(w, r, true)
+	if !ok {
 		return
 	}
-	owners, err := s.db.GetPollingOwners(obs, time.Now())
+	now := time.Now()
+	pol := s.pollingPolicy(now)
+	owners, versionOK, err := s.db.GetPollingOwners(obs, pv, pol, now)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	names := map[string]string{}
-	for _, o := range owners {
-		names[o] = ""
+	for _, e := range owners {
+		if e.Owner != pollpolicy.SentinelOwner {
+			names[e.Owner] = ""
+		}
 	}
 	s.db.fillObserverNames(names)
-	nodes := make(map[string]interface{}, len(owners))
-	for n, o := range owners {
-		nodes[n] = map[string]interface{}{"owner": o, "owner_name": names[o], "mine": o == obs}
+	for _, e := range owners {
+		if e.Owner != pollpolicy.SentinelOwner {
+			e.OwnerName = names[e.Owner]
+		}
 	}
-	writeJSON(w, map[string]interface{}{"observer": obs, "nodes": nodes})
+	writeJSON(w, map[string]interface{}{"observer": obs, "nodes": owners, "policy": policyJSON(pol, obs, versionOK)})
 }

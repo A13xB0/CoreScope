@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/meshcore-analyzer/pollpolicy"
 	"github.com/meshcore-analyzer/prunequeue"
 	"golang.org/x/sync/singleflight"
 )
@@ -165,6 +166,9 @@ type Server struct {
 	// neighborBattery is off or guest_keys.db could not be opened.
 	guestKeys     *guestKeyStore
 	guestKeysStop chan struct{}
+	// pollPolicy is the hot-reloaded neighborBattery.polling block (main
+	// installs it with a watcher); nil serves the block in cfg.
+	pollPolicy *pollpolicy.Holder
 }
 
 // PerfStats tracks request performance.
@@ -344,6 +348,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/nodes/{pubkey}/analytics", s.handleNodeAnalytics).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/hop_analytics", s.handleNodeHopAnalytics).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/battery", s.handleNodeBattery).Methods("GET")
+	r.HandleFunc("/api/nodes/{pubkey}/monitors", s.handleNodeMonitors).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/status-history", s.handleNodeStatusHistory).Methods("GET")
 	r.HandleFunc("/api/shared-guest/key", s.handleSharedGuestKey).Methods("GET")
 	// Per-observer polling keys and polling ownership: registered always,
@@ -351,6 +356,8 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/guest-keys", s.handleGuestKeyUpload).Methods("POST")
 	r.HandleFunc("/api/guest-keys/{observer_id}", s.handleGuestKeyGet).Methods("GET")
 	r.HandleFunc("/api/guest-polling/owners", s.handleGuestPollingOwners).Methods("GET")
+	r.HandleFunc("/api/guest-polling/policy", s.handleGuestPollingPolicy).Methods("GET")
+	r.HandleFunc("/api/guest-polling/summary", s.handleGuestPollingSummary).Methods("GET")
 	r.HandleFunc("/api/nodes/clock-skew", s.handleFleetClockSkew).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/clock-skew", s.handleNodeClockSkew).Methods("GET")
 	r.HandleFunc("/api/observers/clock-skew", s.handleObserverClockSkew).Methods("GET")
@@ -398,6 +405,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/observers/metrics/summary", s.handleMetricsSummary).Methods("GET")
 	r.HandleFunc("/api/observers/{id}/metrics", s.handleObserverMetrics).Methods("GET")
 	r.HandleFunc("/api/observers/{id}/analytics", s.handleObserverAnalytics).Methods("GET")
+	r.HandleFunc("/api/observers/{id}/monitors", s.handleObserverMonitors).Methods("GET")
 	r.HandleFunc("/api/observers/{id}", s.handleObserverDetail).Methods("GET")
 	r.HandleFunc("/api/observers", s.handleObservers).Methods("GET")
 	r.HandleFunc("/api/traces/{hash}", s.handleTraces).Methods("GET")
@@ -1600,6 +1608,9 @@ func (s *Server) buildNodesResponse(r *http.Request) (NodeListResponse, error) {
 	// Latest battery per repeater/room for the list's Battery column
 	// (node_battery_list.go); no-op unless neighborBattery is enabled.
 	s.enrichNodesBattery(nodes)
+	// Community polling: how many eligible observers claim each row
+	// (polling_monitors.go); no-op unless neighborBattery is enabled.
+	s.enrichNodesMonitored(nodes)
 	if s.store != nil {
 		hashInfo := s.store.GetNodeHashSizeInfo()
 		relayWindow := s.cfg.GetHealthThresholds().RelayActiveHours
