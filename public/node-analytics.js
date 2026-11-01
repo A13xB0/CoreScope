@@ -497,15 +497,17 @@
     const thr = (data && data.thresholds) || { low_mv: 3300, critical_mv: 3000 };
 
     if (badge) {
-      const STATUS_COLOR = { ok: '#51cf66', low: '#fcc419', critical: '#ff6b6b', no_battery: 'var(--text-muted)', unknown: 'var(--text-muted)' };
+      const STATUS_COLOR = { ok: 'var(--success)', low: 'var(--warning)', critical: 'var(--danger)', no_battery: 'var(--text-muted)', unknown: 'var(--text-muted)' };
       const label = data && data.status === 'ok' ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-battery-high"/></svg> OK'
         : data && data.status === 'low' ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-warning"/></svg> Low'
         : data && data.status === 'critical' ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-battery-low"/></svg> Critical'
         : data && data.status === 'no_battery' ? '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-prohibit"/></svg> No battery fitted'
         : 'No data';
-      const mv = data && data.latest_mv ? ' · ' + Number(data.latest_mv) + ' mV' : '';
-      badge.innerHTML = label + mv;
-      badge.style.color = STATUS_COLOR[(data && data.status) || 'unknown'];
+      const mv = data && data.latest_mv != null && data.status !== 'no_battery' ? ' · ' + data.latest_mv + ' mV' : '';
+      badge.innerHTML = label; // Only fixed status markup is parsed as HTML.
+      badge.insertAdjacentText('beforeend', mv);
+      badge.style.color = Object.prototype.hasOwnProperty.call(STATUS_COLOR, data && data.status)
+        ? STATUS_COLOR[data.status] : STATUS_COLOR.unknown;
     }
     renderBatteryReportedBy(document.getElementById('batteryReportedBy'), data);
     renderBatteryReadings(document.getElementById('batteryReadings'), samples);

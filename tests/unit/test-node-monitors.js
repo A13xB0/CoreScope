@@ -62,8 +62,8 @@ console.log('Node page');
 }
 {
   const d = data({ excluded: true, monitors: [mon({ role: 'excluded' })] });
-  assert(NM.pollingLine(d).includes('excluded at the owner'), 'excluded line');
-  assert(NM.cardHtml(d).includes('asked not to be polled'), 'excluded note in the card');
+  assert(NM.pollingLine(d).includes('excluded by CoreScope'), 'excluded line');
+  assert(NM.cardHtml(d).includes('is excluded by CoreScope'), 'excluded note in the card');
   assert(NM.pollingLine(data({})) === '' && NM.cardHtml(data({})) === '', 'nothing to show for an unclaimed repeater');
   assert(NM.pollingLine(data({ monitors: [mon({ role: 'independent' })] })).includes('polling independently'), 'independent pollers');
 }

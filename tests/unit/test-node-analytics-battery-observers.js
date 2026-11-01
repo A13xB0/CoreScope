@@ -36,7 +36,8 @@ function load() {
   const els = {};
   const calls = [];
   const charts = [];
-  const mkEl = () => ({ style: {}, textContent: '', innerHTML: '' });
+  const mkEl = () => ({ style: {}, textContent: '', innerHTML: '',
+    insertAdjacentText(_where, text) { this.innerHTML += text; } });
   const ctx = {
     console, Math, JSON, Date, Number, String, Array, Object, Map, Promise, isNaN, setTimeout, encodeURIComponent,
     getComputedStyle: () => ({ getPropertyValue: () => '' }),

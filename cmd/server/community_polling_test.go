@@ -219,7 +219,7 @@ func policyServer(t *testing.T, db *DB, enabled bool, pc *pollpolicy.Config) (*S
 	return srv, r
 }
 
-func getJSON(t *testing.T, r *mux.Router, url string, wantCode int) map[string]interface{} {
+func getMonitorsJSON(t *testing.T, r *mux.Router, url string, wantCode int) map[string]interface{} {
 	t.Helper()
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("GET", url, nil))
@@ -239,10 +239,10 @@ func getJSON(t *testing.T, r *mux.Router, url string, wantCode int) map[string]i
 func TestGuestPollingPolicyEndpoint(t *testing.T) {
 	db := setupTestDB(t)
 	_, off := policyServer(t, db, false, nil)
-	getJSON(t, off, "/api/guest-polling/policy", 404)
+	getMonitorsJSON(t, off, "/api/guest-polling/policy", 404)
 
 	_, r := policyServer(t, db, true, nil)
-	body := getJSON(t, r, "/api/guest-polling/policy", 200)
+	body := getMonitorsJSON(t, r, "/api/guest-polling/policy", 200)
 	if body["direct_s"] != 3600.0 || body["one_hop_s"] != 7200.0 || body["grace_s"] != 1800.0 ||
 		body["max_requests"] != 2.0 || body["takeover_after"] != 2.0 || body["paused"] != false ||
 		body["version_ok"] != true || body["min_plugin_version"] != "" {
@@ -257,7 +257,7 @@ func TestGuestPollingPolicyEndpoint(t *testing.T) {
 	if v, _ := body["version"].(string); len(v) != 8 {
 		t.Errorf("version %v", body["version"])
 	}
-	getJSON(t, r, "/api/guest-polling/policy?observer=xyz", 400)
+	getMonitorsJSON(t, r, "/api/guest-polling/policy?observer=xyz", 400)
 
 	until := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
 	cfg := &pollpolicy.Config{DirectMinutes: 90, Paused: true, PausedReason: "survey", PausedUntil: until.Format(time.RFC3339),
@@ -276,7 +276,7 @@ func TestGuestPollingPolicyEndpoint(t *testing.T) {
 		{"?observer=" + nbObsB, true, false},
 	}
 	for _, tc := range cases {
-		body = getJSON(t, r, "/api/guest-polling/policy"+tc.query, 200)
+		body = getMonitorsJSON(t, r, "/api/guest-polling/policy"+tc.query, 200)
 		if body["version_ok"] != tc.versionOK || body["observer_blocked"] != tc.observerBlocked {
 			t.Errorf("%s: version_ok %v observer_blocked %v", tc.query, body["version_ok"], body["observer_blocked"])
 		}
@@ -305,7 +305,7 @@ func TestGuestPollingPolicyHotReload(t *testing.T) {
 	c, _ := pollpolicy.ReadFile(path)
 	srv.pollPolicy = pollpolicy.NewHolder(c)
 	w := pollpolicy.NewWatcher(srv.pollPolicy, []string{path}, nil)
-	before := getJSON(t, r, "/api/guest-polling/policy", 200)
+	before := getMonitorsJSON(t, r, "/api/guest-polling/policy", 200)
 	if before["direct_s"] != 5400.0 {
 		t.Fatalf("before %v", before)
 	}
@@ -315,7 +315,7 @@ func TestGuestPollingPolicyHotReload(t *testing.T) {
 	if changed, err := w.Check(false); !changed || err != nil {
 		t.Fatalf("reload: %v %v", changed, err)
 	}
-	after := getJSON(t, r, "/api/guest-polling/policy", 200)
+	after := getMonitorsJSON(t, r, "/api/guest-polling/policy", 200)
 	if after["direct_s"] != 2700.0 || after["paused"] != true || after["version"] == before["version"] {
 		t.Errorf("after %v", after)
 	}
@@ -467,10 +467,10 @@ func TestNodeMonitorsEndpoint(t *testing.T) {
 	insertV2Claim(t, db, v2Claim{node: nbNode, obs: cpObsD, hops: 0, version: "0.7.0", community: true,
 		first: now.Add(-5 * time.Hour), last: now.Add(-time.Minute)})
 	_, off := policyServer(t, db, false, nil)
-	getJSON(t, off, "/api/nodes/"+nbNode+"/monitors", 404)
+	getMonitorsJSON(t, off, "/api/nodes/"+nbNode+"/monitors", 404)
 	_, r := policyServer(t, db, true, &pollpolicy.Config{MinPluginVersion: "0.8.0"})
-	getJSON(t, r, "/api/nodes/xyz/monitors", 400)
-	body := getJSON(t, r, "/api/nodes/"+strings.ToUpper(nbNode)+"/monitors", 200)
+	getMonitorsJSON(t, r, "/api/nodes/xyz/monitors", 400)
+	body := getMonitorsJSON(t, r, "/api/nodes/"+strings.ToUpper(nbNode)+"/monitors", 200)
 	if body["node_id"] != nbNode || body["window_s"] != 3600.0 || body["paused"] != false || body["excluded"] != false || body["policy_version"] == "" {
 		t.Errorf("head %v", body)
 	}
@@ -501,7 +501,7 @@ func TestNodeMonitorsEndpoint(t *testing.T) {
 
 	// Paused: every row says paused (the stale and disabled keep their reasons).
 	_, r = policyServer(t, db, true, &pollpolicy.Config{Paused: true, PausedReason: "survey", MinPluginVersion: "0.8.0"})
-	body = getJSON(t, r, "/api/nodes/"+nbNode+"/monitors", 200)
+	body = getMonitorsJSON(t, r, "/api/nodes/"+nbNode+"/monitors", 200)
 	roles = nil
 	for _, m := range body["monitors"].([]interface{}) {
 		roles = append(roles, m.(map[string]interface{})["role"].(string))
@@ -517,8 +517,8 @@ func TestObserverMonitorsEndpoint(t *testing.T) {
 	db.conn.Exec(`INSERT INTO nodes (public_key, name, role) VALUES (?, 'Lucklaw Hill', 'repeater')`, nbNode2)
 	db.conn.Exec(`INSERT INTO nodes (public_key, name, role) VALUES (?, 'Relay One', 'repeater')`, strings.Repeat("ab", 32))
 	_, r := policyServer(t, db, true, nil)
-	getJSON(t, r, "/api/observers/xyz/monitors", 400)
-	body := getJSON(t, r, "/api/observers/"+strings.ToUpper(nbObsB)+"/monitors", 200)
+	getMonitorsJSON(t, r, "/api/observers/xyz/monitors", 400)
+	body := getMonitorsJSON(t, r, "/api/observers/"+strings.ToUpper(nbObsB)+"/monitors", 200)
 	if body["observer_id"] != nbObsB || body["name"] != "Pentland OBS" || body["blocked"] != false ||
 		body["plugin_version"] != "0.8.0" || body["version_ok"] != true {
 		t.Errorf("head %v", body)
@@ -536,7 +536,7 @@ func TestObserverMonitorsEndpoint(t *testing.T) {
 		t.Errorf("second %v", second)
 	}
 	_, r = policyServer(t, db, true, &pollpolicy.Config{BlockedObservers: []string{nbObsB}, MinPluginVersion: "0.9.0"})
-	body = getJSON(t, r, "/api/observers/"+nbObsB+"/monitors", 200)
+	body = getMonitorsJSON(t, r, "/api/observers/"+nbObsB+"/monitors", 200)
 	if body["blocked"] != true || body["version_ok"] != false || body["min_plugin_version"] != "0.9.0" {
 		t.Errorf("blocked head %v", body)
 	}
@@ -602,10 +602,10 @@ func TestGuestPollingSummary(t *testing.T) {
 	insertV2Claim(t, db, v2Claim{node: nbNode, obs: cpObsC, hops: 1, version: "0.8.0", community: true,
 		first: now.Add(-time.Hour), last: now.Add(-time.Minute)})
 	_, off := policyServer(t, db, false, nil)
-	getJSON(t, off, "/api/guest-polling/summary", 404)
+	getMonitorsJSON(t, off, "/api/guest-polling/summary", 404)
 	_, r := policyServer(t, db, true, &pollpolicy.Config{MinPluginVersion: "0.8.0", BlockedObservers: []string{cpObsC, cpObsD},
 		ExcludedNodes: []string{strings.Repeat("ee", 32)}})
-	body := getJSON(t, r, "/api/guest-polling/summary", 200)
+	body := getMonitorsJSON(t, r, "/api/guest-polling/summary", 200)
 	sum := body["summary"].(map[string]interface{})
 	want := map[string]float64{"monitored_nodes": 1, "direct_nodes": 1, "excluded_nodes": 1, "observers": 1,
 		"observers_below_min": 1, "blocked_observers": 2, "blocked_observers_on": 1}
