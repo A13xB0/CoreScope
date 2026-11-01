@@ -14,6 +14,7 @@ import (
 	"github.com/meshcore-analyzer/dbconfig"
 	"github.com/meshcore-analyzer/geofilter"
 	"github.com/meshcore-analyzer/packetpath"
+	"github.com/meshcore-analyzer/pollpolicy"
 )
 
 // MQTTSource represents a single MQTT broker connection.
@@ -244,6 +245,9 @@ type NeighborBatteryConfig struct {
 	// MinIntervalMinutes: at most one stored reading per node per observer in
 	// this many minutes (default 10).
 	MinIntervalMinutes int `json:"minIntervalMinutes"`
+	// Polling is the community polling policy (internal/pollpolicy). Read
+	// here at start; pollingPolicy re-reads it while running.
+	Polling *pollpolicy.Config `json:"polling,omitempty"`
 }
 
 // NeighborBatteryEnabled reports whether /battery messages are stored.

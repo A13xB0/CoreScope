@@ -237,11 +237,45 @@ func parseStatusStats(raw map[string]interface{}) map[string]float64 {
 }
 
 // handleBatteryReport ingests a /battery message from an observer.
+//
+// The community polling policy applies first: a report from a blocked
+// observer or a plugin below the minimum version is dropped whole, and a
+// reading for an excluded node is dropped (each logged once an hour per
+// observer).
 func handleBatteryReport(store *Store, cfg *Config, tag, observerID string, msg map[string]interface{}) {
-	readings, skipped, err := parseBatteryReport(observerID, msg, time.Now().UTC())
+	now := time.Now().UTC()
+	pol := currentPollingPolicy(now)
+	obsKey := strings.ToLower(strings.TrimSpace(observerID))
+	switch batteryReportDrop(pol, obsKey, msg) {
+	case "blocked":
+		pollingDrops.logf(obsKey, "blocked", now, "MQTT [%s] battery from %.8s dropped: observer is blocked", tag, obsKey)
+		return
+	case "version":
+		plugin, _ := msg["plugin"].(string)
+		pollingDrops.logf(obsKey, "version", now, "MQTT [%s] battery from %.8s dropped: plugin %q is below the minimum %s",
+			tag, obsKey, plugin, pol.MinPluginVersion)
+		return
+	}
+	readings, skipped, err := parseBatteryReport(observerID, msg, now)
 	if err != nil {
 		log.Printf("MQTT [%s] battery from %.8s rejected: %v", tag, observerID, err)
 		return
+	}
+	if len(pol.ExcludedNodes) > 0 {
+		kept := readings[:0]
+		var excluded []string
+		for _, r := range readings {
+			if pol.IsExcluded(r.NodeID) {
+				excluded = append(excluded, fmt.Sprintf("%.8s", r.NodeID))
+				continue
+			}
+			kept = append(kept, r)
+		}
+		readings = kept
+		if len(excluded) > 0 {
+			pollingDrops.logf(obsKey, "excluded", now, "MQTT [%s] battery from %.8s: dropped excluded node(s) %s",
+				tag, obsKey, strings.Join(excluded, ", "))
+		}
 	}
 	if len(skipped) > 0 {
 		log.Printf("MQTT [%s] battery from %.8s: skipped %s", tag, observerID, strings.Join(skipped, ", "))
@@ -323,17 +357,11 @@ func (s *Store) RecordSharedHeard(nodeID, sampledAt, observerID, packetHash stri
 	return err
 }
 
-// pollingClaim is one node in a /polling claim: the route the poller
-// reaches it by.
-type pollingClaim struct {
-	node string
-	hops int
-	via  string
-}
-
 // UpsertPollingClaims records that observer polls these nodes, for the
-// server's one-poller-per-repeater ownership (/api/guest-polling/owners).
-// first_seen is kept; the route and last_seen follow the newest claim.
+// server's community polling election (/api/guest-polling/owners). Every
+// claim is stored as sent, eligible or not; the server decides. first_seen
+// is kept; the route, key, SNR, versions, community flag and last_seen
+// follow the newest claim.
 func (s *Store) UpsertPollingClaims(observer string, claims []pollingClaim, now time.Time) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -341,17 +369,31 @@ func (s *Store) UpsertPollingClaims(observer string, claims []pollingClaim, now 
 	}
 	defer tx.Rollback()
 	ts := now.UTC().Format(batteryTimeLayout)
+	null := func(v string) interface{} {
+		if v == "" {
+			return nil
+		}
+		return v
+	}
 	for _, c := range claims {
-		var via interface{}
-		if c.via != "" {
-			via = c.via
+		key := c.key
+		if key == "" {
+			key = claimKeyShared
+		}
+		community := 0
+		if c.community {
+			community = 1
 		}
 		if _, err := tx.Exec(`
-			INSERT INTO guest_polling_claims (node_id, observer_id, reply_hops, via, first_seen, last_seen)
-			VALUES (?,?,?,?,?,?)
+			INSERT INTO guest_polling_claims (node_id, observer_id, reply_hops, via, first_seen, last_seen,
+				key_mode, snr, plugin_version, policy_version, community)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(node_id, observer_id) DO UPDATE SET
-				reply_hops = excluded.reply_hops, via = excluded.via, last_seen = excluded.last_seen`,
-			c.node, observer, c.hops, via, ts, ts); err != nil {
+				reply_hops = excluded.reply_hops, via = excluded.via, last_seen = excluded.last_seen,
+				key_mode = excluded.key_mode, snr = excluded.snr, plugin_version = excluded.plugin_version,
+				policy_version = excluded.policy_version, community = excluded.community`,
+			c.node, observer, c.hops, null(c.via), ts, ts,
+			key, c.snr, null(c.pluginVersion), null(c.policyVersion), community); err != nil {
 			return err
 		}
 	}

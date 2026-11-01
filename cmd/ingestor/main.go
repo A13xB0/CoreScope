@@ -25,6 +25,7 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/meshcore-analyzer/pollpolicy"
 )
 
 func main() {
@@ -101,6 +102,19 @@ func main() {
 		log.Printf("Loaded %d channel keys for GRP_TXT decryption", len(channelKeys))
 	} else {
 		log.Printf("No channel keys loaded — GRP_TXT packets will not be decrypted")
+	}
+
+	// Community polling policy (neighborBattery.polling): read now, re-read
+	// on a config change (mtime, every 30 s) and on SIGHUP.
+	{
+		var polling *pollpolicy.Config
+		if cfg.NeighborBattery != nil {
+			polling = cfg.NeighborBattery.Polling
+		}
+		pollingPolicy = pollpolicy.NewHolder(polling)
+		stopPolicyWatch := pollpolicy.NewWatcher(pollingPolicy, []string{*configPath}, log.Printf).Start(pollpolicy.ReloadInterval)
+		defer stopPolicyWatch()
+		log.Printf("[polling-policy] policy %s in force", pollingPolicy.Policy(time.Now()).Version)
 	}
 
 	sharedGuest = newSharedGuestDecoder(store)
@@ -1051,6 +1065,9 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 	if len(parts) >= 4 && parts[3] == "polling" {
 		if sharedGuest != nil {
 			sharedGuest.HandleClaim(parts[2], msg, time.Now().UTC())
+		} else if cfg.NeighborBatteryEnabled() {
+			// No decoder: the claims still feed the community polling election.
+			storePollingClaims(store, parts[2], msg, time.Now().UTC())
 		}
 		return
 	}
