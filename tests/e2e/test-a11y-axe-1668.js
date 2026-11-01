@@ -78,6 +78,7 @@ const ROUTES = [
   '/analytics?tab=rf-health',
   '/analytics?tab=clock-health',
   '/analytics?tab=scopes',
+  '/analytics?tab=battery',
   '/analytics?tab=prefix-tool',
   '/analytics?tab=my-repeaters',
   '/analytics?tab=repeater-metrics',
@@ -95,7 +96,7 @@ const REGISTERED_PAGES = [
 const REGISTERED_ANALYTICS_TABS = [
   'overview', 'rf', 'topology', 'channels', 'hashsizes', 'collisions',
   'subpaths', 'nodes', 'distance', 'neighbor-graph', 'rf-health',
-  'clock-health', 'roles', 'prefix-tool', 'scopes', 'my-repeaters',
+  'clock-health', 'roles', 'prefix-tool', 'scopes', 'battery', 'my-repeaters',
   'repeater-metrics',
 ];
 
