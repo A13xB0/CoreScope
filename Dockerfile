@@ -67,6 +67,7 @@ COPY internal/mbcapqueue/ ../../internal/mbcapqueue/
 COPY internal/lora/ ../../internal/lora/
 COPY internal/users/ ../../internal/users/
 COPY internal/guestkeys/ ../../internal/guestkeys/
+COPY internal/pollpolicy/ ../../internal/pollpolicy/
 COPY internal/channel/ ../../internal/channel/
 COPY internal/mailer/ ../../internal/mailer/
 RUN --mount=type=cache,target=/root/.cache/go-build \
@@ -94,6 +95,7 @@ COPY internal/dbschema/ ../../internal/dbschema/
 COPY internal/prunequeue/ ../../internal/prunequeue/
 COPY internal/perfio/ ../../internal/perfio/
 COPY internal/mbcapqueue/ ../../internal/mbcapqueue/
+COPY internal/pollpolicy/ ../../internal/pollpolicy/
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/tmp/zig-cache \
