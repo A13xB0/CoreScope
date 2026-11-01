@@ -6,7 +6,7 @@ import "net/http"
 // repeaters under, so any observer hearing a reply can feed CoreScope the
 // reading. Its private half is public by design — anyone polling with the key
 // must hold it — so the whole keypair is committed here in the clear, the same
-// value the Neighbour Battery plugin compiles in. The Phase 2 decoder uses
+// value the CoreScope Observer Plus plugin compiles in. The Phase 2 decoder uses
 // these bytes to decrypt replies addressed to the key; serving them lets the
 // plugin fetch the key instead of pasting it.
 const (

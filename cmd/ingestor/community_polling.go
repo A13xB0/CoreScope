@@ -70,7 +70,7 @@ var policyVersionRe = regexp.MustCompile(`^[0-9a-f]{1,16}$`)
 
 // parsePollingClaims reads a /polling message:
 //
-//	{"v":2, "origin_id":"…", "plugin":"openhop.neighbour_battery/0.8.0",
+//	{"v":2, "origin_id":"…", "plugin":"openhop.corescope_observer_plus/0.8.0",
 //	 "policy_version":"a1b2c3d4", "community":true,
 //	 "nodes":[{"node_id":"<64-hex>", "reply_hops":0, "via":null, "key":"shared", "snr":6.5}]}
 //

@@ -170,7 +170,7 @@ func (p *Policy) IsBlocked(observer string) bool {
 func (p *Policy) HasMinVersion() bool { return p.hasMin }
 
 // VersionOK reports whether a plugin version string ("0.8.0",
-// "openhop.neighbour_battery/0.8.0" or "") meets the minimum. An unparsable
+// "openhop.corescope_observer_plus/0.8.0" or "") meets the minimum. An unparsable
 // or empty version counts as 0.0.0. Always true without a minimum.
 func (p *Policy) VersionOK(version string) bool {
 	if !p.hasMin {
@@ -249,7 +249,7 @@ func ParseVersion(s string) (Semver, bool) {
 }
 
 // ParsePluginVersion reads the version from a plugin identifier
-// ("openhop.neighbour_battery/0.8.0") or a bare version ("0.8.0"). ok is
+// ("openhop.corescope_observer_plus/0.8.0") or a bare version ("0.8.0"). ok is
 // false (and the version 0.0.0) when none can be read.
 func ParsePluginVersion(s string) (Semver, bool) {
 	s = strings.TrimSpace(s)
